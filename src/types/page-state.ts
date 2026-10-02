@@ -35,7 +35,9 @@ export const MODAL_TYPES = [
   'calendar',
   'fares',
   'on_demand',
-  'feed_data',
+  'transfers',
+  'translations',
+  'attributions',
   'levels',
   'feed_issues',
 ] as const;

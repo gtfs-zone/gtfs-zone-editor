@@ -1,12 +1,5 @@
 /**
- * The feed-level tables that have no page of their own.
- *
- * `transfers.txt`, `attributions.txt` and `translations.txt` are relations
- * between entities that already have pages rather than entities a user
- * navigates to, so they get one modal instead of three browse pages. Same shape
- * as `fares-modal.ts`: a sidebar of tables and one spec-driven editable table in
- * the content pane, so a table here is an entry in `FEED_DATA_ENTRIES` rather
- * than a bespoke renderer.
+ * `translations.txt` as raw rows, in a sidebar modal with a single entry.
  *
  * Translations are editable here but are not yet applied to any displayed
  * label: that needs a display-language selector and a lookup inside
@@ -25,7 +18,6 @@ import {
 import { emptyState } from './fares-modal';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { specStoreName } from '../utils/spec-field-edit';
-import { validateTransferRow } from '../utils/fares-rules';
 import { gtfsSpec } from '../gtfs-spec/index';
 import { GTFS_FIELD_SPECS, GTFS_TABLES } from '../types/gtfs';
 
@@ -61,27 +53,6 @@ interface FeedDataEntry {
 
 function cell(row: Record<string, unknown>, field: string): string {
   return String(row[field] ?? '').trim();
-}
-
-/**
- * An attribution names at most one of an agency, a route or a trip; naming none
- * attributes the whole dataset.
- *
- * The reference also says at least one of the role flags should be `1`, but
- * that is a recommendation and enforcing it here would refuse every edit to an
- * imported row that carries no role. It is stated in the entry's note instead,
- * and the validator is where a feed-wide report of it belongs.
- */
-export function validateAttributionRow(
-  row: Record<string, unknown>
-): string | null {
-  const scopes = ['agency_id', 'route_id', 'trip_id'].filter(
-    (field) => cell(row, field) !== ''
-  );
-  if (scopes.length > 1) {
-    return `Only one of agency_id, route_id or trip_id may be set (found ${scopes.join(', ')})`;
-  }
-  return null;
 }
 
 /**
@@ -163,35 +134,6 @@ function translatableFieldNames(): string[] {
 
 const FEED_DATA_ENTRIES: FeedDataEntry[] = [
   {
-    table: GTFS_TABLES.TRANSFERS,
-    label: 'Transfers',
-    emptyMessage: emptyState(
-      GTFS_TABLES.TRANSFERS,
-      'Add one to override how a connection between two stops is treated: to make it timed, to give it a minimum time, or to rule it out.'
-    ),
-    note: 'Transfer types 4 and 5 link two trips of the same vehicle and name trips instead of stops. A transfer from a station applies to all of its child stops.',
-    docAnchor: 'transferstxt',
-    columnOverrides: () => ({
-      from_stop_id: { widthClass: 'min-w-48' },
-      to_stop_id: { widthClass: 'min-w-48' },
-    }),
-    validateRow: validateTransferRow,
-  },
-  {
-    table: GTFS_TABLES.ATTRIBUTIONS,
-    label: 'Attributions',
-    emptyMessage: emptyState(
-      GTFS_TABLES.ATTRIBUTIONS,
-      'Add one to credit an organization for the dataset, or for one agency, route or trip in it.'
-    ),
-    note: 'Leave agency_id, route_id and trip_id empty to attribute the whole dataset; setting one scopes the attribution to it. At least one of is_producer, is_operator and is_authority should be 1.',
-    docAnchor: 'attributionstxt',
-    columnOverrides: () => ({
-      organization_name: { widthClass: 'min-w-48' },
-    }),
-    validateRow: validateAttributionRow,
-  },
-  {
     table: GTFS_TABLES.TRANSLATIONS,
     label: 'Translations',
     emptyMessage: emptyState(
@@ -221,9 +163,8 @@ function entryNote(entry: FeedDataEntry): string | undefined {
        target="_blank" rel="noopener noreferrer" class="link">GTFS reference</a>.`;
 }
 
-const INTRO = `Feed-level tables that describe the rest of the feed rather than
-  adding anything to the map: the connections between stops, who the data is
-  attributed to, and the translations of its text.`;
+const INTRO = `The translations of the feed's text, one row per translated
+  value.`;
 
 export async function showFeedDataModal(
   deps: FeedDataModalDeps,
@@ -260,7 +201,7 @@ export async function showFeedDataModal(
   installEditableTableHandlers(tableConfig);
 
   await showSidebarModal({
-    title: 'Feed Data',
+    title: 'Translations',
     intro: INTRO,
     initialId: target.table,
     refreshRef,
@@ -285,7 +226,7 @@ export async function showFeedDataModal(
         row.scrollIntoView({ block: 'center' });
         row.classList.add('bg-primary/10');
       } else {
-        console.warn(`[FeedData] no row for ${rowKey}`);
+        console.warn(`[Translations] no row for ${rowKey}`);
       }
     },
   });

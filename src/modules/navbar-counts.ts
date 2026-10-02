@@ -10,7 +10,7 @@ interface NavbarCountsDeps {
 
 /**
  * Count bubbles on the navbar buttons (shapes, services, levels, fare products,
- * on-demand objects, changes).
+ * transfers, translations, attributions, on-demand objects, changes).
  *
  * Counts are read from the parser's in-memory tables, which share their row
  * arrays with the virtual tables, so they are current without hitting IndexedDB
@@ -45,19 +45,20 @@ export class NavbarCounts {
       'fares-count-badge',
       gtfsParser.getFileDataSync(GTFS_TABLES.FARE_PRODUCTS).length
     );
-    setBadge('feed-data-count-badge', this.countFeedDataRows());
-    setBadge('on-demand-count-badge', this.countOnDemandObjects());
-    setBadge('history-count-badge', patchManager.changeCount);
-  }
-
-  /** Transfers, attributions and translations together. */
-  private countFeedDataRows(): number {
-    const { gtfsParser } = this.deps;
-    return (
-      gtfsParser.getFileDataSync(GTFS_TABLES.TRANSFERS).length +
-      gtfsParser.getFileDataSync(GTFS_TABLES.ATTRIBUTIONS).length +
+    setBadge(
+      'transfers-count-badge',
+      gtfsParser.getFileDataSync(GTFS_TABLES.TRANSFERS).length
+    );
+    setBadge(
+      'translations-count-badge',
       gtfsParser.getFileDataSync(GTFS_TABLES.TRANSLATIONS).length
     );
+    setBadge(
+      'attributions-count-badge',
+      gtfsParser.getFileDataSync(GTFS_TABLES.ATTRIBUTIONS).length
+    );
+    setBadge('on-demand-count-badge', this.countOnDemandObjects());
+    setBadge('history-count-badge', patchManager.changeCount);
   }
 
   /** Booking rules, location groups and zones together. */

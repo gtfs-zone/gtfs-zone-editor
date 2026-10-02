@@ -483,7 +483,7 @@ export class StopViewController {
 
     const linkedNote =
       linkedTripCount > 0
-        ? `<p class="text-xs opacity-60">${linkedTripCount} in-seat transfer${linkedTripCount === 1 ? '' : 's'} (type 4 or 5) also name${linkedTripCount === 1 ? 's' : ''} this stop. Those link two trips rather than two stops, so they are edited in Feed Data.</p>`
+        ? `<p class="text-xs opacity-60">${linkedTripCount} in-seat transfer${linkedTripCount === 1 ? '' : 's'} (type 4 or 5) also name${linkedTripCount === 1 ? 's' : ''} this stop. Those link two trips rather than two stops, so they are edited in the Transfers modal.</p>`
         : '';
 
     return `
@@ -763,8 +763,11 @@ export class StopViewController {
         );
         if (manageTransfers) {
           await openModal(
-            { type: 'feed_data', table: GTFS_TABLES.TRANSFERS },
-            { onClosed: () => this.dependencies.onTransfersChanged?.() }
+            { type: 'transfers' },
+            {
+              focusStopId: this.currentStopId ?? undefined,
+              onClosed: () => this.dependencies.onTransfersChanged?.(),
+            }
           );
           return;
         }
