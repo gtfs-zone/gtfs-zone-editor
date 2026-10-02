@@ -411,6 +411,10 @@ export class PageContentRenderer {
       gtfsDatabase: {
         getAllRows: (table) =>
           db.getAllRows(table) as Promise<Record<string, unknown>[]>,
+        getRow: (table, key) =>
+          db.getRow(table, key) as Promise<Record<string, unknown> | undefined>,
+        queryRows: (table, filter) =>
+          db.queryRows(table, filter) as Promise<Record<string, unknown>[]>,
         insertRows: (table, rows) => db.insertRows(table, rows),
         updateRow: (table, key, data) => updateRow(table, key, data),
         deleteRow: (table, key) => deleteRow(table, key),

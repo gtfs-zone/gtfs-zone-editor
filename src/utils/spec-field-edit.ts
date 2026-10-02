@@ -22,11 +22,7 @@ import type { GTFSFieldSpec } from '../gtfs-spec/types';
 import type { z } from 'zod';
 
 export type SpecFieldKind =
-  | 'text'
-  | 'number'
-  | 'enum'
-  | 'foreign'
-  | 'constrained';
+  'text' | 'number' | 'enum' | 'foreign' | 'constrained';
 
 /**
  * Field types whose values come from a standard's closed set, and where that
@@ -149,8 +145,7 @@ export function validateFieldValue(
   }
 
   const schema = GTFSSchemas[tableName as keyof typeof GTFSSchemas] as
-    | z.ZodObject<z.ZodRawShape>
-    | undefined;
+    z.ZodObject<z.ZodRawShape> | undefined;
   // Zod 4 erases the shape to `$ZodType`, which has no `safeParse`.
   const fieldSchema = schema?.shape[field] as z.ZodTypeAny | undefined;
   if (!fieldSchema) {
@@ -239,6 +234,48 @@ export async function buildForeignKeyOptions(
     }
   }
   return [...seen.values()];
+}
+
+/**
+ * Label only the given foreign-ID values, one row read per value.
+ *
+ * For a table's cells, which need labels for the ids they hold rather than the
+ * whole target table the picker offers. Each value takes the label of the
+ * first entity-key target holding it. A value no such target holds is left
+ * out and shows raw.
+ */
+export async function buildForeignKeyLabels(
+  db: ForeignKeyRowSource,
+  spec: GTFSFieldSpec,
+  values: Iterable<string>
+): Promise<Map<string, string>> {
+  const tables = (spec.foreignKey ?? [])
+    .filter((target) => target.file.endsWith('.txt'))
+    .map((target) => ({
+      table: specStoreName(target.file),
+      field: target.field,
+    }))
+    .filter((target) => targetIsEntityKey(target.table, target.field))
+    .map((target) => target.table);
+  const labels = new Map<string, string>();
+  for (const value of values) {
+    if (value === '' || labels.has(value)) {
+      continue;
+    }
+    for (const table of tables) {
+      const row = await db.getRow(table, value);
+      if (row) {
+        labels.set(
+          value,
+          renderOptionLabel(
+            getEntityDisplay(table, row as Record<string, string>)
+          )
+        );
+        break;
+      }
+    }
+  }
+  return labels;
 }
 
 /**

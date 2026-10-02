@@ -651,6 +651,10 @@ export class GTFSParser {
     } else if (tableName === 'shapes') {
       // Also serves the shape_id key lookup below: see BucketKeyIndex.
       fieldMaps.set('shape_id', new Map());
+    } else if (tableName === 'transfers') {
+      // The stop page and the transfers modal read one stop's transfers.
+      fieldMaps.set('from_stop_id', new Map());
+      fieldMaps.set('to_stop_id', new Map());
     }
 
     let byId: KeyIndex;
