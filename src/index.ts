@@ -64,7 +64,7 @@ import {
 } from 'gtfs-zone-web-common/ui/help-pages';
 import { HELP_PAGES } from './modules/help-pages';
 import { showFaresModal } from './modules/fares-modal';
-import { showFeedDataModal } from './modules/feed-data-modal';
+import { showTranslationsModal } from './modules/translations-modal';
 import { showTransfersModal } from './modules/transfers-modal';
 import { showAttributionsModal } from './modules/attributions-modal';
 import { showOnDemandModal } from './modules/on-demand-modal';
@@ -839,11 +839,12 @@ export class GTFSEditor {
     );
 
     router.register('translations', (modal, transient) =>
-      showFeedDataModal(
+      showTranslationsModal(
         {
           gtfsDatabase: this.gtfsParser
             .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
           patchManager: this.patchManager,
+          gtfsParser: this.gtfsParser,
         },
         { table: modal.table, rowKey: transient.rowKey }
       )
