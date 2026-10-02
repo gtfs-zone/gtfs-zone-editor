@@ -731,7 +731,7 @@ function renderBody(shapes: Map<string, ShapeUsage>): string {
           <td>${usage.tripCount}</td>
           <td class="text-sm">${renderEndpoints(usage)}</td>
           <td>
-            <div class="flex flex-wrap gap-x-2 gap-y-1">${usage.timetables.map(renderTimetableChip).join('')}</div>
+            <div class="max-w-xs flex flex-wrap gap-x-2 gap-y-1">${usage.timetables.map(renderTimetableChip).join('')}</div>
           </td>
           <td>
             <div class="flex gap-1">
@@ -875,7 +875,7 @@ export class ShapesManager {
       title: 'Shapes',
       body: `<div id="shapes-panel">${renderBody(currentShapes)}</div>`,
       escapeAction: 0,
-      boxClassName: 'max-w-6xl w-11/12',
+      boxClassName: 'max-w-7xl w-11/12',
       actions: [{ label: 'Close', onClick: () => {} }],
       onMount: (close) => {
         const panel = document.getElementById('shapes-panel');
