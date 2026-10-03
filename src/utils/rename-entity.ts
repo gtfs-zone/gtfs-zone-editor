@@ -16,6 +16,10 @@ import {
   getGTFSPrimaryKey,
   getNaturalKeyField,
 } from './gtfs-primary-keys';
+import {
+  translatableTables,
+  translationRecordFields,
+} from './translation-targets';
 import { CONFIG } from '../config';
 
 /**
@@ -98,6 +102,26 @@ function fieldIsPartOfKey(table: string, field: string): boolean {
     return true;
   }
   return config.fields.includes(field);
+}
+
+/** Whether `table.field` is the renamed key field, or a foreign key to it. */
+function namesRenamedKey(
+  table: string,
+  field: string,
+  renamedTable: string,
+  keyField: string
+): boolean {
+  if (table === renamedTable && field === keyField) {
+    return true;
+  }
+  return GTFS_FOREIGN_KEYS.some(
+    (ref) =>
+      ref.file === `${table}.txt` &&
+      ref.field === field &&
+      ref.targets.some(
+        (t) => t.file === `${renamedTable}.txt` && t.field === keyField
+      )
+  );
 }
 
 /** The empty and whitespace checks every new ID must pass. */
@@ -242,6 +266,70 @@ export async function renamePlan(
         rows: counted,
         rekeys,
       });
+    }
+  }
+
+  // translations.txt names a record by the value of its table's first (and
+  // second) key field. Every translations column is part of its key, so these
+  // re-key. A blank oldId is skipped: a blank record_id means by value.
+  if (oldId !== '') {
+    const counts = new Map<string, number>();
+    for (const target of translatableTables()) {
+      const ids = translationRecordFields(target);
+      const columns: [string, string | undefined][] = [
+        ['record_id', ids?.id],
+        ['record_sub_id', ids?.sub],
+      ];
+      for (const [column, field] of columns) {
+        if (!field || !namesRenamedKey(target, field, table, keyField)) {
+          continue;
+        }
+        const matches = await db.queryRows('translations', {
+          table_name: target,
+          [column]: oldId,
+        });
+        for (const match of matches) {
+          const key = generateCompositeKeyFromRecord('translations', match);
+          const editKey = `translations\u0000${key}`;
+          const existing = edits.get(editKey);
+          if (existing) {
+            existing.after = { ...existing.after, [column]: newId };
+            existing.fields.push(column);
+          } else {
+            edits.set(editKey, {
+              table: 'translations',
+              rekeys: true,
+              key,
+              before: match,
+              after: { ...match, [column]: newId },
+              fields: [column],
+            });
+          }
+          counts.set(column, (counts.get(column) ?? 0) + 1);
+        }
+      }
+    }
+    for (const [column, rows] of counts) {
+      cascades.push({
+        table: 'translations',
+        field: column,
+        rows,
+        rekeys: true,
+      });
+    }
+
+    // A leftover translation already naming newId would collide on insert
+    // halfway through applyRename.
+    for (const edit of edits.values()) {
+      if (edit.table !== 'translations') {
+        continue;
+      }
+      const newKey = generateCompositeKeyFromRecord('translations', edit.after);
+      if (await db.getRow('translations', newKey)) {
+        throw new Error(
+          `[renameEntity] translations already has a ${String(edit.after.table_name)}.${String(edit.after.field_name)} (${String(edit.after.language)}) row for "${newId}"; delete it first`
+        );
+      }
     }
   }
 

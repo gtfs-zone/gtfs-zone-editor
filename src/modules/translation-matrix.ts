@@ -10,19 +10,17 @@
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import type { EditableTableDeps } from './editable-table';
 import { getEntityDisplay } from '../utils/entity-display';
-import { extensionFieldSpec, extensionFields } from '../utils/extension-fields';
-import {
-  generateCompositeKeyFromRecord,
-  getGTFSPrimaryKey,
-} from '../utils/gtfs-primary-keys';
+import { extensionFieldSpec } from '../utils/extension-fields';
+import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
 import { patchUpdate } from '../utils/patch-utils';
 import { specStoreName, validateFieldValue } from '../utils/spec-field-edit';
 import { yieldToEventLoop } from '../utils/async-yield';
 import {
-  GTFS_FIELD_SPECS,
-  GTFS_PRIMARY_KEYS as SPEC_PRIMARY_KEYS,
-  GTFS_TABLES,
-} from '../types/gtfs';
+  translatableFields,
+  translatableTables,
+  translationRecordFields,
+} from '../utils/translation-targets';
+import { GTFS_FIELD_SPECS, GTFS_TABLES } from '../types/gtfs';
 
 export type MatrixMode = 'value' | 'record';
 
@@ -98,9 +96,6 @@ const TRANSLATIONS_STORE = specStoreName(GTFS_TABLES.TRANSLATIONS);
 const YIELD_EVERY_ROWS = 50_000;
 export const MATRIX_ROW_LIMIT = 300;
 
-/** The field types the reference allows a translation to target. */
-const TRANSLATABLE_TYPES = new Set(['Text', 'URL', 'Email', 'Phone number']);
-
 function str(value: unknown): string {
   return value === undefined || value === null ? '' : String(value);
 }
@@ -111,27 +106,6 @@ function recordKey(id: string, sub: string): string {
 
 // ─── Spec derivation ──────────────────────────────────────────────────────────
 
-/** The store names `table_name` allows, in spec order. */
-export function translatableTables(): string[] {
-  return (
-    GTFS_FIELD_SPECS[GTFS_TABLES.TRANSLATIONS].table_name.enumValues?.map(
-      (value) => String(value.value)
-    ) ?? []
-  );
-}
-
-/** Spec fields of a translatable type, then the table's extension fields. */
-export function translatableFields(
-  file: string,
-  rows: Record<string, unknown>[]
-): string[] {
-  const specs = GTFS_FIELD_SPECS[file] ?? {};
-  const fields = Object.entries(specs)
-    .filter(([, spec]) => TRANSLATABLE_TYPES.has(spec.type))
-    .map(([name]) => name);
-  return [...fields, ...extensionFields(file, rows)];
-}
-
 /** Every field name any translatable table could name, for suggestions. */
 export function allTranslatableFieldNames(): string[] {
   const names = new Set<string>();
@@ -141,20 +115,6 @@ export function allTranslatableFieldNames(): string[] {
     }
   }
   return [...names].sort();
-}
-
-/**
- * The fields `record_id` and `record_sub_id` name for a table: the first and
- * second fields of its primary key. A table keyed on all fields
- * (attributions) falls back to the spec's single primary key field.
- */
-function recordIdFields(table: string): { id: string; sub?: string } | null {
-  const key = getGTFSPrimaryKey(table);
-  if (key && key.fields.length > 0) {
-    return { id: key.fields[0], sub: key.fields[1] };
-  }
-  const specKey = SPEC_PRIMARY_KEYS[`${table}.txt`];
-  return specKey ? { id: specKey } : null;
 }
 
 function fieldSpec(file: string, field: string) {
@@ -251,7 +211,7 @@ export async function ensureRecords(
     return;
   }
   const started = performance.now();
-  const ids = recordIdFields(entry.table);
+  const ids = translationRecordFields(entry.table);
   const field = entry.fields[0];
   const records: SourceRecord[] = [];
   const valueByRecord = new Map<string, string>();

@@ -34,8 +34,6 @@ import {
   hasRecordTranslations,
   readEntryTranslations,
   renderMatrix,
-  translatableFields,
-  translatableTables,
   validateTranslationRow,
   writeCell,
   type MatrixMode,
@@ -43,6 +41,10 @@ import {
   type SourceIndex,
   type TranslationEntry,
 } from './translation-matrix';
+import {
+  translatableFields,
+  translatableTables,
+} from '../utils/translation-targets';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
 import { specStoreName } from '../utils/spec-field-edit';
 import {

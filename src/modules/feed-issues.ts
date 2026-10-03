@@ -122,6 +122,15 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
   UNKNOWN_LOCATION_TYPE: { label: rowsLabel('unknown location_type') },
   INVALID_EXCEPTION_TYPE: { label: rowsLabel('invalid exception_type') },
   INVALID_AREA_ASSIGNMENT: { label: rowsLabel('invalid area assignment') },
+  TRANSLATION_UNKNOWN_FIELD: {
+    label: () => 'translations of a field its table does not have',
+  },
+  TRANSLATION_ORPHANED_RECORD: {
+    label: () => 'translations of a record that does not exist',
+  },
+  TRANSLATION_ORPHANED_VALUE: {
+    label: () => 'translations of a field_value no row holds any more',
+  },
   TRIP_WITHOUT_STOP_TIMES: {
     label: rowsLabel('without any stop_times'),
     actions: [

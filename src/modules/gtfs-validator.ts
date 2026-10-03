@@ -6,6 +6,11 @@ import {
 } from '../types/gtfs';
 import type { GTFSForeignKeyRef } from '../gtfs-spec/adapter';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
+import { extensionFields } from '../utils/extension-fields';
+import {
+  translatableTables,
+  translationRecordFields,
+} from '../utils/translation-targets';
 import { GTFSFieldType, mapGTFSTypeString } from '../types/gtfs-field-types';
 import {
   isValidCurrencyCode,
@@ -342,6 +347,7 @@ export class GTFSValidator {
       () => this.validateConditionalPresence(),
       () => this.validateRiderCategoryDefaults(),
       () => this.validateForeignKeys(),
+      () => this.validateTranslations(),
       () => this.validateFieldWhitespace(),
       () => this.validateConstrainedCodes(),
       () => this.validateReferences(),
@@ -1882,6 +1888,131 @@ export class GTFSValidator {
           }
         )
       );
+    }
+  }
+
+  /**
+   * Translations that name nothing: a record that no longer exists, a
+   * `field_value` no row holds any more, a field the table does not have, or
+   * feed_info text in a feed without feed_info. Deletes and edits leave
+   * translations in place, so this is where they surface.
+   *
+   * An unknown `table_name` is left to the enum check.
+   */
+  async validateTranslations() {
+    const file = GTFS_TABLES.TRANSLATIONS;
+    const translations = this.gtfsParser.getFileDataSyncTyped(file);
+    if (translations.length === 0) {
+      return;
+    }
+
+    const tables = new Set(translatableTables());
+    const fieldsByTable = new Map<string, Set<string>>();
+    const recordsByTable = new Map<string, Set<string>>();
+    const valueCache = new Map<string, Set<string>>();
+    const warnings = this.validationResults.warnings;
+    const str = (value: unknown): string =>
+      value === undefined || value === null ? '' : String(value);
+
+    for (let index = 0; index < translations.length; index++) {
+      if (index > 0 && index % CONFIG.HYDRATE_YIELD_ROWS === 0) {
+        await yieldToEventLoop();
+      }
+      const row = translations[index];
+      const rowNum = index + 1;
+      const table = str(row.table_name);
+      if (!tables.has(table)) {
+        continue;
+      }
+      const tableFile = `${table}.txt`;
+      const field = str(row.field_name);
+      const recordId = str(row.record_id);
+      const recordSubId = str(row.record_sub_id);
+      const fieldValue = str(row.field_value);
+      const warn = (message: string, code: string, entityField: string) =>
+        warnings.push(
+          warningMessage(`Row ${rowNum}: ${message}`, code, file, rowNum, {
+            file,
+            id: this.rowId('translations', row),
+            field: entityField,
+            value: str(row[entityField]),
+          })
+        );
+
+      let fields = fieldsByTable.get(table);
+      if (!fields) {
+        fields = new Set([
+          ...Object.keys(GTFS_FIELD_SPECS[tableFile] ?? {}),
+          ...extensionFields(
+            tableFile,
+            this.gtfsParser.getFileDataSyncTyped(tableFile)
+          ),
+        ]);
+        fieldsByTable.set(table, fields);
+      }
+      if (!fields.has(field)) {
+        warn(
+          `field_name '${field}' is not a field of ${table}`,
+          'TRANSLATION_UNKNOWN_FIELD',
+          'field_name'
+        );
+        continue;
+      }
+
+      if (table === 'feed_info') {
+        if (
+          this.gtfsParser.getFileDataSyncTyped(GTFS_TABLES.FEED_INFO).length ===
+          0
+        ) {
+          warn(
+            `translates feed_info.${field}, but the feed has no feed_info`,
+            'TRANSLATION_ORPHANED_RECORD',
+            'table_name'
+          );
+        }
+        continue;
+      }
+
+      if (recordId !== '') {
+        const ids = translationRecordFields(table);
+        if (!ids) {
+          continue;
+        }
+        let records = recordsByTable.get(table);
+        if (!records) {
+          records = new Set();
+          const target = records;
+          await this.eachRow(
+            this.gtfsParser.getFileDataSyncTyped(tableFile),
+            (source) => {
+              const sub = ids.sub ? str(source[ids.sub]) : '';
+              target.add(`${str(source[ids.id])}\u0000${sub}`);
+            }
+          );
+          recordsByTable.set(table, records);
+        }
+        const sub = ids.sub ? recordSubId : '';
+        if (!records.has(`${recordId}\u0000${sub}`)) {
+          const named = ids.sub ? `${recordId}, ${recordSubId}` : recordId;
+          warn(
+            `record_id '${named}' not found in ${table}.${ids.id}${ids.sub ? ` + ${ids.sub}` : ''}`,
+            'TRANSLATION_ORPHANED_RECORD',
+            'record_id'
+          );
+        }
+        continue;
+      }
+
+      if (fieldValue !== '') {
+        const values = await this.collectValues(tableFile, field, valueCache);
+        if (!values.has(fieldValue)) {
+          warn(
+            `field_value '${fieldValue}' not found in ${table}.${field}`,
+            'TRANSLATION_ORPHANED_VALUE',
+            'field_value'
+          );
+        }
+      }
     }
   }
 
