@@ -1,5 +1,7 @@
 # GTFS.zone
 
+[![CI](https://img.shields.io/github/actions/workflow/status/gtfs-zone/gtfs-zone-editor/check.yml?branch=main&label=CI)](https://github.com/gtfs-zone/gtfs-zone-editor/actions/workflows/check.yml?query=branch%3Amain) [![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)](LICENSE.txt) [![edit.gtfs.zone](https://img.shields.io/website?url=https%3A%2F%2Fedit.gtfs.zone&label=edit.gtfs.zone)](https://edit.gtfs.zone)
+
 A browser-based editor for GTFS (General Transit Feed Specification) transit
 data, inspired by geojson.io. Load a feed from a ZIP or a URL, view it on a map,
 edit it, and export it again. There is no login and no backend: all data stays
