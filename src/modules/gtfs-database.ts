@@ -45,6 +45,7 @@ import {
 } from '../utils/gtfs-primary-keys';
 import { TimeFormatter } from '../utils/time-formatter';
 import { buildExportFilename } from '../utils/export-filename';
+import { t } from '../i18n/messages';
 
 /**
  * Which on-disk form the imported feed expressed its networks in.
@@ -287,10 +288,8 @@ export class GTFSDatabase {
 
       if (!capabilities.indexedDB) {
         databaseFallbackManager.showDatabaseError(
-          new Error(
-            'IndexedDB is not supported in this browser. GTFS.zone requires IndexedDB to function.'
-          ),
-          'initialization'
+          new Error(t('db.noIndexedDb')),
+          t('db.contextInit')
         );
         return;
       }
@@ -306,12 +305,15 @@ export class GTFSDatabase {
       // VersionError, so say what actually happened instead.
       if (currentVersion > this.dbVersion) {
         await showModal({
-          title: 'App is out of date',
-          body: `The saved database is at version ${currentVersion}, but this version of GTFS.zone only understands version ${this.dbVersion}. Reload the page to pick up the current version of the app.`,
+          title: t('dbui.outOfDate'),
+          body: t('dbui.outOfDateBody', {
+            current: currentVersion,
+            supported: this.dbVersion,
+          }),
           enterAction: 0,
           actions: [
             {
-              label: 'Reload',
+              label: t('db.reload'),
               className: 'btn-primary',
               onClick: async () => {
                 window.location.reload();
@@ -324,12 +326,12 @@ export class GTFSDatabase {
 
       if (currentVersion > 0 && currentVersion < this.dbVersion) {
         await showModal({
-          title: 'Database update required',
-          body: 'GTFS.zone needs to update its local database schema. Export your saved feed first, or clear and continue.',
+          title: t('dbui.updateRequired'),
+          body: t('dbui.updateBody'),
           enterAction: 0,
           actions: [
             {
-              label: 'Export & Continue',
+              label: t('dbui.exportContinue'),
               className: 'btn-primary',
               onClick: async () => {
                 const blob = await this.exportCurrentBlobsAsZip();
@@ -345,7 +347,7 @@ export class GTFSDatabase {
               },
             },
             {
-              label: 'Clear & Continue',
+              label: t('dbui.clearContinue'),
               className: 'btn-error',
               onClick: async () => {},
             },
@@ -372,9 +374,9 @@ export class GTFSDatabase {
         if (outcome !== 'deleted') {
           databaseFallbackManager.showDatabaseError(
             new Error(
-              `The saved database is missing ${missing.length} table(s) and could not be cleared (${outcome}). Close any other GTFS.zone tabs and reload.`
+              t('db.missingStores', { count: missing.length, outcome })
             ),
-            'initialization'
+            t('db.contextInit')
           );
           return;
         }
@@ -390,8 +392,10 @@ export class GTFSDatabase {
     } catch (error) {
       console.error('Failed to initialize GTFSDatabase:', error);
 
-      databaseFallbackManager.showDatabaseError(error, 'initialization', () =>
-        this.exportCurrentBlobsAsZip()
+      databaseFallbackManager.showDatabaseError(
+        error,
+        t('db.contextInit'),
+        () => this.exportCurrentBlobsAsZip()
       );
     }
   }
@@ -488,9 +492,7 @@ export class GTFSDatabase {
             '[GTFSDatabase] another tab needs this connection closed'
           );
           this.close();
-          notify.warning(
-            'Another GTFS.zone tab is updating the database. Reload this tab to keep editing.'
-          );
+          notify.warning(t('dbui.otherTabUpdating'));
         },
         terminated: () => {
           console.warn('[GTFSDatabase] connection closed unexpectedly');
@@ -504,32 +506,30 @@ export class GTFSDatabase {
       }
 
       const reason = blockedByOtherTab
-        ? 'Another GTFS.zone tab still has the old database open, so it cannot be updated.'
-        : 'The browser is not answering the request to open the database. An earlier reset may still be waiting on a tab that was never closed.';
+        ? t('dbui.blockedByTab')
+        : t('dbui.notAnswering');
       let retry = false;
       await showModal({
-        title: 'Database is not responding',
-        body: `<p class="mb-2">${reason}</p><p>Close any other GTFS.zone tabs and retry. If that does not help, restarting the browser clears the stuck request.</p>`,
+        title: t('dbui.notResponding'),
+        body: `<p class="mb-2">${reason}</p><p>${t('dbui.closeTabsRetry')}</p>`,
         enterAction: 0,
         actions: [
           {
-            label: 'Retry',
+            label: t('dbui.retry'),
             className: 'btn-primary',
             onClick: async () => {
               retry = true;
             },
           },
           {
-            label: 'Continue without saving',
+            label: t('dbui.continueWithout'),
             className: 'btn-outline',
             onClick: async () => {},
           },
         ],
       });
       if (!retry) {
-        notify.error(
-          'Running without a database: edits will not be saved to this browser.'
-        );
+        notify.error(t('dbui.noDatabase'));
         return null;
       }
     }

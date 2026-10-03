@@ -1,3 +1,5 @@
+import { tv as t } from '../i18n/validation';
+
 /**
  * GTFS Field Type Definitions
  *
@@ -47,14 +49,7 @@ export interface GTFSFieldTypeMetadata {
   max?: number;
   decimals?: number;
   inputType?:
-    | 'text'
-    | 'number'
-    | 'email'
-    | 'url'
-    | 'tel'
-    | 'color'
-    | 'date'
-    | 'time';
+    'text' | 'number' | 'email' | 'url' | 'tel' | 'color' | 'date' | 'time';
   step?: number | string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   zodValidator: (z: any) => any;
@@ -108,10 +103,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     zodValidator: (z) =>
       z
         .string()
-        .regex(
-          /^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,8})*$/,
-          'Must be a valid IETF BCP 47 language code'
-        ),
+        .regex(/^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,8})*$/, t('value.languageCode')),
   },
 
   [GTFSFieldType.CurrencyCode]: {
@@ -120,9 +112,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     pattern: /^[A-Z]{3}$/,
     inputType: 'text',
     zodValidator: (z) =>
-      z
-        .string()
-        .regex(/^[A-Z]{3}$/, 'Must be a 3-letter ISO 4217 currency code'),
+      z.string().regex(/^[A-Z]{3}$/, t('value.currencyCode')),
   },
 
   [GTFSFieldType.CurrencyAmount]: {
@@ -133,7 +123,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     step: 0.01,
     min: 0,
     zodValidator: (z) =>
-      z.string().regex(/^\d+(\.\d{1,4})?$/, 'Must be a valid decimal amount'),
+      z.string().regex(/^\d+(\.\d{1,4})?$/, t('value.decimalAmount')),
   },
 
   [GTFSFieldType.Timezone]: {
@@ -153,9 +143,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     pattern: /^[0-9A-Fa-f]{6}$/,
     inputType: 'color',
     zodValidator: (z) =>
-      z
-        .string()
-        .regex(/^[0-9A-Fa-f]{6}$/, 'Must be a 6-digit hexadecimal color'),
+      z.string().regex(/^[0-9A-Fa-f]{6}$/, t('value.hexColor')),
   },
 
   [GTFSFieldType.Date]: {
@@ -163,8 +151,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     description: 'Service day in YYYYMMDD format (e.g., 20180913)',
     pattern: /^\d{8}$/,
     inputType: 'date',
-    zodValidator: (z) =>
-      z.string().regex(/^\d{8}$/, 'Must be in YYYYMMDD format'),
+    zodValidator: (z) => z.string().regex(/^\d{8}$/, t('value.dateFormat')),
   },
 
   [GTFSFieldType.Time]: {
@@ -174,7 +161,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     pattern: /^\d{1,2}:\d{2}:\d{2}$/,
     inputType: 'text',
     zodValidator: (z) =>
-      z.string().regex(/^\d{1,2}:\d{2}:\d{2}$/, 'Must be in HH:MM:SS format'),
+      z.string().regex(/^\d{1,2}:\d{2}:\d{2}$/, t('value.timeFormat')),
   },
 
   [GTFSFieldType.LocalTime]: {
@@ -184,7 +171,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     pattern: /^\d{1,2}:\d{2}:\d{2}$/,
     inputType: 'text',
     zodValidator: (z) =>
-      z.string().regex(/^\d{1,2}:\d{2}:\d{2}$/, 'Must be in HH:MM:SS format'),
+      z.string().regex(/^\d{1,2}:\d{2}:\d{2}$/, t('value.timeFormat')),
   },
 
   [GTFSFieldType.ID]: {
@@ -235,7 +222,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
       z
         .number()
         .int()
-        .refine((n: number) => n !== 0, 'Must not be 0'),
+        .refine((n: number) => n !== 0, t('value.notZero')),
   },
 
   [GTFSFieldType.PositiveInteger]: {
@@ -316,7 +303,7 @@ export function validateFieldType(
   const metadata = GTFS_FIELD_TYPE_METADATA[fieldType];
 
   if (!metadata) {
-    return { valid: false, error: `Unknown field type: ${fieldType}` };
+    return { valid: false, error: t('value.unknownType', { type: fieldType }) };
   }
 
   // Handle empty values
@@ -329,7 +316,10 @@ export function validateFieldType(
     if (!metadata.pattern.test(value)) {
       return {
         valid: false,
-        error: `Invalid format for ${fieldType}. ${metadata.description}`,
+        error: t('value.invalidFormat', {
+          type: fieldType,
+          description: metadata.description,
+        }),
       };
     }
   }
@@ -339,13 +329,13 @@ export function validateFieldType(
     if (metadata.min !== undefined && value < metadata.min) {
       return {
         valid: false,
-        error: `Value must be >= ${metadata.min}`,
+        error: t('value.min', { min: metadata.min }),
       };
     }
     if (metadata.max !== undefined && value > metadata.max) {
       return {
         valid: false,
-        error: `Value must be <= ${metadata.max}`,
+        error: t('value.max', { max: metadata.max }),
       };
     }
   }

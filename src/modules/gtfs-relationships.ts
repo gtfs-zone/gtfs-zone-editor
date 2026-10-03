@@ -8,6 +8,7 @@ import { GTFSDatabase, GTFSDatabaseRecord } from './gtfs-database';
 import { normalizeAgencyId, agencyRouteFilter } from '../utils/agency-helpers';
 import type { StopTimeRef } from 'gtfs-zone-web-common/gtfs/types';
 import { stopTimeRef } from '../utils/stop-time-ref';
+import { t } from '../i18n/messages';
 
 /** The stop_times column each reference kind lives in. */
 const STOP_TIME_REF_FIELD: Record<StopTimeRef['kind'], string> = {
@@ -44,8 +45,18 @@ export class GTFSRelationships {
     return agencyData.map((agency) => ({
       id: agency.agency_id,
       agency_id: agency.agency_id,
-      name: agency.agency_name || `Agency ${agency.agency_id}`,
-      agency_name: agency.agency_name || `Agency ${agency.agency_id}`,
+      name:
+        agency.agency_name ||
+        t('crumb.fallback', {
+          type: t('crumb.agency'),
+          id: String(agency.agency_id ?? ''),
+        }),
+      agency_name:
+        agency.agency_name ||
+        t('crumb.fallback', {
+          type: t('crumb.agency'),
+          id: String(agency.agency_id ?? ''),
+        }),
       url: agency.agency_url,
       timezone: agency.agency_timezone,
       lang: agency.agency_lang,
@@ -391,11 +402,11 @@ export class GTFSRelationships {
     // Fallback to standard direction names
     switch (direction_id) {
       case '0':
-        return 'Outbound';
+        return t('tt.outbound');
       case '1':
-        return 'Inbound';
+        return t('tt.inbound');
       default:
-        return `Direction ${direction_id}`;
+        return t('tt.directionN', { id: String(direction_id) });
     }
   }
 
@@ -965,7 +976,12 @@ export class GTFSRelationships {
       const agency = agencyData[0];
       return {
         id: agency.agency_id,
-        name: agency.agency_name || `Agency ${agency.agency_id}`,
+        name:
+          agency.agency_name ||
+          t('crumb.fallback', {
+            type: t('crumb.agency'),
+            id: String(agency.agency_id ?? ''),
+          }),
         url: agency.agency_url,
         timezone: agency.agency_timezone,
         lang: agency.agency_lang,
