@@ -472,17 +472,33 @@ export async function showTranslationsModal(
       }
       if (el.closest('[data-tr-add-lang]')) {
         void addLanguage();
+      }
+    });
+
+    // Cells open on mousedown: a commit's re-render can land before the click,
+    // which then has no cell to target.
+    paneEl.addEventListener('mousedown', (e) => {
+      const el = e.target as HTMLElement;
+      const td = el.closest<HTMLElement>('td[data-tr-lang]');
+      if (e.button !== 0 || !td || el.closest('input')) {
         return;
       }
-      const td = el.closest<HTMLElement>('td[data-tr-lang]');
-      if (!td) {
+      e.preventDefault();
+      const cell = {
+        key: td.dataset.trKey ?? '',
+        lang: td.dataset.trLang ?? '',
+      };
+      const open = paneEl.querySelector<HTMLInputElement>(
+        'td[data-tr-lang] input'
+      );
+      if (open) {
+        // The blur commits, then opens pendingFocus.
+        pendingFocus = cell;
+        open.blur();
         return;
       }
       if (committing) {
-        pendingFocus = {
-          key: td.dataset.trKey ?? '',
-          lang: td.dataset.trLang ?? '',
-        };
+        pendingFocus = cell;
         return;
       }
       openEditor(paneEl, td);
