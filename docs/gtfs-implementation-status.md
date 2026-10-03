@@ -19,7 +19,7 @@ UI support levels:
 | `shapes.txt` | Optional | Full | Route shape polylines rendered on map, simplification, geojson.io round trip |
 | `feed_info.txt` | Conditionally Required | Full | Dedicated inline-editable properties panel on the home page |
 | `frequencies.txt` | Optional | Full | Headway periods edited per trip in the timetable |
-| `transfers.txt` | Optional | Full | Drawn as edges from the focused stop on the map, listed on the stop page, edited in the Feed Data modal |
+| `transfers.txt` | Optional | Full | Drawn as edges from the focused stop on the map, listed on the stop page, edited in the Transfers modal grouped by from-stop station |
 | `pathways.txt` | Optional | Full | Drawn on the map inside an expanded station, created from the map, own pathway page |
 | `levels.txt` | Conditionally Required | Full | Levels editor with the stops on each level |
 | `fare_attributes.txt` | Optional | Partial | Fares v1: table viewer only |
@@ -38,6 +38,6 @@ UI support levels:
 | `location_groups.txt` | Optional | Full | On-demand editor, own location group page with members and routes, members shown on the map |
 | `location_group_stops.txt` | Optional | Full | Members edited on the location group page and in the on-demand editor |
 | `booking_rules.txt` | Optional | Full | On-demand editor; assigned from the timetable |
-| `translations.txt` | Optional | Full | Feed Data modal; not yet applied to displayed labels |
-| `attributions.txt` | Optional | Full | Feed Data modal; shown as cards on the home page |
+| `translations.txt` | Optional | Full | Translations modal: a matrix per table and field with a column per language, plus the raw rows; ID renames carry over, orphans are flagged in Feed Issues; not yet applied to displayed labels |
+| `attributions.txt` | Optional | Full | Attributions modal |
 | `locations.geojson` | Optional | Full | Zones on the map, own zone page, geometry edited through a geojson.io round trip |
