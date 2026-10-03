@@ -102,7 +102,8 @@ function str(value: unknown): string {
 }
 
 function recordKey(id: string, sub: string): string {
-  return `${id}\u0000${sub}`;
+  // Rendered into data-tr-key, so no NUL: HTML turns it into U+FFFD.
+  return JSON.stringify([id, sub]);
 }
 
 // ─── Spec derivation ──────────────────────────────────────────────────────────

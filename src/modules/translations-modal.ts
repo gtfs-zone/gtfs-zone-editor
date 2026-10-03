@@ -394,7 +394,10 @@ export async function showTranslationsModal(
     input.focus();
 
     let done = false;
-    const commit = async (move: 'stay' | 'next' | 'prev'): Promise<void> => {
+    const commit = async (
+      move: 'stay' | 'next' | 'prev',
+      fromBlur = false
+    ): Promise<void> => {
       if (done) {
         return;
       }
@@ -410,7 +413,10 @@ export async function showTranslationsModal(
         input.classList.add('input-error');
         input.title = result;
         console.warn(`[Translations] rejected ${key} ${lang}: ${result}`);
-        input.focus();
+        // Refocusing on blur fights the element that took focus, in a loop.
+        if (!fromBlur) {
+          input.focus();
+        }
         return;
       }
       // A cell clicked while this one was committing lands in pendingFocus.
@@ -443,7 +449,7 @@ export async function showTranslationsModal(
         void commit(e.shiftKey ? 'prev' : 'next');
       }
     });
-    input.addEventListener('blur', () => void commit('stay'));
+    input.addEventListener('blur', () => void commit('stay', true));
   };
 
   const wireMatrixPane = (
