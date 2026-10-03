@@ -59,6 +59,18 @@ export async function seed(page: Page, testInfo: TestInfo): Promise<void> {
       for (const id of helpPages) {
         localStorage.setItem(`help.${id}.seen`, '1');
       }
+      // Headless Chromium paints a blank copy of the scrolling search
+      // dropdown over the map. The list is clipped at its max height anyway.
+      const style = () => {
+        const tag = document.createElement('style');
+        tag.textContent = '#search-results { overflow-y: hidden !important; }';
+        document.head.append(tag);
+      };
+      if (document.head) {
+        style();
+      } else {
+        document.addEventListener('DOMContentLoaded', style);
+      }
     },
     { theme, helpPages: HELP_PAGES }
   );
