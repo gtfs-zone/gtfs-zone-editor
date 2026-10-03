@@ -21,6 +21,7 @@ import { getEntityDisplay } from '../utils/entity-display';
 import { specStoreName } from '../utils/spec-field-edit';
 import { validateTransferRow } from '../utils/fares-rules';
 import { GTFS_FIELD_SPECS, GTFS_TABLES } from '../types/gtfs';
+import { t } from '../i18n/messages';
 
 export interface TransfersModalDeps extends EditableTableDeps {
   gtfsParser: Pick<GTFSParser, 'getFileDataSync'>;
@@ -39,9 +40,7 @@ const SEARCH_DEBOUNCE_MS = 200;
 /** Key of the group holding rows with no from stop (types 4 and 5). */
 const TRIP_GROUP_KEY = '';
 
-const NOTE = `Rows are grouped by the station of their from stop. Transfer
-  types 4 and 5 link two trips of the same vehicle and name trips instead of
-  stops. A transfer from a station applies to all of its child stops.`;
+const NOTE = t('transfers.note');
 
 interface TransferGroup {
   /** The from stop's parent station, the stop itself, or TRIP_GROUP_KEY. */
@@ -110,7 +109,7 @@ function buildGroups(
         key,
         label:
           key === TRIP_GROUP_KEY
-            ? 'Trip to trip'
+            ? t('transfers.tripToTrip')
             : getEntityDisplay('stops', {
                 stop_id: key,
                 stop_name: station?.name ?? '',
@@ -159,7 +158,7 @@ function renderTypeChips(group: TransferGroup): string {
     .map(([type, count]) => {
       const label =
         enumValues.find((value) => String(value.value) === type)?.label ??
-        `Type ${type}`;
+        t('transfers.type', { type });
       return `<span class="badge badge-ghost badge-sm whitespace-nowrap" title="transfer_type ${escapeHtml(type)}">${count} ${escapeHtml(label)}</span>`;
     })
     .join('');
@@ -174,7 +173,7 @@ function renderGroupSummary(group: TransferGroup): string {
     <summary class="cursor-pointer py-2 flex flex-wrap items-center gap-2">
       <span class="font-medium">${escapeHtml(group.label)}</span>
       ${id}
-      <span class="text-xs opacity-60">${group.count} row${group.count === 1 ? '' : 's'}</span>
+      <span class="text-xs opacity-60">${t('transfers.rows', { count: group.count })}</span>
       <span class="flex flex-wrap gap-1">${renderTypeChips(group)}</span>
     </summary>`;
 }
@@ -302,13 +301,19 @@ export async function showTransfersModal(
     const totalEl = document.getElementById('transfers-total');
     if (totalEl) {
       totalEl.textContent = needle
-        ? `${shown.length} of ${groups.length} groups`
-        : `${total} transfer${total === 1 ? '' : 's'} in ${groups.length} group${groups.length === 1 ? '' : 's'}`;
+        ? t('transfers.groupsShown', {
+            shown: shown.length,
+            total: groups.length,
+          })
+        : t('transfers.total', {
+            transfers: t('transfers.count', { count: total }),
+            groups: t('transfers.groups', { count: groups.length }),
+          });
     }
 
     container.innerHTML =
       shown.length === 0
-        ? `<p class="text-sm opacity-60 py-4">${needle ? 'No station matches the search.' : 'No transfers yet. Add one above to make a connection timed, to give it a minimum time, or to rule it out.'}</p>`
+        ? `<p class="text-sm opacity-60 py-4">${needle ? t('transfers.noMatch') : t('transfers.empty')}</p>`
         : shown
             .map(
               (group) => `
@@ -410,24 +415,24 @@ export async function showTransfersModal(
   installEditableTableHandlers(newConfig);
 
   await showModal({
-    title: 'Transfers',
+    title: t('transfers.title'),
     body: `
       <p class="text-sm opacity-70 mb-3">${escapeHtml(NOTE)}
         <a href="https://gtfs.org/documentation/schedule/reference/#transferstxt"
-           target="_blank" rel="noopener noreferrer" class="link">GTFS reference</a>.</p>
+           target="_blank" rel="noopener noreferrer" class="link">${t('fares.reference')}</a>.</p>
       <div class="mb-4">
-        <h4 class="text-sm font-semibold mb-1">New transfer</h4>
+        <h4 class="text-sm font-semibold mb-1">${t('transfers.new')}</h4>
         <div id="transfers-new"></div>
       </div>
       <div class="flex items-center gap-3 mb-2">
         <input id="transfers-search" type="search" class="input input-sm w-72"
-               placeholder="Search stations and stops" autocomplete="off">
+               placeholder="${t('transfers.search')}" autocomplete="off">
         <span id="transfers-total" class="text-sm opacity-60"></span>
       </div>
       <div id="transfers-groups"></div>`,
     boxClassName: 'max-w-6xl',
     escapeAction: 0,
-    actions: [{ label: 'Close', onClick: () => {} }],
+    actions: [{ label: t('common.close'), onClick: () => {} }],
     onMount,
   });
 

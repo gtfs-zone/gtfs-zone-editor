@@ -53,6 +53,7 @@ import {
 } from '../utils/constrained-values';
 import { GTFS_TABLES } from '../types/gtfs';
 import type { PatchRecord } from '../types/patch';
+import { t } from '../i18n/messages';
 
 export interface TranslationsModalDeps extends EditableTableDeps {
   patchManager: EditableTableDeps['patchManager'] &
@@ -71,17 +72,11 @@ const ALL_ROWS_ID = 'all-rows';
 const RAW_INSTANCE_ID = 'translations-table';
 const SEARCH_DEBOUNCE_MS = 200;
 
-const INTRO = `The translations of the feed's text. Pick a field to translate
-  its values by language, or open All rows for the raw rows.`;
+const INTRO = t('translations.intro');
 
-const MATRIX_NOTE = `By value translates every record holding the same text;
-  by record translates one record and takes precedence over a by value
-  translation. Translations are stored and exported, but are not yet applied to
-  labels shown in the app.`;
+const MATRIX_NOTE = t('translations.matrixNote');
 
-const RAW_NOTE = `record_id is the first field of the named table's primary
-  key; it is not checked against that table, since which table it names varies
-  per row.`;
+const RAW_NOTE = t('translations.rawNote');
 
 interface PaneFilter {
   search: string;
@@ -116,7 +111,7 @@ function buildEntries(
 
 function docLink(anchor: string): string {
   return `<a href="https://gtfs.org/documentation/schedule/reference/#${anchor}"
-    target="_blank" rel="noopener noreferrer" class="link">GTFS reference</a>.`;
+    target="_blank" rel="noopener noreferrer" class="link">${t('fares.reference')}</a>.`;
 }
 
 function patchTables(record: PatchRecord | undefined): string[] {
@@ -280,7 +275,7 @@ export async function showTranslationsModal(
             ${(['value', 'record'] as const)
               .map(
                 (mode) =>
-                  `<button type="button" class="btn btn-xs join-item ${view.mode === mode ? 'btn-active' : ''}" data-tr-mode="${mode}">By ${mode}</button>`
+                  `<button type="button" class="btn btn-xs join-item ${view.mode === mode ? 'btn-active' : ''}" data-tr-mode="${mode}">${mode === 'value' ? t('translations.byValue') : t('translations.byRecord')}</button>`
               )
               .join('')}
           </div>`;
@@ -289,19 +284,19 @@ export async function showTranslationsModal(
     const chips = view.languages
       .map(
         (lang) =>
-          `<span class="badge badge-ghost badge-sm whitespace-nowrap">${escapeHtml(lang)} ${covered.get(lang) ?? 0} / ${total} translated</span>`
+          `<span class="badge badge-ghost badge-sm whitespace-nowrap">${escapeHtml(t('translations.coverage', { lang, done: covered.get(lang) ?? 0, total }))}</span>`
       )
       .join('');
     return `
       <div class="flex flex-wrap items-center gap-3 mb-2">
         ${modeSwitch}
         <input type="search" class="input input-sm w-64" data-tr-search
-               placeholder="Search text" autocomplete="off"
+               placeholder="${t('translations.search')}" autocomplete="off"
                value="${escapeHtml(filter.search)}">
         <label class="label text-sm gap-2 cursor-pointer">
           <input type="checkbox" class="checkbox checkbox-sm" data-tr-untranslated
                  ${filter.untranslatedOnly ? 'checked' : ''}>
-          Untranslated only
+          ${t('translations.untranslatedOnly')}
         </label>
       </div>
       <div class="flex flex-wrap gap-1 mb-2">${chips}</div>`;
@@ -335,10 +330,10 @@ export async function showTranslationsModal(
 
   const addLanguage = async (): Promise<void> => {
     const picked = await showOptionPickerModal({
-      title: 'Add a language',
+      title: t('translations.addLanguage'),
       options: languageOptions(),
       searchable: true,
-      placeholder: 'Search languages',
+      placeholder: t('translations.searchLanguages'),
     });
     if (picked === null) {
       return;
@@ -523,10 +518,7 @@ export async function showTranslationsModal(
     tableName: GTFS_TABLES.TRANSLATIONS,
     rows: [],
     deps,
-    emptyMessage: emptyState(
-      GTFS_TABLES.TRANSLATIONS,
-      'Add one per translated value. Name what to translate either by record_id, or by field_value to translate every field holding that exact value.'
-    ),
+    emptyMessage: emptyState(GTFS_TABLES.TRANSLATIONS, t('translations.hint')),
     columnOverrides: {
       field_name: {
         suggestions: () => Promise.resolve(allTranslatableFieldNames()),
@@ -569,7 +561,7 @@ export async function showTranslationsModal(
     rawConfig.rows = rows;
     const more =
       matches > rows.length
-        ? `<p class="text-sm opacity-60 py-2">${matches - rows.length} more, refine the search.</p>`
+        ? `<p class="text-sm opacity-60 py-2">${t('translations.more', { count: matches - rows.length })}</p>`
         : '';
     return (await renderEditableTable(rawConfig)) + more;
   };
@@ -580,7 +572,7 @@ export async function showTranslationsModal(
     return `
       <div class="flex items-center gap-3 mb-2">
         <input type="search" class="input input-sm w-64" data-tr-raw-search
-               placeholder="Search all columns" autocomplete="off"
+               placeholder="${t('translations.searchAll')}" autocomplete="off"
                value="${escapeHtml(filter.search)}">
       </div>
       <div data-tr-raw>${await renderRawTable()}</div>`;
@@ -631,7 +623,7 @@ export async function showTranslationsModal(
 
   try {
     await showSidebarModal({
-      title: 'Translations',
+      title: t('translations.title'),
       intro: INTRO,
       initialId,
       refreshRef,
@@ -640,7 +632,10 @@ export async function showTranslationsModal(
         ...entries.map((entry) => ({
           id: entry.id,
           group: entry.file,
-          label: entry.id === 'feed_info' ? 'All fields' : entry.fields[0],
+          label:
+            entry.id === 'feed_info'
+              ? t('translations.allFields')
+              : entry.fields[0],
           paneTitle:
             entry.id === 'feed_info'
               ? entry.file
@@ -656,7 +651,7 @@ export async function showTranslationsModal(
         {
           id: ALL_ROWS_ID,
           group: 'translations.txt',
-          label: 'All rows',
+          label: t('translations.allRows'),
           note: `${escapeHtml(RAW_NOTE)} ${docLink('translationstxt')}`,
           count: () =>
             Promise.resolve(

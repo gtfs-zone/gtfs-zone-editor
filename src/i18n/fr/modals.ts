@@ -50,34 +50,78 @@ export const modals: Translation<typeof en> = {
     "Fares v2 : les produits qu'un voyageur peut acheter, les règles qui en tirent le prix d'un parcours, et la géographie à laquelle ces règles font référence. Fares v1 ({files}) ne se modifie pas ici : ouvrez ces tables dans la visionneuse de fichiers.",
   'fares.reference': 'Référence GTFS',
   'fares.title': 'Tarifs',
-  'feedData.attrOneScope':
-    'Un seul de agency_id, route_id ou trip_id peut être renseigné ({found} trouvés)',
-  'feedData.forbiddenFeedInfo':
-    '{field} est interdit quand table_name vaut feed_info',
-  'feedData.exclusive':
-    "record_id et field_value s'excluent mutuellement : renseignez l'un ou l'autre",
-  'feedData.eitherRequired': 'record_id ou field_value est obligatoire',
-  'feedData.subIdNeedsId': 'record_sub_id nécessite record_id',
-  'feedData.stopTimesSubId':
-    'record_sub_id (le stop_sequence) est obligatoire pour traduire stop_times par record_id',
-  'feedData.transfers': 'Correspondances',
-  'feedData.transfersHint':
-    "Ajoutez-en une pour changer le traitement d'une correspondance entre deux arrêts : la garantir, lui donner un temps minimum ou l'interdire.",
-  'feedData.transfersNote':
-    "Les types de correspondance 4 et 5 relient deux voyages du même véhicule et citent des voyages au lieu d'arrêts. Une correspondance depuis une station s'applique à tous ses arrêts enfants.",
-  'feedData.attributions': 'Attributions',
-  'feedData.attributionsHint':
-    'Ajoutez-en une pour créditer une organisation pour le jeu de données, ou pour une agence, une ligne ou un voyage de celui-ci.',
-  'feedData.attributionsNote':
+  'attributions.title': 'Attributions',
+  'attributions.note':
     "Laissez agency_id, route_id et trip_id vides pour attribuer tout le jeu de données ; en renseigner un limite l'attribution à celui-ci. Au moins un de is_producer, is_operator et is_authority devrait valoir 1.",
-  'feedData.translations': 'Traductions',
-  'feedData.translationsHint':
+  'attributions.hint':
+    'Ajoutez-en une pour créditer une organisation pour le jeu de données, ou pour une agence, une ligne ou un voyage de celui-ci.',
+  'attributions.oneScope':
+    'Un seul de agency_id, route_id ou trip_id peut être renseigné ({found} trouvés)',
+  'transfers.title': 'Correspondances',
+  'transfers.note':
+    "Les lignes sont regroupées par la station de leur arrêt de départ. Les types de correspondance 4 et 5 relient deux voyages du même véhicule et citent des voyages au lieu d'arrêts. Une correspondance depuis une station s'applique à tous ses arrêts enfants.",
+  'transfers.tripToTrip': 'Voyage à voyage',
+  'transfers.type': 'Type {type}',
+  'transfers.rows_one': '{count} ligne',
+  'transfers.rows_other': '{count} lignes',
+  'transfers.groupsShown': '{shown} groupes sur {total}',
+  'transfers.total': '{transfers} dans {groups}',
+  'transfers.count_one': '{count} correspondance',
+  'transfers.count_other': '{count} correspondances',
+  'transfers.groups_one': '{count} groupe',
+  'transfers.groups_other': '{count} groupes',
+  'transfers.noMatch': 'Aucune station ne correspond à la recherche.',
+  'transfers.empty':
+    "Aucune correspondance pour l'instant. Ajoutez-en une ci-dessus pour garantir une correspondance, lui donner un temps minimum ou l'interdire.",
+  'transfers.new': 'Nouvelle correspondance',
+  'transfers.search': 'Rechercher des stations et des arrêts',
+  'translations.title': 'Traductions',
+  'translations.intro':
+    'Les traductions des textes du flux. Choisissez un champ pour traduire ses valeurs par langue, ou ouvrez Toutes les lignes pour les lignes brutes.',
+  'translations.matrixNote':
+    "Par valeur traduit chaque enregistrement contenant le même texte ; par enregistrement traduit un seul enregistrement et l'emporte sur une traduction par valeur. Les traductions sont enregistrées et exportées, mais pas encore appliquées aux libellés affichés dans l'application.",
+  'translations.rawNote':
+    "record_id est le premier champ de la clé primaire de la table citée ; il n'est pas vérifié par rapport à cette table, puisque la table citée varie d'une ligne à l'autre.",
+  'translations.hint':
     "Ajoutez-en une par valeur traduite. Désignez ce qu'il faut traduire soit par record_id, soit par field_value pour traduire chaque champ contenant exactement cette valeur.",
-  'feedData.translationsNote':
-    "Les traductions sont enregistrées et exportées, mais pas encore appliquées aux libellés affichés dans l'application. record_id est le premier champ de la clé primaire de la table citée ; il n'est pas vérifié par rapport à cette table, puisque la table citée varie d'une ligne à l'autre.",
-  'feedData.intro':
-    'Tables au niveau du flux qui décrivent le reste du flux sans rien ajouter à la carte : les correspondances entre arrêts, à qui les données sont attribuées, et les traductions de ses textes.',
-  'feedData.title': 'Données du flux',
+  'translations.byValue': 'Par valeur',
+  'translations.byRecord': 'Par enregistrement',
+  'translations.coverage': '{lang} {done} / {total} traduits',
+  'translations.search': 'Rechercher du texte',
+  'translations.untranslatedOnly': 'Non traduits uniquement',
+  'translations.addLanguage': 'Ajouter une langue',
+  'translations.searchLanguages': 'Rechercher une langue',
+  'translations.allFields': 'Tous les champs',
+  'translations.allRows': 'Toutes les lignes',
+  'translations.searchAll': 'Rechercher dans toutes les colonnes',
+  'translations.more': '{count} de plus, affinez la recherche.',
+  'translations.original': 'Original',
+  'translations.originalLang': 'Original ({lang})',
+  'translations.field': 'Champ',
+  'translations.usedBy': 'Utilisé par',
+  'translations.record': 'Enregistrement',
+  'translations.sameAsFeedLang':
+    'Identique à feed_lang : ces traductions remplacent le texte original pour {lang}',
+  'translations.newLanguage':
+    "Nouvelle langue : elle est conservée dès qu'une de ses cellules est remplie",
+  'translations.inherited':
+    'Issu de la traduction par valeur ; saisir ici la remplace pour cet enregistrement',
+  'translations.overridesTitle':
+    "Enregistrements ayant leur propre traduction, qui l'emporte",
+  'translations.overrides_one': '{count} remplacement',
+  'translations.overrides_other': '{count} remplacements',
+  'translations.noValues': "Aucun enregistrement n'a de valeur dans ce champ.",
+  'translations.noMatch': 'Aucune ligne ne correspond.',
+  'translations.noRow': 'Aucune ligne {key}',
+  'translations.exists': 'Une traduction avec ces valeurs de clé existe déjà',
+  'translations.forbiddenFeedInfo':
+    '{field} est interdit quand table_name vaut feed_info',
+  'translations.exclusive':
+    "record_id et field_value s'excluent mutuellement : renseignez l'un ou l'autre",
+  'translations.eitherRequired': 'record_id ou field_value est obligatoire',
+  'translations.subIdNeedsId': 'record_sub_id nécessite record_id',
+  'translations.stopTimesSubId':
+    'record_sub_id (le stop_sequence) est obligatoire pour traduire stop_times par record_id',
   'flex.zonesHint':
     'Une zone est un secteur où un voyageur peut être pris en charge ou déposé. Les zones arrivent en important un flux avec locations.geojson, ou vous pouvez en tracer une dans geojson.io et la créer ici.',
   'flex.name': 'Nom',

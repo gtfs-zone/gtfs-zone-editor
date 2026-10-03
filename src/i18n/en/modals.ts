@@ -47,34 +47,78 @@ export const modals = {
     'Fares v2: the products a rider can buy, the rules that price a journey out of them, and the geography those rules refer to. Fares v1 ({files}) is not edited here: open those tables in the file viewer.',
   'fares.reference': 'GTFS reference',
   'fares.title': 'Fares',
-  'feedData.attrOneScope':
-    'Only one of agency_id, route_id or trip_id may be set (found {found})',
-  'feedData.forbiddenFeedInfo':
-    '{field} is forbidden when table_name is feed_info',
-  'feedData.exclusive':
-    'record_id and field_value are mutually exclusive: set one or the other',
-  'feedData.eitherRequired': 'Either record_id or field_value is required',
-  'feedData.subIdNeedsId': 'record_sub_id requires record_id',
-  'feedData.stopTimesSubId':
-    'record_sub_id (the stop_sequence) is required when translating stop_times by record_id',
-  'feedData.transfers': 'Transfers',
-  'feedData.transfersHint':
-    'Add one to override how a connection between two stops is treated: to make it timed, to give it a minimum time, or to rule it out.',
-  'feedData.transfersNote':
-    'Transfer types 4 and 5 link two trips of the same vehicle and name trips instead of stops. A transfer from a station applies to all of its child stops.',
-  'feedData.attributions': 'Attributions',
-  'feedData.attributionsHint':
-    'Add one to credit an organization for the dataset, or for one agency, route or trip in it.',
-  'feedData.attributionsNote':
+  'attributions.title': 'Attributions',
+  'attributions.note':
     'Leave agency_id, route_id and trip_id empty to attribute the whole dataset; setting one scopes the attribution to it. At least one of is_producer, is_operator and is_authority should be 1.',
-  'feedData.translations': 'Translations',
-  'feedData.translationsHint':
+  'attributions.hint':
+    'Add one to credit an organization for the dataset, or for one agency, route or trip in it.',
+  'attributions.oneScope':
+    'Only one of agency_id, route_id or trip_id may be set (found {found})',
+  'transfers.title': 'Transfers',
+  'transfers.note':
+    'Rows are grouped by the station of their from stop. Transfer types 4 and 5 link two trips of the same vehicle and name trips instead of stops. A transfer from a station applies to all of its child stops.',
+  'transfers.tripToTrip': 'Trip to trip',
+  'transfers.type': 'Type {type}',
+  'transfers.rows_one': '{count} row',
+  'transfers.rows_other': '{count} rows',
+  'transfers.groupsShown': '{shown} of {total} groups',
+  'transfers.total': '{transfers} in {groups}',
+  'transfers.count_one': '{count} transfer',
+  'transfers.count_other': '{count} transfers',
+  'transfers.groups_one': '{count} group',
+  'transfers.groups_other': '{count} groups',
+  'transfers.noMatch': 'No station matches the search.',
+  'transfers.empty':
+    'No transfers yet. Add one above to make a connection timed, to give it a minimum time, or to rule it out.',
+  'transfers.new': 'New transfer',
+  'transfers.search': 'Search stations and stops',
+  'translations.title': 'Translations',
+  'translations.intro':
+    "The translations of the feed's text. Pick a field to translate its values by language, or open All rows for the raw rows.",
+  'translations.matrixNote':
+    'By value translates every record holding the same text; by record translates one record and takes precedence over a by value translation. Translations are stored and exported, but are not yet applied to labels shown in the app.',
+  'translations.rawNote':
+    "record_id is the first field of the named table's primary key; it is not checked against that table, since which table it names varies per row.",
+  'translations.hint':
     'Add one per translated value. Name what to translate either by record_id, or by field_value to translate every field holding that exact value.',
-  'feedData.translationsNote':
-    'Translations are stored and exported, but are not yet applied to labels shown in the app. record_id is the first field of the named table’s primary key; it is not checked against that table, since which table it names varies per row.',
-  'feedData.intro':
-    'Feed-level tables that describe the rest of the feed rather than adding anything to the map: the connections between stops, who the data is attributed to, and the translations of its text.',
-  'feedData.title': 'Feed Data',
+  'translations.byValue': 'By value',
+  'translations.byRecord': 'By record',
+  'translations.coverage': '{lang} {done} / {total} translated',
+  'translations.search': 'Search text',
+  'translations.untranslatedOnly': 'Untranslated only',
+  'translations.addLanguage': 'Add a language',
+  'translations.searchLanguages': 'Search languages',
+  'translations.allFields': 'All fields',
+  'translations.allRows': 'All rows',
+  'translations.searchAll': 'Search all columns',
+  'translations.more': '{count} more, refine the search.',
+  'translations.original': 'Original',
+  'translations.originalLang': 'Original ({lang})',
+  'translations.field': 'Field',
+  'translations.usedBy': 'Used by',
+  'translations.record': 'Record',
+  'translations.sameAsFeedLang':
+    'Same as feed_lang: these translations override the original text for {lang}',
+  'translations.newLanguage':
+    'New language: it is kept once a cell in it is filled',
+  'translations.inherited':
+    'From the by value translation; typing here overrides it for this record',
+  'translations.overridesTitle':
+    'Records with their own translation, which takes precedence',
+  'translations.overrides_one': '{count} override',
+  'translations.overrides_other': '{count} overrides',
+  'translations.noValues': 'No record has a value in this field.',
+  'translations.noMatch': 'No row matches.',
+  'translations.noRow': 'No row {key}',
+  'translations.exists': 'A translation with these key values already exists',
+  'translations.forbiddenFeedInfo':
+    '{field} is forbidden when table_name is feed_info',
+  'translations.exclusive':
+    'record_id and field_value are mutually exclusive: set one or the other',
+  'translations.eitherRequired': 'Either record_id or field_value is required',
+  'translations.subIdNeedsId': 'record_sub_id requires record_id',
+  'translations.stopTimesSubId':
+    'record_sub_id (the stop_sequence) is required when translating stop_times by record_id',
   'flex.zonesHint':
     'A zone is an area a rider can be picked up in or dropped off in. Zones arrive by importing a feed with locations.geojson, or you can draw one in geojson.io and create it here.',
   'flex.name': 'Name',

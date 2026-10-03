@@ -15,14 +15,13 @@ import {
 import { emptyState } from './fares-modal';
 import { specStoreName } from '../utils/spec-field-edit';
 import { GTFS_TABLES } from '../types/gtfs';
+import { t } from '../i18n/messages';
 
 export type AttributionsModalDeps = EditableTableDeps;
 
 const INSTANCE_ID = 'attributions-table';
 
-const NOTE = `Leave agency_id, route_id and trip_id empty to attribute the whole
-  dataset; setting one scopes the attribution to it. At least one of
-  is_producer, is_operator and is_authority should be 1.`;
+const NOTE = t('attributions.note');
 
 /**
  * An attribution names at most one of an agency, a route or a trip; naming none
@@ -40,7 +39,7 @@ export function validateAttributionRow(
     (field) => String(row[field] ?? '').trim() !== ''
   );
   if (scopes.length > 1) {
-    return `Only one of agency_id, route_id or trip_id may be set (found ${scopes.join(', ')})`;
+    return t('attributions.oneScope', { found: scopes.join(', ') });
   }
   return null;
 }
@@ -57,10 +56,7 @@ export async function showAttributionsModal(
     tableName: GTFS_TABLES.ATTRIBUTIONS,
     rows: [],
     deps,
-    emptyMessage: emptyState(
-      GTFS_TABLES.ATTRIBUTIONS,
-      'Add one to credit an organization for the dataset, or for one agency, route or trip in it.'
-    ),
+    emptyMessage: emptyState(GTFS_TABLES.ATTRIBUTIONS, t('attributions.hint')),
     columnOverrides: {
       organization_name: { widthClass: 'min-w-48' },
     },
@@ -97,15 +93,15 @@ export async function showAttributionsModal(
   installEditableTableHandlers(config);
 
   await showModal({
-    title: 'Attributions',
+    title: t('attributions.title'),
     body: `
       <p class="text-sm opacity-70 mb-3">${escapeHtml(NOTE)}
         <a href="https://gtfs.org/documentation/schedule/reference/#attributionstxt"
-           target="_blank" rel="noopener noreferrer" class="link">GTFS reference</a>.</p>
+           target="_blank" rel="noopener noreferrer" class="link">${t('fares.reference')}</a>.</p>
       <div id="attributions-panel"></div>`,
     boxClassName: 'max-w-6xl',
     escapeAction: 0,
-    actions: [{ label: 'Close', onClick: () => {} }],
+    actions: [{ label: t('common.close'), onClick: () => {} }],
     onMount: () => void refresh(),
   });
 

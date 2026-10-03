@@ -21,6 +21,7 @@ import {
   translationRecordFields,
 } from '../utils/translation-targets';
 import { GTFS_FIELD_SPECS, GTFS_TABLES } from '../types/gtfs';
+import { t } from '../i18n/messages';
 
 export type MatrixMode = 'value' | 'record';
 
@@ -145,23 +146,23 @@ export function validateTranslationRow(
       ['field_value', fieldValue],
     ]) {
       if (value !== '') {
-        return `${field} is forbidden when table_name is feed_info`;
+        return t('translations.forbiddenFeedInfo', { field });
       }
     }
     return null;
   }
 
   if (recordId !== '' && fieldValue !== '') {
-    return 'record_id and field_value are mutually exclusive: set one or the other';
+    return t('translations.exclusive');
   }
   if (recordId === '' && fieldValue === '') {
-    return 'Either record_id or field_value is required';
+    return t('translations.eitherRequired');
   }
   if (recordSubId !== '' && recordId === '') {
-    return 'record_sub_id requires record_id';
+    return t('translations.subIdNeedsId');
   }
   if (tableName === 'stop_times' && recordId !== '' && recordSubId === '') {
-    return 'record_sub_id (the stop_sequence) is required when translating stop_times by record_id';
+    return t('translations.stopTimesSubId');
   }
   return null;
 }
@@ -465,27 +466,31 @@ export function filterRows(
 // ─── Render ───────────────────────────────────────────────────────────────────
 
 function renderHeader(view: MatrixView): string {
-  const original = `Original${view.feedLang ? ` (${escapeHtml(view.feedLang)})` : ''}`;
+  const original = escapeHtml(
+    view.feedLang
+      ? t('translations.originalLang', { lang: view.feedLang })
+      : t('translations.original')
+  );
   const lead =
     view.entry.id === 'feed_info'
-      ? `<th>Field</th><th>${original}</th>`
+      ? `<th>${t('translations.field')}</th><th>${original}</th>`
       : view.mode === 'value'
-        ? `<th>${original}</th><th class="whitespace-nowrap">Used by</th>`
-        : `<th>Record</th><th>${original}</th>`;
+        ? `<th>${original}</th><th class="whitespace-nowrap">${t('translations.usedBy')}</th>`
+        : `<th>${t('translations.record')}</th><th>${original}</th>`;
   const languages = view.languages
     .map((lang) => {
       const pending = view.pending.has(lang);
       const title =
         lang === view.feedLang
-          ? `Same as feed_lang: these translations override the original text for ${lang}`
+          ? t('translations.sameAsFeedLang', { lang })
           : pending
-            ? 'New language: it is kept once a cell in it is filled'
+            ? t('translations.newLanguage')
             : lang;
       const cls = pending ? 'border-dashed border-2 border-warning' : '';
       return `<th class="${cls}" title="${escapeHtml(title)}">${escapeHtml(lang)}${lang === view.feedLang ? ' *' : ''}</th>`;
     })
     .join('');
-  return `<tr>${lead}${languages}<th class="w-0"><button type="button" class="btn btn-xs btn-ghost" data-tr-add-lang title="Add a language">+</button></th></tr>`;
+  return `<tr>${lead}${languages}<th class="w-0"><button type="button" class="btn btn-xs btn-ghost" data-tr-add-lang title="${escapeHtml(t('translations.addLanguage'))}">+</button></th></tr>`;
 }
 
 function renderLead(view: MatrixView, row: MatrixRow): string {
@@ -515,10 +520,10 @@ function renderCell(
   if (cell.own) {
     content = escapeHtml(str(cell.own.translation));
   } else if (cell.inherited) {
-    content = `<span class="opacity-50" title="From the by value translation; typing here overrides it for this record">${escapeHtml(cell.inherited)}</span>`;
+    content = `<span class="opacity-50" title="${escapeHtml(t('translations.inherited'))}">${escapeHtml(cell.inherited)}</span>`;
   }
   if (cell.overrides > 0) {
-    content += ` <span class="badge badge-warning badge-xs whitespace-nowrap" title="Records with their own translation, which takes precedence">${cell.overrides} override${cell.overrides === 1 ? '' : 's'}</span>`;
+    content += ` <span class="badge badge-warning badge-xs whitespace-nowrap" title="${escapeHtml(t('translations.overridesTitle'))}">${t('translations.overrides', { count: cell.overrides })}</span>`;
   }
   return `<td class="min-w-40 cursor-text hover:bg-base-200${pending}" data-tr-key="${escapeHtml(row.key)}" data-tr-lang="${escapeHtml(language)}">${content}</td>`;
 }
@@ -526,10 +531,10 @@ function renderCell(
 /** The grid for the rows that passed the filter, capped. */
 export function renderMatrix(view: MatrixView, shown: MatrixRow[]): string {
   if (view.rows.length === 0) {
-    return `<p class="text-sm opacity-60 py-4">No record has a value in this field.</p>`;
+    return `<p class="text-sm opacity-60 py-4">${t('translations.noValues')}</p>`;
   }
   if (shown.length === 0) {
-    return `<p class="text-sm opacity-60 py-4">No row matches.</p>`;
+    return `<p class="text-sm opacity-60 py-4">${t('translations.noMatch')}</p>`;
   }
   const body = shown
     .slice(0, MATRIX_ROW_LIMIT)
@@ -540,7 +545,7 @@ export function renderMatrix(view: MatrixView, shown: MatrixRow[]): string {
     .join('');
   const more =
     shown.length > MATRIX_ROW_LIMIT
-      ? `<p class="text-sm opacity-60 py-2">${shown.length - MATRIX_ROW_LIMIT} more, refine the search.</p>`
+      ? `<p class="text-sm opacity-60 py-2">${t('translations.more', { count: shown.length - MATRIX_ROW_LIMIT })}</p>`
       : '';
   return `<div class="overflow-x-auto"><table class="table table-sm">
     <thead>${renderHeader(view)}</thead>
@@ -563,7 +568,7 @@ export async function writeCell(
 ): Promise<string | 'unchanged' | null> {
   const row = view.rows.find((candidate) => candidate.key === rowKey);
   if (!row) {
-    return `No row ${rowKey}`;
+    return t('translations.noRow', { key: rowKey });
   }
   const { entry } = view;
   const field = row.field ?? entry.fields[0];
@@ -632,7 +637,7 @@ export async function writeCell(
   }
   const key = generateCompositeKeyFromRecord(TRANSLATIONS_STORE, record);
   if ((await deps.gtfsDatabase.getRow(TRANSLATIONS_STORE, key)) !== undefined) {
-    return 'A translation with these key values already exists';
+    return t('translations.exists');
   }
   console.log(`[Translations] insert ${label}`);
   await deps.gtfsDatabase.insertRows(TRANSLATIONS_STORE, [record]);
