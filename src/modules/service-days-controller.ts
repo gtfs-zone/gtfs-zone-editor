@@ -40,6 +40,10 @@ import { t } from '../i18n/messages';
 interface GTFSParserInterface {
   gtfsDatabase: {
     getAllRows(tableName: string): Promise<Record<string, unknown>[]>;
+    getRow(
+      tableName: string,
+      key: string
+    ): Promise<Record<string, unknown> | undefined>;
     queryRows<T extends keyof GTFSTableMap>(
       tableName: T,
       filter?: { [key: string]: string | number | boolean }
@@ -453,6 +457,9 @@ export class ServiceDaysController {
     return {
       gtfsDatabase: {
         getAllRows: (table) => db.getAllRows(table),
+        getRow: (table, key) => db.getRow(table, key),
+        queryRows: (table, filter) =>
+          db.queryRows(table as keyof GTFSTableMap, filter),
         insertRows: (table, rows) =>
           db.insertRows(
             table as keyof GTFSTableMap,

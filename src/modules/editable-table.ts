@@ -57,6 +57,7 @@ import {
   type FieldConfig,
 } from '../utils/field-component';
 import {
+  buildForeignKeyLabels,
   buildForeignKeyOptions,
   coerceFieldValue,
   formatSpecValue,
@@ -80,6 +81,14 @@ import { t } from '../i18n/messages';
 
 export interface EditableTableDatabase {
   getAllRows(tableName: string): Promise<Record<string, unknown>[]>;
+  getRow(
+    tableName: string,
+    key: string
+  ): Promise<Record<string, unknown> | undefined>;
+  queryRows(
+    tableName: string,
+    filter: Record<string, string>
+  ): Promise<Record<string, unknown>[]>;
   insertRows(tableName: string, rows: Record<string, unknown>[]): Promise<void>;
   updateRow(
     tableName: string,
@@ -230,6 +239,8 @@ export interface EditableTableConfig {
    * either literal copy or a rendered spec description, never user input.
    */
   emptyMessage?: string;
+  /** Omit the trailing blank row, for a table whose rows are added elsewhere. */
+  hideNewRow?: boolean;
   /**
    * Cross-field check on the whole record, run once the row is complete and
    * just before it is written. Per-field validation comes from the spec; this
@@ -484,19 +495,56 @@ async function foreignOptions(
 /**
  * Prefetch the id -> label map for every foreign-ID column, so cells can show
  * "Adult (adult)" instead of a bare id.
+ *
+ * Only the ids the rows hold are labelled. Columns naming the same targets
+ * (`from_stop_id` and `to_stop_id`) share one map, so each id is read once.
  */
 async function foreignLabelMaps(
   config: EditableTableConfig
 ): Promise<Map<string, Map<string, string>>> {
   const specs = fieldSpecs(config.tableName);
   const maps = new Map<string, Map<string, string>>();
+  const byTargets = new Map<
+    string,
+    { spec: GTFSFieldSpec; fields: string[]; values: Set<string> }
+  >();
   for (const field of columnFields(config)) {
     const spec = specs[field];
     if (!spec || specFieldKind(spec) !== 'foreign') {
       continue;
     }
-    const options = await foreignOptions(config, field, spec);
-    maps.set(field, new Map(options.map((o) => [o.value, o.primary])));
+    const override = config.columnOverrides?.[field];
+    if (override?.format) {
+      continue;
+    }
+    if (override?.options) {
+      const options = await override.options();
+      maps.set(field, new Map(options.map((o) => [o.value, o.primary])));
+      continue;
+    }
+    const targetsKey = JSON.stringify(spec.foreignKey ?? []);
+    let entry = byTargets.get(targetsKey);
+    if (!entry) {
+      entry = { spec, fields: [], values: new Set() };
+      byTargets.set(targetsKey, entry);
+    }
+    entry.fields.push(field);
+    for (const row of config.rows) {
+      const value = row[field];
+      if (value !== undefined && value !== null && value !== '') {
+        entry.values.add(String(value));
+      }
+    }
+  }
+  for (const { spec, fields, values } of byTargets.values()) {
+    const labels = await buildForeignKeyLabels(
+      config.deps.gtfsDatabase,
+      spec,
+      values
+    );
+    for (const field of fields) {
+      maps.set(field, labels);
+    }
   }
   return maps;
 }
@@ -656,9 +704,10 @@ function renderCell(
 
   // A foreign ID and a standards code open the searchable modal; an enum drops
   // an inline menu and everything else swaps for an input, so only the modal
-  // kinds wear the chevron.
+  // kinds wear the chevron. An empty foreign cell renders plain: a large
+  // table has thousands of them, and the chevron SVG is most of their cost.
   const span =
-    kind === 'foreign' || kind === 'constrained'
+    (kind === 'foreign' && raw !== '') || kind === 'constrained'
       ? renderPickerTrigger({
           content,
           className: `editable-cell min-w-8 ${override?.widthClass ?? ''}`,
@@ -680,6 +729,7 @@ function renderCell(
 export async function renderEditableTable(
   config: EditableTableConfig
 ): Promise<string> {
+  const started = performance.now();
   const specs = fieldSpecs(config.tableName);
   const fields = columnFields(config);
   const labels = await foreignLabelMaps(config);
@@ -816,11 +866,19 @@ export async function renderEditableTable(
     ? ''
     : `<button class="editable-table-add-field btn btn-xs btn-ghost font-normal whitespace-nowrap" data-et="${escapeHtml(config.instanceId)}" title="${t('table.addFieldTip', { table: escapeHtml(config.tableName) })}">${t('table.addFieldBtn')}</button>`;
 
+  const newRowHtml = config.hideNewRow
+    ? ''
+    : `<tr class="editable-table-new-row bg-base-200/50 border-t border-dashed border-base-content/20">${newRowCells}${joinColumns.map(() => '<td></td>').join('')}<td class="align-middle">${newRowStart}</td></tr>`;
+
+  console.log(
+    `[EditableTable] render ${config.instanceId}: ${config.rows.length} rows in ${Math.round(performance.now() - started)} ms`
+  );
+
   return `
     <div class="overflow-x-auto">
       <table class="table table-xs table-pin-rows">
         <thead><tr>${headerHtml}${joinHeaderHtml}<th class="align-bottom text-right">${addFieldHtml}</th></tr></thead>
-        <tbody>${emptyHtml}${bodyHtml}<tr class="editable-table-new-row bg-base-200/50 border-t border-dashed border-base-content/20">${newRowCells}${joinColumns.map(() => '<td></td>').join('')}<td class="align-middle">${newRowStart}</td></tr></tbody>
+        <tbody>${emptyHtml}${bodyHtml}${newRowHtml}</tbody>
       </table>
     </div>
   `;
@@ -1752,8 +1810,15 @@ async function commitNewRow(
     return;
   }
 
+  // The store is checked rather than `config.rows`, which may hold a subset of
+  // the table or nothing at all. A host key or a host insert has its own
+  // notion of a collision, so those only check the rows on screen.
   const key = rowKey(config, record);
-  if (config.rows.some((r) => rowKey(config, r) === key)) {
+  const exists =
+    config.primaryKey || config.insertRow
+      ? config.rows.some((r) => rowKey(config, r) === key)
+      : (await config.deps.gtfsDatabase.getRow(table, key)) !== undefined;
+  if (exists) {
     markCellError(span, 'A row with these key values already exists');
     return;
   }

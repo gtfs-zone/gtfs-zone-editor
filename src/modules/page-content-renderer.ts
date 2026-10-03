@@ -70,7 +70,6 @@ import type {
   RenamePatchManager,
 } from '../utils/rename-entity';
 import { installRenameAction } from '../utils/rename-action';
-import { specStoreName } from '../utils/spec-field-edit';
 import { showOptionPickerModal } from './option-picker-modal';
 import {
   renderPickerTrigger,
@@ -412,6 +411,10 @@ export class PageContentRenderer {
       gtfsDatabase: {
         getAllRows: (table) =>
           db.getAllRows(table) as Promise<Record<string, unknown>[]>,
+        getRow: (table, key) =>
+          db.getRow(table, key) as Promise<Record<string, unknown> | undefined>,
+        queryRows: (table, filter) =>
+          db.queryRows(table, filter) as Promise<Record<string, unknown>[]>,
         insertRows: (table, rows) => db.insertRows(table, rows),
         updateRow: (table, key, data) => updateRow(table, key, data),
         deleteRow: (table, key) => deleteRow(table, key),
@@ -665,8 +668,6 @@ export class PageContentRenderer {
         ${feedIsEmpty ? `<div class="card bg-base-100 shadow-lg"><div class="card-body p-4">${introHtml()}</div></div>` : ''}
         ${await this.renderFeedInfoProperties(feedInfo)}
 
-        ${await this.renderAttributionsSection()}
-
         ${renderIssueCard(t('page.feedIssues'), feedIssues)}
         ${cleanFeedEncouragement ? this.renderCleanFeedEncouragement() : ''}
 
@@ -812,134 +813,6 @@ export class PageContentRenderer {
         </div>
       </div>
     `;
-  }
-
-  /**
-   * Render the attributions section of the home page.
-   *
-   * Read-only cards: attributions are feed metadata, so they belong next to
-   * Feed Information, but editing them stays in the Feed Data modal rather than
-   * being duplicated here. Renders nothing when the feed has none.
-   */
-  private async renderAttributionsSection(): Promise<string> {
-    const rows = (await this.dependencies.gtfsDatabase.getAllRows(
-      specStoreName(GTFS_TABLES.ATTRIBUTIONS)
-    )) as Record<string, unknown>[];
-    if (rows.length === 0) {
-      return '';
-    }
-
-    const cards = await Promise.all(
-      rows.map((row) => this.renderAttributionCard(row))
-    );
-
-    return `
-      <div class="space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <h2 class="text-lg font-semibold">${t('page.attributions')}</h2>
-          <button class="btn btn-xs btn-outline manage-attributions-btn">${t('page.manageAttributions')}</button>
-        </div>
-        <div class="card bg-base-100 shadow-lg">
-          <div class="card-body p-4 space-y-3">
-            ${cards.join('')}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  /** One attribution: organization, roles, scope, and contact links. */
-  private async renderAttributionCard(
-    row: Record<string, unknown>
-  ): Promise<string> {
-    const text = (field: string): string => String(row[field] ?? '').trim();
-
-    const roles = [
-      ['is_producer', t('page.producer')],
-      ['is_operator', t('page.operator')],
-      ['is_authority', t('page.authority')],
-    ]
-      .filter(([field]) => text(field) === '1')
-      .map(
-        ([, label]) =>
-          `<span class="badge badge-sm badge-outline">${label}</span>`
-      )
-      .join('');
-
-    const scopeHtml = await this.renderAttributionScope(row);
-
-    const contacts = [
-      ['attribution_url', text('attribution_url'), text('attribution_url')],
-      [
-        'attribution_email',
-        text('attribution_email'),
-        `mailto:${text('attribution_email')}`,
-      ],
-      [
-        'attribution_phone',
-        text('attribution_phone'),
-        `tel:${text('attribution_phone')}`,
-      ],
-    ]
-      .filter(([, value]) => value !== '')
-      .map(
-        ([, value, href]) =>
-          `<a class="link link-hover text-xs" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`
-      )
-      .join('<span class="opacity-40 text-xs">·</span>');
-
-    const organization = text('organization_name');
-
-    return `
-      <div class="space-y-1">
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="font-semibold">${organization === '' ? `<span class="opacity-60">${t('page.noOrganization')}</span>` : escapeHtml(organization)}</span>
-          ${roles}
-        </div>
-        <div class="text-xs opacity-70">${scopeHtml}</div>
-        ${contacts === '' ? '' : `<div class="flex items-center gap-2 flex-wrap">${contacts}</div>`}
-      </div>
-    `;
-  }
-
-  /**
-   * What an attribution applies to: the agency, route or trip it names, or the
-   * whole dataset when it names none. A named entity that does not exist is
-   * shown as its raw id rather than hidden, so the broken reference is visible.
-   */
-  private async renderAttributionScope(
-    row: Record<string, unknown>
-  ): Promise<string> {
-    const scopes: Array<[string, string, string]> = [
-      ['agency_id', 'agency', t('entity.agency')],
-      ['route_id', 'routes', t('entity.route')],
-      ['trip_id', 'trips', t('entity.trip')],
-    ];
-
-    for (const [field, table, label] of scopes) {
-      const id = String(row[field] ?? '').trim();
-      if (id === '') {
-        continue;
-      }
-      const matches = (await this.dependencies.gtfsDatabase.queryRows(table, {
-        [field]: id,
-      })) as Record<string, string>[];
-      if (matches.length === 0) {
-        return t('page.scopeMissing', {
-          label,
-          id: escapeHtml(id),
-          missing: `<span class="text-error">${t('page.scopeNoSuch', { entity: label.toLowerCase() })}</span>`,
-        });
-      }
-      return t('page.scope', {
-        label,
-        name: escapeHtml(
-          renderOptionLabel(getEntityDisplay(table, matches[0]))
-        ),
-      });
-    }
-
-    return t('page.wholeDataset');
   }
 
   /**
@@ -1453,22 +1326,6 @@ export class PageContentRenderer {
         );
       });
     });
-
-    // Attributions are edited in the Feed Data modal, not on the home page.
-    const manageAttributionsBtn = container.querySelector(
-      '.manage-attributions-btn'
-    );
-    if (manageAttributionsBtn) {
-      manageAttributionsBtn.addEventListener('click', () => {
-        void openModal(
-          { type: 'feed_data', table: GTFS_TABLES.ATTRIBUTIONS },
-          {
-            // The cards above were rendered from the rows the modal just edited.
-            onClosed: () => this.dependencies.onEntityCreated?.(),
-          }
-        );
-      });
-    }
 
     // Route header timetable button
     const openTimetableBtn = container.querySelector('.open-timetable-btn');

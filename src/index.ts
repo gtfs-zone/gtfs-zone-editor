@@ -65,7 +65,9 @@ import {
 } from 'gtfs-zone-web-common/ui/help-pages';
 import { HELP_PAGES } from './modules/help-pages';
 import { showFaresModal } from './modules/fares-modal';
-import { showFeedDataModal } from './modules/feed-data-modal';
+import { showTranslationsModal } from './modules/translations-modal';
+import { showTransfersModal } from './modules/transfers-modal';
+import { showAttributionsModal } from './modules/attributions-modal';
 import { showOnDemandModal } from './modules/on-demand-modal';
 import {
   getZoneFeatures,
@@ -505,9 +507,19 @@ export class GTFSEditor {
         void openModal({ type: 'fares' });
       });
       document
-        .getElementById('feed-data-btn')
+        .getElementById('transfers-btn')
         ?.addEventListener('click', () => {
-          void openModal({ type: 'feed_data' });
+          void openModal({ type: 'transfers' });
+        });
+      document
+        .getElementById('translations-btn')
+        ?.addEventListener('click', () => {
+          void openModal({ type: 'translations' });
+        });
+      document
+        .getElementById('attributions-btn')
+        ?.addEventListener('click', () => {
+          void openModal({ type: 'attributions' });
         });
       document
         .getElementById('on-demand-btn')
@@ -820,15 +832,38 @@ export class GTFSEditor {
       });
     });
 
-    router.register('feed_data', (modal, transient) =>
-      showFeedDataModal(
+    router.register('transfers', (_modal, transient) =>
+      showTransfersModal(
         {
-          gtfsDatabase: this.gtfsParser.gtfsDatabase as Parameters<
-            typeof showFeedDataModal
-          >[0]['gtfsDatabase'],
+          gtfsDatabase: this.gtfsParser
+            .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
           patchManager: this.patchManager,
+          gtfsParser: this.gtfsParser,
+        },
+        { focusStopId: transient.focusStopId, rowKey: transient.rowKey }
+      )
+    );
+
+    router.register('translations', (modal, transient) =>
+      showTranslationsModal(
+        {
+          gtfsDatabase: this.gtfsParser
+            .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
+          patchManager: this.patchManager,
+          gtfsParser: this.gtfsParser,
         },
         { table: modal.table, rowKey: transient.rowKey }
+      )
+    );
+
+    router.register('attributions', (_modal, transient) =>
+      showAttributionsModal(
+        {
+          gtfsDatabase: this.gtfsParser
+            .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
+          patchManager: this.patchManager,
+        },
+        transient.rowKey
       )
     );
 

@@ -22,9 +22,9 @@ export const views: Translation<typeof en> = {
   'view.noTransfers':
     "Aucune correspondance ne cite cet arrêt. Ajoutez-en une pour garantir une correspondance, lui donner un temps minimum ou l'interdire.",
   'view.inSeatNote_one':
-    '{count} correspondance sans descendre (type 4 ou 5) cite aussi cet arrêt. Elle relie deux voyages plutôt que deux arrêts et se modifie donc dans Données du flux.',
+    '{count} correspondance sans descendre (type 4 ou 5) cite aussi cet arrêt. Elle relie deux voyages plutôt que deux arrêts et se modifie donc dans la fenêtre Correspondances.',
   'view.inSeatNote_other':
-    '{count} correspondances sans descendre (type 4 ou 5) citent aussi cet arrêt. Elles relient deux voyages plutôt que deux arrêts et se modifient donc dans Données du flux.',
+    '{count} correspondances sans descendre (type 4 ou 5) citent aussi cet arrêt. Elles relient deux voyages plutôt que deux arrêts et se modifient donc dans la fenêtre Correspondances.',
   'view.transfers': 'Correspondances',
   'view.manageTransfers': 'Gérer toutes les correspondances',
   'view.boardingAreas': "Zones d'embarquement",

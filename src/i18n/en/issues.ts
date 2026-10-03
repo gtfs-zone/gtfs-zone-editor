@@ -23,6 +23,12 @@ export const issues = {
   'issues.unknownLocationType': 'unknown location_type',
   'issues.invalidExceptionType': 'invalid exception_type',
   'issues.invalidArea': 'invalid area assignment',
+  'issues.translationUnknownField':
+    'translations of a field its table does not have',
+  'issues.translationOrphanedRecord':
+    'translations of a record that does not exist',
+  'issues.translationOrphanedValue':
+    'translations of a field_value no row holds any more',
   'issues.noStopTimes': 'without any stop_times',
   'issues.deleteTrips': 'Delete trips',
   'issues.deleteTripsConfirm':

@@ -22,8 +22,9 @@ export const shell: Translation<typeof en> = {
   'nav.calendar': 'Calendrier de service',
   'nav.fares': 'Tarifs (V2)',
   'nav.onDemand': 'Transport à la demande (GTFS Flex)',
-  'nav.feedData':
-    'Données du flux (correspondances, attributions, traductions)',
+  'nav.transfers': 'Correspondances',
+  'nav.translations': 'Traductions',
+  'nav.attributions': 'Attributions',
   'nav.levels': 'Gérer les niveaux',
   'nav.files': 'Fichiers',
   'nav.theme': 'Changer de thème',

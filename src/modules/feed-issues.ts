@@ -126,6 +126,15 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
     label: rowsLabel(t('issues.invalidExceptionType')),
   },
   INVALID_AREA_ASSIGNMENT: { label: rowsLabel(t('issues.invalidArea')) },
+  TRANSLATION_UNKNOWN_FIELD: {
+    label: () => t('issues.translationUnknownField'),
+  },
+  TRANSLATION_ORPHANED_RECORD: {
+    label: () => t('issues.translationOrphanedRecord'),
+  },
+  TRANSLATION_ORPHANED_VALUE: {
+    label: () => t('issues.translationOrphanedValue'),
+  },
   TRIP_WITHOUT_STOP_TIMES: {
     label: rowsLabel(t('issues.noStopTimes')),
     actions: [

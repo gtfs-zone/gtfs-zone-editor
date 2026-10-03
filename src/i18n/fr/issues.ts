@@ -28,6 +28,12 @@ export const issues: Translation<typeof en> = {
   'issues.unknownLocationType': 'avec un location_type inconnu',
   'issues.invalidExceptionType': 'avec un exception_type invalide',
   'issues.invalidArea': 'avec une affectation de secteur invalide',
+  'issues.translationUnknownField':
+    "traductions d'un champ que sa table n'a pas",
+  'issues.translationOrphanedRecord':
+    "traductions d'un enregistrement qui n'existe pas",
+  'issues.translationOrphanedValue':
+    "traductions d'une field_value qu'aucune ligne ne contient plus",
   'issues.noStopTimes': 'sans aucun stop_time',
   'issues.deleteTrips': 'Supprimer les voyages',
   'issues.deleteTripsConfirm':

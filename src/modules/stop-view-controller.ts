@@ -422,14 +422,18 @@ export class StopViewController {
       return '';
     }
 
-    const all = await deps.gtfsDatabase.getAllRows(
-      specStoreName(GTFS_TABLES.TRANSFERS)
-    );
-    const naming = all.filter(
-      (row) =>
-        String(row.from_stop_id ?? '') === stop_id ||
-        String(row.to_stop_id ?? '') === stop_id
-    );
+    const table = specStoreName(GTFS_TABLES.TRANSFERS);
+    const fromRows = await deps.gtfsDatabase.queryRows(table, {
+      from_stop_id: stop_id,
+    });
+    const toRows = await deps.gtfsDatabase.queryRows(table, {
+      to_stop_id: stop_id,
+    });
+    // A transfer from the stop to itself comes back from both queries.
+    const naming = [
+      ...fromRows,
+      ...toRows.filter((row) => String(row.from_stop_id ?? '') !== stop_id),
+    ];
     const rows = naming.filter(
       (row) => !LINKED_TRIP_TYPES.has(Number(row.transfer_type ?? 0) || 0)
     );
@@ -757,8 +761,11 @@ export class StopViewController {
         );
         if (manageTransfers) {
           await openModal(
-            { type: 'feed_data', table: GTFS_TABLES.TRANSFERS },
-            { onClosed: () => this.dependencies.onTransfersChanged?.() }
+            { type: 'transfers' },
+            {
+              focusStopId: this.currentStopId ?? undefined,
+              onClosed: () => this.dependencies.onTransfersChanged?.(),
+            }
           );
           return;
         }

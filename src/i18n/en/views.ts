@@ -19,9 +19,9 @@ export const views = {
   'view.noTransfers':
     'No transfers name this stop. Add one to make a connection timed, to give it a minimum time, or to rule it out.',
   'view.inSeatNote_one':
-    '{count} in-seat transfer (type 4 or 5) also names this stop. Those link two trips rather than two stops, so they are edited in Feed Data.',
+    '{count} in-seat transfer (type 4 or 5) also names this stop. Those link two trips rather than two stops, so they are edited in the Transfers modal.',
   'view.inSeatNote_other':
-    '{count} in-seat transfers (type 4 or 5) also name this stop. Those link two trips rather than two stops, so they are edited in Feed Data.',
+    '{count} in-seat transfers (type 4 or 5) also name this stop. Those link two trips rather than two stops, so they are edited in the Transfers modal.',
   'view.transfers': 'Transfers',
   'view.manageTransfers': 'Manage all transfers',
   'view.boardingAreas': 'Boarding Areas',
