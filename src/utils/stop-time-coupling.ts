@@ -6,9 +6,10 @@
  * asymmetric, because a departure-only edit is how dwell time is expressed:
  *
  * - Arrival edited, departure empty: departure := new arrival.
- * - Arrival edited, departure present: departure shifts by the same delta, so
- *   the dwell is preserved. An empty old arrival gives no delta, so the
- *   departure is left alone.
+ * - Arrival edited, departure equal to the old arrival: both move together.
+ * - Arrival edited, departure different: the dwell was set on purpose, so the
+ *   departure stays, unless the new arrival passes it, in which case the
+ *   departure is raised to the new arrival.
  * - Departure edited, arrival empty: arrival := new departure.
  * - Departure edited, arrival present: arrival unchanged.
  *
@@ -20,7 +21,7 @@ import { TimeFormatter } from './time-formatter';
 export interface CoupledTimes {
   arrival_time: string | null;
   departure_time: string | null;
-  /** Seconds the departure was shifted by to preserve dwell, else null. */
+  /** Seconds the departure moved by, else null. */
   deltaSeconds: number | null;
 }
 
@@ -65,18 +66,14 @@ export function coupleStopTimes(input: CoupleStopTimesInput): CoupledTimes {
     };
   }
 
-  // Times can exceed 24:00:00, so the shift is done in seconds since the start
-  // of the service day, never with Date.
+  // Times can exceed 24:00:00, so they are compared in seconds since the
+  // start of the service day, never with Date or as strings.
   const oldArrivalSeconds = TimeFormatter.timeToSeconds(oldArrival);
   const newArrivalSeconds = TimeFormatter.timeToSeconds(newValue);
   const oldDepartureSeconds = TimeFormatter.timeToSeconds(oldDeparture);
 
-  if (
-    oldArrivalSeconds === null ||
-    newArrivalSeconds === null ||
-    oldDepartureSeconds === null
-  ) {
-    // No usable delta: leave the departure where it is.
+  if (newArrivalSeconds === null || oldDepartureSeconds === null) {
+    // Nothing to compare against: leave the departure where it is.
     return {
       arrival_time: newValue,
       departure_time: oldDeparture,
@@ -84,13 +81,17 @@ export function coupleStopTimes(input: CoupleStopTimesInput): CoupledTimes {
     };
   }
 
-  const delta = newArrivalSeconds - oldArrivalSeconds;
-  const shifted = oldDepartureSeconds + delta;
+  // No dwell: arrival and departure are one time and move together.
+  if (oldArrivalSeconds === oldDepartureSeconds) {
+    return {
+      arrival_time: newValue,
+      departure_time: newValue,
+      deltaSeconds: newArrivalSeconds - oldDepartureSeconds,
+    };
+  }
 
-  if (shifted < 0) {
-    console.warn(
-      `[stop-time-coupling] departure ${oldDeparture} shifted by ${delta}s falls before 00:00:00, clamping to ${newValue}`
-    );
+  // A set dwell is kept, unless the new arrival passes the departure.
+  if (newArrivalSeconds > oldDepartureSeconds) {
     return {
       arrival_time: newValue,
       departure_time: newValue,
@@ -100,7 +101,7 @@ export function coupleStopTimes(input: CoupleStopTimesInput): CoupledTimes {
 
   return {
     arrival_time: newValue,
-    departure_time: TimeFormatter.secondsToTime(shifted),
-    deltaSeconds: delta,
+    departure_time: oldDeparture,
+    deltaSeconds: null,
   };
 }
