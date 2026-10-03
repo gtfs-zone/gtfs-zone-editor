@@ -394,7 +394,10 @@ export async function showTranslationsModal(
     input.focus();
 
     let done = false;
-    const commit = async (move: 'stay' | 'next' | 'prev'): Promise<void> => {
+    const commit = async (
+      move: 'stay' | 'next' | 'prev',
+      fromBlur = false
+    ): Promise<void> => {
       if (done) {
         return;
       }
@@ -410,7 +413,10 @@ export async function showTranslationsModal(
         input.classList.add('input-error');
         input.title = result;
         console.warn(`[Translations] rejected ${key} ${lang}: ${result}`);
-        input.focus();
+        // Refocusing on blur fights the element that took focus, in a loop.
+        if (!fromBlur) {
+          input.focus();
+        }
         return;
       }
       // A cell clicked while this one was committing lands in pendingFocus.
@@ -443,7 +449,7 @@ export async function showTranslationsModal(
         void commit(e.shiftKey ? 'prev' : 'next');
       }
     });
-    input.addEventListener('blur', () => void commit('stay'));
+    input.addEventListener('blur', () => void commit('stay', true));
   };
 
   const wireMatrixPane = (
@@ -466,17 +472,33 @@ export async function showTranslationsModal(
       }
       if (el.closest('[data-tr-add-lang]')) {
         void addLanguage();
+      }
+    });
+
+    // Cells open on mousedown: a commit's re-render can land before the click,
+    // which then has no cell to target.
+    paneEl.addEventListener('mousedown', (e) => {
+      const el = e.target as HTMLElement;
+      const td = el.closest<HTMLElement>('td[data-tr-lang]');
+      if (e.button !== 0 || !td || el.closest('input')) {
         return;
       }
-      const td = el.closest<HTMLElement>('td[data-tr-lang]');
-      if (!td) {
+      e.preventDefault();
+      const cell = {
+        key: td.dataset.trKey ?? '',
+        lang: td.dataset.trLang ?? '',
+      };
+      const open = paneEl.querySelector<HTMLInputElement>(
+        'td[data-tr-lang] input'
+      );
+      if (open) {
+        // The blur commits, then opens pendingFocus.
+        pendingFocus = cell;
+        open.blur();
         return;
       }
       if (committing) {
-        pendingFocus = {
-          key: td.dataset.trKey ?? '',
-          lang: td.dataset.trLang ?? '',
-        };
+        pendingFocus = cell;
         return;
       }
       openEditor(paneEl, td);

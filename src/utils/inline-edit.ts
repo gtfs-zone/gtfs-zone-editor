@@ -49,6 +49,9 @@ let liveInput: HTMLInputElement | null = null;
  */
 let liveCommit: (() => void) | null = null;
 
+/** The live editor's cancel: closes it without committing. */
+let liveCancel: (() => void) | null = null;
+
 /**
  * The write the last commit started, while it is still in flight.
  *
@@ -170,6 +173,16 @@ export function getLiveEditorState(): {
  */
 export function hasLiveEditor(): boolean {
   return liveInput !== null;
+}
+
+/**
+ * Close the live editor without committing, for a caller that has captured its
+ * text with `getLiveEditorState` and reopens it after a re-render. Chrome fires
+ * `blur` on a focused input the re-render removes, which would otherwise commit
+ * the half-typed text.
+ */
+export function discardLiveEditor(): void {
+  liveCancel?.();
 }
 
 /**
@@ -315,6 +328,7 @@ export function openInlineEditor(
     if (liveInput === input) {
       liveInput = null;
       liveCommit = null;
+      liveCancel = null;
     }
   };
   const commit = (): void => {
@@ -374,6 +388,7 @@ export function openInlineEditor(
   }
 
   liveCommit = commit;
+  liveCancel = cancel;
   document.addEventListener('click', onOutsideClick, true);
 
   input.addEventListener('blur', commit);

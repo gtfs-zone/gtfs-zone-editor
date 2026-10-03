@@ -35,6 +35,7 @@ import {
   openInlineEditor,
   openInlineMenu,
   getLiveEditorState,
+  discardLiveEditor,
 } from '../utils/inline-edit';
 import {
   arrowToGridDirection,
@@ -3318,8 +3319,6 @@ export class ScheduleController {
     if (isRetarget) {
       this.resetTimetableScroll();
       this.editingCell = null;
-    } else {
-      this.captureTimetableEditor();
     }
 
     // Use the value tracked by the scroll listener, the DOM is unreliable here
@@ -3335,6 +3334,14 @@ export class ScheduleController {
     const container = document.getElementById('schedule-view');
     if (!container) {
       return;
+    }
+    // Captured after the render: the user may have kept typing during it.
+    if (!isRetarget) {
+      this.captureTimetableEditor();
+      if (this.editingCell) {
+        // Reopened by restoreTimetableEditor: the swap must not commit it.
+        discardLiveEditor();
+      }
     }
     container.outerHTML = html;
 
