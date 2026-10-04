@@ -13,7 +13,7 @@ import {
   refreshFeedIssuesIfStale,
 } from './feed-issues';
 import type { GTFSParser } from './gtfs-parser';
-import { TimeFormatter } from '../utils/time-formatter';
+import { TimeFormatter, renderTimeHtml } from '../utils/time-formatter';
 import {
   coupleStopTimes,
   type CoupledTimes,
@@ -993,6 +993,9 @@ export class ScheduleController {
         // back, so focusing it here is what makes the selection survive the
         // rebuild instead of dropping to the document.
         this.selectTimeCell(span, true);
+        // Before onNavigate opens the next editor, so it seeds from the
+        // previewed value rather than the pre-write one.
+        this.previewTimeEdit(span, value);
         return this.updateArrivalDepartureTime(
           tripId,
           stopId as string,
@@ -1005,6 +1008,65 @@ export class ScheduleController {
       },
       onNavigate: (direction) => this.moveTimeCell(span, direction),
     });
+  }
+
+  /**
+   * Show the arrival/departure pair a committed time edit is about to write,
+   * before the write and its re-render land.
+   *
+   * Display only: the spans get the coupled values in their text and
+   * `data-value`, computed with the same `coupleStopTimes` the write uses, from
+   * the stored times already on the row's spans. The patch-driven re-render
+   * rebuilds them from the database and has the final say.
+   */
+  private previewTimeEdit(span: HTMLElement, value: string): void {
+    const { tripId, stopIndex, field } = span.dataset;
+    if (!tripId || (field !== 'arrival_time' && field !== 'departure_time')) {
+      return;
+    }
+
+    // A clear only empties this field, unless it deletes the whole row, which
+    // the re-render shows.
+    if (!value.trim()) {
+      span.dataset.value = '';
+      span.innerHTML = renderTimeHtml('');
+      return;
+    }
+
+    const casted = TimeFormatter.castTimeToHHMMSS(value);
+    if (TimeFormatter.timeToSeconds(casted) === null) {
+      // Not a time: the write rejects it and the cell keeps its old value.
+      return;
+    }
+
+    const key = { tripId, stopIndex: stopIndex ?? '' };
+    const arrivalSpan = this.findTimeCell({ ...key, field: 'arrival_time' });
+    const departureSpan = this.findTimeCell({
+      ...key,
+      field: 'departure_time',
+    });
+    const coupled = coupleStopTimes({
+      field: field === 'arrival_time' ? 'arrival' : 'departure',
+      oldArrival: arrivalSpan?.dataset.value,
+      oldDeparture: departureSpan?.dataset.value,
+      newValue: casted,
+    });
+    if (!this.database.validateArrivalDepartureConstraint(coupled).isValid) {
+      return;
+    }
+
+    for (const [target, time] of [
+      [arrivalSpan, coupled.arrival_time],
+      [departureSpan, coupled.departure_time],
+    ] as const) {
+      if (target) {
+        target.dataset.value = time ?? '';
+        target.innerHTML = renderTimeHtml(time ?? '');
+      }
+    }
+    console.log(
+      `[ScheduleController] previewed trip=${tripId} stopIndex=${stopIndex ?? ''} -> ${coupled.arrival_time ?? ''}/${coupled.departure_time ?? ''}`
+    );
   }
 
   /**
@@ -1335,10 +1397,10 @@ export class ScheduleController {
       return;
     }
     // An editor the user only navigated onto (Enter/Tab moved focus there but
-    // no key has been typed yet) shows stale seed text, not a real edit in
-    // progress - e.g. a just-coupled departure_time still reads the pre-write
-    // placeholder. Only a dirty editor's text is worth protecting from the
-    // rebuild; an untouched one should reseed from the freshly rendered span.
+    // no key has been typed yet) shows seed text, not a real edit in progress -
+    // e.g. a coupled departure_time seeded from a preview the write did not
+    // match. Only a dirty editor's text is worth protecting from the rebuild;
+    // an untouched one should reseed from the freshly rendered span.
     if (live.dirty) {
       this.editingCell.value = live.value;
       this.editingCell.caret = live.selectionStart;
@@ -1385,8 +1447,7 @@ export class ScheduleController {
 
     // No captured value means the editor was only navigated onto, never typed
     // into: reopen with no seed so it picks up the freshly rendered span's
-    // text (e.g. a just-coupled departure_time) instead of the stale text it
-    // opened with before the write landed.
+    // text, which wins over whatever preview it opened with.
     this.openStopTimeEditor(
       span,
       cell.value === undefined
@@ -1896,6 +1957,9 @@ export class ScheduleController {
             stop_id,
             validation.errorMessage || t('sched.invalidTime')
           );
+          // The preview passed the same check against the rendered times, so
+          // the render was stale: redraw over it.
+          void this.refreshCurrentTimetable();
           return;
         }
         const delta =
@@ -1958,6 +2022,9 @@ export class ScheduleController {
       const wrote = await this.commitStopTimePlan(plan, label);
       if (!wrote) {
         console.log(`No stop_time change for ${trip_id}/${stop_id}`);
+        // Nothing re-renders on its own, so a preview made from stale
+        // rendered times would stick.
+        void this.refreshCurrentTimetable();
         return;
       }
       console.log(`[ScheduleController] ${label}`);
@@ -1978,6 +2045,8 @@ export class ScheduleController {
     } catch (error) {
       console.error('Failed to update arrival/departure time:', error);
       this.showTimeError(trip_id, stop_id, t('sched.saveTimeFailed'));
+      // Drop the preview of the write that just failed.
+      void this.refreshCurrentTimetable();
     }
   }
 
