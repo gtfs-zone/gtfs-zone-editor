@@ -6,6 +6,10 @@
  * partner, which gets the typed time, since a stop with only one of the two
  * times is not valid for most feeds.
  *
+ * With `linkEqualArrival` (the compact view, which shows an arrival equal to
+ * the departure as one time), a departure edit also moves an arrival that
+ * equals the old departure.
+ *
  * Nothing outside the edited row is touched, and arrival > departure is the
  * caller's to reject.
  */
@@ -21,6 +25,8 @@ export interface CoupleStopTimesInput {
   oldDeparture: string | null | undefined;
   /** The casted HH:MM:SS value the user typed. Never empty. */
   newValue: string;
+  /** A departure edit also moves an arrival equal to the old departure. */
+  linkEqualArrival?: boolean;
 }
 
 /** Empty string and null both mean "no time" in a stored row. */
@@ -43,8 +49,12 @@ export function coupleStopTimes(input: CoupleStopTimesInput): CoupledTimes {
       departure_time: normalize(input.oldDeparture) ?? newValue,
     };
   }
+  const oldArrival = normalize(input.oldArrival);
+  const linked =
+    input.linkEqualArrival === true &&
+    oldArrival === normalize(input.oldDeparture);
   return {
-    arrival_time: normalize(input.oldArrival) ?? newValue,
+    arrival_time: linked ? newValue : (oldArrival ?? newValue),
     departure_time: newValue,
   };
 }

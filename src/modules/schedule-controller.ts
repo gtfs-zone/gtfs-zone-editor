@@ -1292,6 +1292,7 @@ export class ScheduleController {
       oldArrival: arrivalSpan?.dataset.value,
       oldDeparture: departureSpan?.dataset.value,
       newValue: casted,
+      linkEqualArrival: this.viewMode === 'compact',
     });
     if (!this.database.validateArrivalDepartureConstraint(coupled)) {
       return;
@@ -2179,7 +2180,9 @@ export class ScheduleController {
           ? null
           : await this.database.getStopTime(trip_id, stopSequence);
 
-      // The typed field changes; an empty partner gets the same time.
+      // The typed field changes; an empty partner gets the same time. In the
+      // compact view an arrival equal to the departure shows as one time, so a
+      // departure edit moves it too.
       let coupled: CoupledTimes | undefined;
       if (castedTime !== null) {
         coupled = coupleStopTimes({
@@ -2187,6 +2190,7 @@ export class ScheduleController {
           oldArrival: existing?.arrival_time,
           oldDeparture: existing?.departure_time,
           newValue: castedTime,
+          linkEqualArrival: this.viewMode === 'compact',
         });
         if (!this.database.validateArrivalDepartureConstraint(coupled)) {
           const stopName =
