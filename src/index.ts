@@ -154,6 +154,10 @@ export class GTFSEditor {
   public tabLock: TabLockController;
   public levelsController: LevelsController;
   public shapesManager: ShapesManager;
+  // The home panel sits hidden behind the timetable modal, so its refresh
+  // waits until the modal closes.
+  private timetableOpen = false;
+  private browseRefreshDeferred = false;
 
   constructor() {
     this.gtfsParser = new GTFSParser();
@@ -381,7 +385,7 @@ export class GTFSEditor {
         if (openFile) {
           await this.editor.buildTableEditor();
         }
-        await this.browseNavigation.refresh();
+        await this.refreshBrowse();
       };
       const onUndoRedoJump = () => {
         refreshAfterUndoRedo().catch((e: unknown) =>
@@ -400,7 +404,7 @@ export class GTFSEditor {
       this.patchManager.on('change', (r) => {
         console.log('[patch:change]', r);
         notify.info(humanLabel(r?.patch), { duration: 3000 });
-        this.browseNavigation.refresh().catch((e: unknown) =>
+        this.refreshBrowse().catch((e: unknown) =>
           notify.error(
             t('edit.refreshAfterEditFailed', {
               message: e instanceof Error ? e.message : String(e),
@@ -451,6 +455,8 @@ export class GTFSEditor {
       // existed each swap path had to remember these by hand, and the boot
       // paths did not. The parser fires it only once the new rows are final.
       this.gtfsParser.onFeedReplaced(() => {
+        // The new feed renders the home panel itself.
+        this.browseRefreshDeferred = false;
         // The stop_times messages the validator cached describe the previous
         // feed's rows, and its row numbers.
         this.validator.invalidateStopTimesCache('the feed was replaced');
@@ -782,15 +788,31 @@ export class GTFSEditor {
   private registerModals(shapesManager: ShapesManager): void {
     const router = getModalRouter<ModalState>();
 
-    router.register('timetable', (modal) =>
-      showTimetableModal(
-        {
-          scheduleController: this.scheduleController,
-          patchManager: this.patchManager,
-        },
-        modal
-      )
-    );
+    router.register('timetable', async (modal) => {
+      this.timetableOpen = true;
+      try {
+        await showTimetableModal(
+          {
+            scheduleController: this.scheduleController,
+            patchManager: this.patchManager,
+          },
+          modal
+        );
+      } finally {
+        this.timetableOpen = false;
+      }
+      if (this.browseRefreshDeferred) {
+        // Detached so the router clears the hash without waiting on it.
+        console.log('[GTFSEditor] running deferred browse refresh');
+        this.refreshBrowse().catch((e: unknown) =>
+          notify.error(
+            t('edit.refreshAfterEditFailed', {
+              message: e instanceof Error ? e.message : String(e),
+            })
+          )
+        );
+      }
+    });
 
     router.register('timetables', () => {
       const state = this.pageStateManager.getPageState();
@@ -978,6 +1000,19 @@ export class GTFSEditor {
   /**
    * Display version in header
    */
+  // Refresh the home panel, or mark it dirty while the timetable covers it.
+  private async refreshBrowse(): Promise<void> {
+    if (this.timetableOpen) {
+      if (!this.browseRefreshDeferred) {
+        console.log('[GTFSEditor] browse refresh deferred: timetable open');
+      }
+      this.browseRefreshDeferred = true;
+      return;
+    }
+    this.browseRefreshDeferred = false;
+    await this.browseNavigation.refresh();
+  }
+
   private displayVersion(): void {
     const versionElement = document.getElementById('app-version');
     if (versionElement) {
