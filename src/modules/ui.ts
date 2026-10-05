@@ -680,7 +680,9 @@ export class UIController {
 
       notify.success(t('load.emptyCreated'));
 
-      await showHelpPageOnce('getting-started');
+      await showHelpPageOnce('getting-started', {
+        continueLabel: t('help.new.start'),
+      });
     } catch (error) {
       console.error('Error creating new GTFS feed:', error);
       notify.error(

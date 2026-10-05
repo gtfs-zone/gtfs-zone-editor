@@ -17,10 +17,12 @@ export const help = {
   'help.welcome.exportText': 'Download a ready-to-publish GTFS feed.',
   'help.welcome.hover':
     'Hover any property to see its GTFS description; click the property name to open the official GTFS reference.',
+  'help.welcome.start': 'Get started!',
   'help.new.label': 'Writing a New Feed',
   'help.new.title': 'Building a feed from scratch',
   'help.new.lede':
     'Each object below references the one above it, so building in this order keeps everything connected.',
+  'help.new.start': 'Start editing',
   'help.new.feedInfo': 'Fill in the feed information',
   'help.new.agency': 'Add an agency',
   'help.new.services': 'Add a few services',

@@ -22,10 +22,12 @@ export const help: Translation<typeof en> = {
   'help.welcome.exportText': 'Téléchargez un flux GTFS prêt à publier.',
   'help.welcome.hover':
     'Survolez une propriété pour voir sa description GTFS ; cliquez sur son nom pour ouvrir la référence GTFS officielle.',
+  'help.welcome.start': 'Commencer !',
   'help.new.label': 'Créer un nouveau flux',
   'help.new.title': 'Construire un flux à partir de zéro',
   'help.new.lede':
     'Chaque objet ci-dessous fait référence à celui du dessus : en suivant cet ordre, tout reste relié.',
+  'help.new.start': "Commencer l'édition",
   'help.new.feedInfo': 'Renseigner les informations du flux',
   'help.new.agency': 'Ajouter une agence',
   'help.new.services': 'Ajouter quelques services',

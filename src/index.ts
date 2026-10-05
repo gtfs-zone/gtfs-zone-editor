@@ -699,7 +699,9 @@ export class GTFSEditor {
     // The modal is the boot screen, not an interruption of a load in progress,
     // so the progress bar comes down while both it and the welcome page are up.
     feedProgressIndicator.finishLoading('boot');
-    await showHelpPageOnce('welcome');
+    await showHelpPageOnce('welcome', {
+      continueLabel: t('help.welcome.start'),
+    });
     const choice = await this.uiController.openBootLoadModal(
       summary ? { ...summary, edits: versions.currentVersion } : undefined
     );
@@ -712,7 +714,9 @@ export class GTFSEditor {
     if (choice === 'empty') {
       await this.gtfsParser.initializeEmpty();
       feedProgressIndicator.finishLoading('boot');
-      await showHelpPageOnce('getting-started');
+      await showHelpPageOnce('getting-started', {
+        continueLabel: t('help.new.start'),
+      });
       feedProgressIndicator.startLoading('boot', t('boot.openingFeed'));
       return 'created-empty';
     }
