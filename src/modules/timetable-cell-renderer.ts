@@ -41,6 +41,53 @@ export interface StopTimeCellParams {
   isFirstStop: boolean;
   /** This row is the trip's last stop_sequence: arrival_time is required. */
   isLastStop: boolean;
+  /** The trip's out-of-order times, from timeOrderWarnings. */
+  orderWarnings: TimeOrderWarnings;
+}
+
+/**
+ * A trip's times that run earlier than the time before them, keyed by
+ * orderWarningKey, each mapped to that earlier-in-sequence time.
+ */
+export type TimeOrderWarnings = ReadonlyMap<string, string>;
+
+const ORDERED_TIME_FIELDS = ['arrival_time', 'departure_time'] as const;
+
+function orderWarningKey(stopIndex: number, field: string): string {
+  return `${stopIndex}:${field}`;
+}
+
+/**
+ * Flag each time earlier than the last non-empty time before it, walking the
+ * trip's rows in stop_sequence order (arrival before departure in each row).
+ * Only the offending time is flagged: the walk continues from it, so one late
+ * stop does not mark the rest of the trip.
+ */
+export function timeOrderWarnings(
+  stopTimes: ReadonlyMap<number, EditableStopTime> | undefined
+): TimeOrderWarnings {
+  const warnings = new Map<string, string>();
+  if (!stopTimes) {
+    return warnings;
+  }
+  const rows = [...stopTimes.entries()].sort(
+    ([, a], [, b]) => parseInt(a.stop_sequence) - parseInt(b.stop_sequence)
+  );
+  let previous: { time: string; seconds: number } | null = null;
+  for (const [stopIndex, record] of rows) {
+    for (const field of ORDERED_TIME_FIELDS) {
+      const time = record[field];
+      const seconds = TimeFormatter.timeToSeconds(time);
+      if (time === null || seconds === null) {
+        continue;
+      }
+      if (previous && seconds < previous.seconds) {
+        warnings.set(orderWarningKey(stopIndex, field), previous.time);
+      }
+      previous = { time, seconds };
+    }
+  }
+  return warnings;
 }
 
 /** Which stop_times field a row ref lands in, for the presence rules. */
@@ -119,6 +166,7 @@ export class TimetableCellRenderer {
       frequencyOrigin,
       isFirstStop,
       isLastStop,
+      orderWarnings,
     } = params;
 
     const record = editableStopTime ?? null;
@@ -159,6 +207,7 @@ export class TimetableCellRenderer {
           isWindowed,
           frequencyOrigin,
           presence: presence.get(field),
+          earlierThan: orderWarnings.get(orderWarningKey(stopIndex, field)),
         })
       )
       .join('');
@@ -207,6 +256,8 @@ export class TimetableCellRenderer {
     isWindowed: boolean;
     frequencyOrigin: string | null;
     presence?: FieldPresence;
+    /** The previous time this one runs earlier than, when out of order. */
+    earlierThan?: string;
   }): string {
     const {
       field,
@@ -219,6 +270,7 @@ export class TimetableCellRenderer {
       isWindowed,
       frequencyOrigin,
       presence,
+      earlierThan,
     } = args;
 
     const kind = stopTimeFieldKind(field);
@@ -246,6 +298,9 @@ export class TimetableCellRenderer {
       if (offset) {
         titleParts.push(offset);
       }
+    }
+    if (earlierThan) {
+      titleParts.push(t('tt.earlierThanPrevious', { time: earlierThan }));
     }
     if (presence?.reason) {
       titleParts.push(presence.reason);
@@ -275,6 +330,9 @@ export class TimetableCellRenderer {
       (presence?.state === 'forbidden' && value !== '') || dangling
         ? 'text-error font-semibold'
         : '',
+      earlierThan
+        ? 'field-tooltip-trigger text-error font-semibold bg-error/10'
+        : '',
       presence?.state === 'required' ? 'text-warning' : '',
       forbiddenEmpty
         ? 'opacity-40 cursor-not-allowed pointer-events-none'
@@ -298,7 +356,13 @@ export class TimetableCellRenderer {
         data-pending="${isPendingRow}"
         data-windowed="${isWindowed}"
         ${editable ? '' : 'data-disabled="true"'}
-        title="${escapeHtml(titleParts.join(' - '))}"`;
+        ${
+          // The portal tooltip shows on keyboard focus too, so the warning is
+          // reachable without a pointer. It replaces the native title.
+          earlierThan
+            ? tooltipContentAttr(titleParts.map(escapeHtml).join('<br>'))
+            : `title="${escapeHtml(titleParts.join(' - '))}"`
+        }`;
     const display =
       kind === 'time'
         ? renderTimeHtml(value)

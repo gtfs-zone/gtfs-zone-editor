@@ -83,6 +83,7 @@ export const timetable = {
   'tt.addFieldText':
     'Picks a field to add as a sub-row of every cell in this table. It is not written to the feed until a value is typed, and it is dropped on leaving the timetable.',
   'tt.noRecord': 'No record with {field} {value} exists',
+  'tt.earlierThanPrevious': 'Earlier than the previous stop ({time})',
   'tt.noStopTimeYet': 'no stop_time on this trip yet',
   'tt.outbound': 'Outbound',
   'tt.inbound': 'Inbound',

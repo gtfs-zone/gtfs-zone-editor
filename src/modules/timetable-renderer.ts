@@ -10,7 +10,10 @@ import {
   AlignedTrip,
   TripFrequency,
 } from './timetable-data-processor';
-import { TimetableCellRenderer } from './timetable-cell-renderer';
+import {
+  TimetableCellRenderer,
+  timeOrderWarnings,
+} from './timetable-cell-renderer';
 import {
   generateFieldConfigsFromSchema,
   FieldConfig,
@@ -1223,6 +1226,20 @@ export class TimetableRenderer {
     }
     const color = routeColor(data.route.route_id, data.route.route_color);
 
+    const orderWarningsByTrip = new Map(
+      data.trips.map((trip) => [
+        trip.trip_id,
+        timeOrderWarnings(trip.editableStopTimes),
+      ])
+    );
+    const orderWarningCount = [...orderWarningsByTrip.values()].reduce(
+      (sum, warnings) => sum + warnings.size,
+      0
+    );
+    console.log(
+      `[TimetableRenderer] ${orderWarningCount} out-of-order time(s) across ${data.trips.length} trips`
+    );
+
     const rows = data.stops
       .map((stop, stopIndex) => {
         const isPendingStop =
@@ -1274,6 +1291,7 @@ export class TimetableRenderer {
               rowRef,
               frequencyOrigin:
                 trip.frequencies.length > 0 ? trip.firstDepartureTime : null,
+              orderWarnings: orderWarningsByTrip.get(trip.trip_id)!,
             });
           })
           .join('');

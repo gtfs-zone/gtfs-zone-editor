@@ -89,6 +89,7 @@ export const timetable: Translation<typeof en> = {
   'tt.addFieldText':
     "Choisit un champ à ajouter en sous-ligne de chaque cellule de ce tableau. Il n'est écrit dans le flux qu'une fois une valeur saisie, et disparaît en quittant l'horaire.",
   'tt.noRecord': 'Aucun enregistrement avec {field} {value}',
+  'tt.earlierThanPrevious': "Plus tôt que l'arrêt précédent ({time})",
   'tt.noStopTimeYet': 'pas encore de stop_time sur ce voyage',
   'tt.outbound': 'Aller',
   'tt.inbound': 'Retour',
