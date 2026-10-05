@@ -560,29 +560,17 @@ export class TimetableDatabase {
   }
 
   /**
-   * Validate the arrival <= departure constraint on a resolved pair.
+   * Check the arrival <= departure constraint on a resolved pair.
    *
    * The pair comes from `coupleStopTimes`, so both fields are the values the
-   * edit is about to write. Checking the incoming value against the row's
-   * stored counterpart would reject an arrival edit that legitimately carries
-   * its departure along with it.
+   * edit is about to write, not the row's stored counterpart.
    *
    * @param times - Both time fields as they are about to be written
-   * @returns Validation result with an optional error message
+   * @returns false when the arrival is after the departure
    */
-  validateArrivalDepartureConstraint(times: CoupledTimes): {
-    isValid: boolean;
-    errorMessage?: string;
-  } {
+  validateArrivalDepartureConstraint(times: CoupledTimes): boolean {
     const arrival = TimeFormatter.timeToSeconds(times.arrival_time);
     const departure = TimeFormatter.timeToSeconds(times.departure_time);
-    if (arrival !== null && departure !== null && arrival > departure) {
-      return {
-        isValid: false,
-        errorMessage: t('tt.arrivalAfterDeparture'),
-      };
-    }
-
-    return { isValid: true };
+    return arrival === null || departure === null || arrival <= departure;
   }
 }

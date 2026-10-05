@@ -135,6 +135,11 @@ function offsetField(): EntityFormField {
   };
 }
 
+/** HH:MM:SS as HH:MM when the seconds are zero, for messages. */
+function shortTime(time: string | null): string {
+  return (time ?? '').replace(/^(\d+:\d{2}):00$/, '$1');
+}
+
 /** Is this sub-row one end of a pickup/drop-off window? */
 function asWindowField(field: string | undefined): FlexWindowField | null {
   return field !== undefined && WINDOW_FIELDS.includes(field)
@@ -1051,7 +1056,7 @@ export class ScheduleController {
       oldDeparture: departureSpan?.dataset.value,
       newValue: casted,
     });
-    if (!this.database.validateArrivalDepartureConstraint(coupled).isValid) {
+    if (!this.database.validateArrivalDepartureConstraint(coupled)) {
       return;
     }
 
@@ -1939,8 +1944,7 @@ export class ScheduleController {
           ? null
           : await this.database.getStopTime(trip_id, stopSequence);
 
-      // One time entry writes both fields: a lone arrival is neither what the
-      // user meant nor valid for most feeds.
+      // The typed field changes; an empty partner gets the same time.
       let coupled: CoupledTimes | undefined;
       if (castedTime !== null) {
         coupled = coupleStopTimes({
@@ -1949,25 +1953,26 @@ export class ScheduleController {
           oldDeparture: existing?.departure_time,
           newValue: castedTime,
         });
-        const validation =
-          this.database.validateArrivalDepartureConstraint(coupled);
-        if (!validation.isValid) {
+        if (!this.database.validateArrivalDepartureConstraint(coupled)) {
+          const stopName =
+            (await this.refDisplayName({ kind: 'stop', id: stop_id })) ??
+            stop_id;
           this.showTimeError(
             trip_id,
             stop_id,
-            validation.errorMessage || t('sched.invalidTime')
+            t('sched.arrivalAfterDeparture', {
+              arrival: shortTime(coupled.arrival_time),
+              departure: shortTime(coupled.departure_time),
+              stop: stopName,
+            })
           );
           // The preview passed the same check against the rendered times, so
           // the render was stale: redraw over it.
           void this.refreshCurrentTimetable();
           return;
         }
-        const delta =
-          coupled.deltaSeconds === null
-            ? 'none'
-            : `${coupled.deltaSeconds >= 0 ? '+' : ''}${coupled.deltaSeconds}s`;
         console.log(
-          `[ScheduleController] coupled times trip=${trip_id} stop=${stop_id} field=${timeType} delta=${delta} -> ${coupled.arrival_time ?? ''}/${coupled.departure_time ?? ''}`
+          `[ScheduleController] coupled times trip=${trip_id} stop=${stop_id} field=${timeType} -> ${coupled.arrival_time ?? ''}/${coupled.departure_time ?? ''}`
         );
       }
 
@@ -2973,9 +2978,7 @@ export class ScheduleController {
     message: string
   ): void {
     console.error(`Time error for ${trip_id}/${stop_id}: ${message}`);
-    notify.error(t('sched.timeError', { message }), {
-      duration: 5000,
-    });
+    notify.error(message, { duration: 5000 });
   }
 
   /**

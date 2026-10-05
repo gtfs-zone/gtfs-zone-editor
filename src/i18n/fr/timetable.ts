@@ -99,8 +99,6 @@ export const timetable: Translation<typeof en> = {
   'tt.invalidTime':
     'Format horaire invalide : {time}. Le format doit être HH:MM:SS.',
   'tt.dbLost': 'Connexion à la base de données perdue',
-  'tt.arrivalAfterDeparture':
-    "L'heure d'arrivée doit être antérieure ou égale à l'heure de départ",
   'sched.offsetError':
     'Le décalage doit être en minutes signées, MM:SS ou HH:MM:SS, par ex. -5',
   'sched.offsetLabel': 'Décalage horaire',
@@ -125,7 +123,8 @@ export const timetable: Translation<typeof en> = {
   'sched.uploadedShape': 'Tracé {id} importé pour le voyage {trip}',
   'sched.zoneSecondary': 'Zone à la demande - {id}',
   'sched.groupSecondary': "Groupe d'emplacements - {id}",
-  'sched.invalidTime': 'Heure invalide',
+  'sched.arrivalAfterDeparture':
+    "L'arrivée {arrival} est après le départ {departure} à {stop}",
   'sched.labelAddStop': "Ajout de l'arrêt {stop} au voyage {trip}",
   'sched.labelClearTime': "Effacement de l'heure {type} pour {trip}/{stop}",
   'sched.labelSetTime': 'Heure {type} de {trip}/{stop} mise à {time}',
@@ -153,7 +152,6 @@ export const timetable: Translation<typeof en> = {
     'Échec de la suppression de la période de fréquence',
   'sched.tripPropFailed':
     'Échec de la mise à jour de {field} pour le voyage {trip}',
-  'sched.timeError': 'Format horaire invalide : {message}',
   'sched.renderFailed': 'Échec de la génération de la vue des horaires',
   'sched.routePickerTitle': "Ligne de l'horaire",
   'sched.routeNoTrips':

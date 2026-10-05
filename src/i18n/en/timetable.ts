@@ -92,8 +92,6 @@ export const timetable = {
     'Stop {id} not found in stops.txt but referenced in stop_times.txt',
   'tt.invalidTime': 'Invalid time format: {time}. Must be HH:MM:SS format.',
   'tt.dbLost': 'Database connection lost',
-  'tt.arrivalAfterDeparture':
-    'Arrival time must be before or equal to departure time',
   'sched.offsetError':
     'Offset must be signed minutes, MM:SS or HH:MM:SS, e.g. -5',
   'sched.offsetLabel': 'Time offset',
@@ -118,7 +116,8 @@ export const timetable = {
   'sched.uploadedShape': 'Uploaded shape {id} for trip {trip}',
   'sched.zoneSecondary': 'On-demand zone - {id}',
   'sched.groupSecondary': 'Location group - {id}',
-  'sched.invalidTime': 'Invalid time',
+  'sched.arrivalAfterDeparture':
+    'Arrival {arrival} is after departure {departure} at {stop}',
   'sched.labelAddStop': 'Add stop {stop} to trip {trip}',
   'sched.labelClearTime': 'Clear {type} time for {trip}/{stop}',
   'sched.labelSetTime': 'Set {type} time for {trip}/{stop} to {time}',
@@ -142,7 +141,6 @@ export const timetable = {
   'sched.addHeadwayFailed': 'Failed to add headway period',
   'sched.removeHeadwayFailed': 'Failed to remove headway period',
   'sched.tripPropFailed': 'Failed to update {field} for trip {trip}',
-  'sched.timeError': 'Invalid time format: {message}',
   'sched.renderFailed': 'Failed to generate schedule view',
   'sched.routePickerTitle': 'Timetable route',
   'sched.routeNoTrips': 'Route {id} has no trips, so it has no timetable.',
