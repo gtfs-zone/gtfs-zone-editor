@@ -99,6 +99,7 @@ export async function showTimetableModal(
       onMount: () => scheduleController.applyTimetableSelection(),
     });
   } finally {
+    scheduleController.closeStopTimePopover();
     getPageStateManager().removeNavigationHandler(onNavigate);
     PATCH_EVENTS.forEach((event) => patchManager.off(event, onPatch));
   }

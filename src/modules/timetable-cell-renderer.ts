@@ -8,11 +8,21 @@ import { EditableStopTime } from './timetable-data-processor';
 import type { StopTimeRef } from 'gtfs-zone-web-common/gtfs/types';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { getEnumOptions } from '../types/gtfs-enums';
-import { stopTimeFieldKind } from './timetable-fields';
+import {
+  COMPACT_ICON_FIELDS,
+  POPOVER_STOP_TIME_FIELDS,
+  TimetableViewMode,
+  stopTimeFieldKind,
+} from './timetable-fields';
+import {
+  renderMoreFieldsIcon,
+  renderStopTimeFieldIcon,
+} from './stop-time-icons';
 import { FieldPresence, stopTimeFieldPresence } from '../utils/flex-rules';
 import { formatIssueValue, isDanglingReference } from './feed-issues';
 import { tooltipContentAttr } from 'gtfs-zone-web-common/ui/field-label';
 import { renderPickerTrigger } from '../utils/picker-trigger';
+import { renderSpecFieldLabelContent } from '../utils/field-component';
 import { t } from '../i18n/messages';
 
 /** Everything one cell needs to render its stack of sub-rows. */
@@ -43,7 +53,35 @@ export interface StopTimeCellParams {
   isLastStop: boolean;
   /** The trip's out-of-order times, from timeOrderWarnings. */
   orderWarnings: TimeOrderWarnings;
+  /** Compact: times, icons and a popover. Explicit: one sub-row per field. */
+  mode: TimetableViewMode;
 }
+
+/** What every field span of one cell shares, derived from its params. */
+interface CellContext {
+  record: EditableStopTime | null;
+  presence: Map<string, FieldPresence>;
+  isWindowed: boolean;
+  refAttrs: string;
+  stopSequence: string;
+}
+
+/**
+ * Where a compact cell puts a time span. `main` is the dominant time,
+ * `secondary` the small arrival above it, `slot` an invisible span in the
+ * secondary line that keyboard focus reveals, `collapsed` a zero-height span
+ * focus expands.
+ */
+type CompactRole = 'main' | 'secondary' | 'slot' | 'collapsed';
+
+const COMPACT_ROLE_CLASS: Record<CompactRole, string> = {
+  main: 'order-2 text-sm h-6 leading-6',
+  secondary: 'order-1 text-[10px] h-4 leading-4 opacity-70',
+  slot: 'order-1 text-[10px] h-4 leading-4 [&:not(:focus)]:opacity-0 [&:not(:focus)]:pointer-events-none',
+  collapsed: 'text-[10px] h-0 leading-4 focus:h-4',
+};
+
+const EXPLICIT_SIZE_CLASS = 'text-xs h-6 leading-6';
 
 /**
  * A trip's times that run earlier than the time before them, keyed by
@@ -155,62 +193,10 @@ export class TimetableCellRenderer {
    * a zone id as a `stops.txt` foreign key.
    */
   public renderStopTimeCell(params: StopTimeCellParams): string {
-    const {
-      trip_id,
-      stop_id,
-      stopIndex,
-      editableStopTime,
-      isPendingRow,
-      isPendingFlex,
-      rowRef,
-      frequencyOrigin,
-      isFirstStop,
-      isLastStop,
-      orderWarnings,
-    } = params;
-
-    const record = editableStopTime ?? null;
-    // Advisory decoration only: validateFlexStopTimeRow is still the gate that
-    // decides whether an edit commits. A cell with no record has no row to
-    // judge, and its non-time sub-rows are already non-editable.
-    const presence = record
-      ? stopTimeFieldPresence(presenceRow(record), {
-          isFirst: isFirstStop,
-          isLast: isLastStop,
-        })
-      : new Map<string, FieldPresence>();
-    const isFlexRow =
-      (rowRef !== undefined && rowRef.kind !== 'stop') ||
-      record?.isFlex === true ||
-      isPendingFlex;
-    const isWindowed =
-      isFlexRow ||
-      !!record?.start_pickup_drop_off_window ||
-      !!record?.end_pickup_drop_off_window;
-
-    const isStopRef = rowRef === undefined || rowRef.kind === 'stop';
-    const refAttrs = isStopRef
-      ? `data-stop-id="${escapeHtml(stop_id)}"`
-      : `data-flex-kind="${escapeHtml(rowRef.kind)}" data-flex-id="${escapeHtml(rowRef.id)}"`;
-    const stopSequence = record?.stop_sequence ?? '';
-
-    const spans = params.fields
-      .map((field) =>
-        this.renderFieldSpan({
-          field,
-          trip_id,
-          stopIndex,
-          refAttrs,
-          stopSequence,
-          record,
-          isPendingRow,
-          isWindowed,
-          frequencyOrigin,
-          presence: presence.get(field),
-          earlierThan: orderWarnings.get(orderWarningKey(stopIndex, field)),
-        })
-      )
-      .join('');
+    const { trip_id, stopIndex, isPendingRow, frequencyOrigin, orderWarnings } =
+      params;
+    const cell = this.cellContext(params);
+    const { record, isWindowed } = cell;
 
     // A flex row legitimately has no arrival or departure and is not a skipped
     // stop, so it must never take the `no-time` path.
@@ -220,6 +206,30 @@ export class TimetableCellRenderer {
       'time-cell group align-top p-2 text-center',
       isWindowed ? 'flex-window-cell' : isSkipped ? 'no-time' : 'has-time',
     ].join(' ');
+
+    if (params.mode === 'compact') {
+      return `
+        <td class="${cellClass}">
+          <div class="stacked-time-container flex flex-col">${this.renderCompactContent(params, cell)}</div>
+        </td>
+      `;
+    }
+
+    const spans = params.fields
+      .map((field) =>
+        this.renderFieldSpan({
+          field,
+          trip_id,
+          stopIndex,
+          cell,
+          isPendingRow,
+          frequencyOrigin,
+          earlierThan: orderWarnings.get(orderWarningKey(stopIndex, field)),
+          inGrid: true,
+          sizeClass: EXPLICIT_SIZE_CLASS,
+        })
+      )
+      .join('');
 
     // The roster is table-wide, so a field the user wants to edit here is added
     // to every cell. Hidden until the cell is hovered or focused, or the grid
@@ -244,34 +254,250 @@ export class TimetableCellRenderer {
     `;
   }
 
+  /**
+   * The body of a compact popover: one row per non-time field of a stop_time,
+   * each value a span that opens the same editor as its explicit sub-row.
+   */
+  public renderStopTimePopover(params: StopTimeCellParams): string {
+    const cell = this.cellContext(params);
+    return POPOVER_STOP_TIME_FIELDS.map((field) => {
+      const span = this.renderFieldSpan({
+        field,
+        trip_id: params.trip_id,
+        stopIndex: params.stopIndex,
+        cell,
+        isPendingRow: params.isPendingRow,
+        frequencyOrigin: null,
+        inGrid: false,
+        sizeClass: EXPLICIT_SIZE_CLASS,
+      });
+      return `
+        <div class="flex items-center gap-2 min-w-0">
+          <div class="w-44 shrink-0 truncate text-right font-mono text-xs opacity-60">${renderSpecFieldLabelContent('stop_times.txt', field, field)}</div>
+          <div class="min-w-0 flex-1">${span}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /** The record, presence rules and ref attributes every span of a cell uses. */
+  private cellContext(params: StopTimeCellParams): CellContext {
+    const { stop_id, editableStopTime, isPendingFlex, rowRef } = params;
+    const record = editableStopTime ?? null;
+    // Advisory decoration only: validateFlexStopTimeRow is still the gate that
+    // decides whether an edit commits. A cell with no record has no row to
+    // judge, and its non-time sub-rows are already non-editable.
+    const presence = record
+      ? stopTimeFieldPresence(presenceRow(record), {
+          isFirst: params.isFirstStop,
+          isLast: params.isLastStop,
+        })
+      : new Map<string, FieldPresence>();
+    const isFlexRow =
+      (rowRef !== undefined && rowRef.kind !== 'stop') ||
+      record?.isFlex === true ||
+      isPendingFlex;
+    const isWindowed =
+      isFlexRow ||
+      !!record?.start_pickup_drop_off_window ||
+      !!record?.end_pickup_drop_off_window;
+
+    const isStopRef = rowRef === undefined || rowRef.kind === 'stop';
+    const refAttrs = isStopRef
+      ? `data-stop-id="${escapeHtml(stop_id)}"`
+      : `data-flex-kind="${escapeHtml(rowRef.kind)}" data-flex-id="${escapeHtml(rowRef.id)}"`;
+    return {
+      record,
+      presence,
+      isWindowed,
+      refAttrs,
+      stopSequence: record?.stop_sequence ?? '',
+    };
+  }
+
+  /**
+   * A compact cell: the time spans laid out by role, then a strip of icons
+   * for the non-default enum fields and the popover marker.
+   *
+   * Every roster field still renders a `.time-span` in DOM order, so the grid
+   * stride and arrow navigation are the same as in explicit mode. Only the
+   * visual order (flex `order-*`) and size change.
+   */
+  private renderCompactContent(
+    params: StopTimeCellParams,
+    cell: CellContext
+  ): string {
+    const { trip_id, stopIndex, isPendingRow, frequencyOrigin, orderWarnings } =
+      params;
+    const roles = this.compactRoles(params.fields, cell);
+    const warning = (field: string) =>
+      orderWarnings.get(orderWarningKey(stopIndex, field));
+
+    // A hidden arrival equal to the departure can be the out-of-order one: the
+    // walk compares the departure to it, not to the stop before. Its warning
+    // goes on the main span, the only one the user sees.
+    const main = params.fields.find((field) => roles.get(field) === 'main');
+    const hiddenWarning = params.fields
+      .filter((field) => roles.get(field) === 'slot')
+      .map(warning)
+      .find(Boolean);
+
+    const spans = params.fields
+      .map((field) =>
+        this.renderFieldSpan({
+          field,
+          trip_id,
+          stopIndex,
+          cell,
+          isPendingRow,
+          frequencyOrigin,
+          earlierThan:
+            warning(field) ?? (field === main ? hiddenWarning : undefined),
+          inGrid: true,
+          sizeClass: COMPACT_ROLE_CLASS[roles.get(field) ?? 'collapsed'],
+        })
+      )
+      .join('');
+
+    return `${spans}${this.renderCompactStrip(params, cell)}`;
+  }
+
+  /**
+   * Which role each time span plays in a compact cell.
+   *
+   * A scheduled cell shows the departure as the main time, or the arrival when
+   * it is the only one set. The other one sits small above it when set and
+   * different, and otherwise stays in that line invisibly until focused, so
+   * arrow up still reaches a hidden arrival. A windowed cell shows both window
+   * ends as main times and collapses arrival/departure.
+   */
+  private compactRoles(
+    fields: readonly string[],
+    cell: CellContext
+  ): Map<string, CompactRole> {
+    const roles = new Map<string, CompactRole>(
+      fields.map((field) => [field, 'collapsed'])
+    );
+    if (cell.isWindowed) {
+      for (const field of fields) {
+        if (field !== 'arrival_time' && field !== 'departure_time') {
+          roles.set(field, 'main');
+        }
+      }
+      return roles;
+    }
+
+    const arrival = cell.record?.arrival_time ?? '';
+    const departure = cell.record?.departure_time ?? '';
+    if (departure === '' && arrival !== '') {
+      roles.set('arrival_time', 'main');
+      roles.set('departure_time', 'slot');
+    } else {
+      roles.set('departure_time', 'main');
+      roles.set(
+        'arrival_time',
+        arrival !== '' && arrival !== departure ? 'secondary' : 'slot'
+      );
+    }
+    return roles;
+  }
+
+  /**
+   * The compact cell's bottom line: an icon per non-default enum field, and a
+   * marker that opens the popover listing every non-time field.
+   *
+   * The icons and the marker are mouse targets outside the grid (no
+   * `.time-span`, tabindex -1). The marker is solid when some other field is
+   * set, and otherwise appears on hover only.
+   */
+  private renderCompactStrip(
+    params: StopTimeCellParams,
+    cell: CellContext
+  ): string {
+    const { record, refAttrs, stopSequence, isWindowed, presence } = cell;
+    if (!record) {
+      return '<div class="order-3 h-4"></div>';
+    }
+    const row = record as unknown as Record<string, unknown>;
+    const valueOf = (field: string): string => {
+      const raw = row[field];
+      return raw === null || raw === undefined ? '' : String(raw);
+    };
+
+    const dataAttrs = (field: string) => `
+        data-trip-id="${escapeHtml(params.trip_id)}"
+        ${refAttrs}
+        data-stop-index="${params.stopIndex}"
+        data-field="${escapeHtml(field)}"
+        data-field-kind="${stopTimeFieldKind(field)}"
+        data-stop-sequence="${escapeHtml(stopSequence)}"
+        data-value="${escapeHtml(valueOf(field))}"
+        data-windowed="${isWindowed}"`;
+
+    const icons = COMPACT_ICON_FIELDS.map((field) => {
+      const value = valueOf(field);
+      const icon = renderStopTimeFieldIcon(field, value);
+      if (!icon) {
+        return '';
+      }
+      const forbidden = presence.get(field)?.state === 'forbidden';
+      const tip = [`${field} = ${this.displayValue(field, 'enum', value)}`];
+      const reason = presence.get(field)?.reason;
+      if (reason) {
+        tip.push(reason);
+      }
+      return `<button
+          type="button"
+          tabindex="-1"
+          class="stop-time-icon inline-flex items-center rounded px-0.5 cursor-pointer hover:bg-base-200 ${forbidden ? 'text-error' : ''}"
+          ${dataAttrs(field)}
+          title="${escapeHtml(tip.join(' - '))}"
+        >${icon}</button>`;
+    }).join('');
+
+    const otherSet = POPOVER_STOP_TIME_FIELDS.some(
+      (field) => !COMPACT_ICON_FIELDS.includes(field) && valueOf(field) !== ''
+    );
+    const marker = `<button
+        type="button"
+        tabindex="-1"
+        class="stop-time-more inline-flex items-center rounded px-0.5 cursor-pointer hover:bg-base-200 ${otherSet ? 'text-primary' : 'opacity-0 group-hover:opacity-60'}"
+        data-trip-id="${escapeHtml(params.trip_id)}"
+        data-stop-index="${params.stopIndex}"
+        title="${escapeHtml(otherSet ? t('tt.moreFieldsSet') : t('tt.moreFields'))}"
+      >${renderMoreFieldsIcon()}</button>`;
+
+    return `<div class="order-3 flex items-center justify-center gap-0.5 h-4">${icons}${marker}</div>`;
+  }
+
   /** One field's sub-row: a display span the click handler swaps for an editor. */
   private renderFieldSpan(args: {
     field: string;
     trip_id: string;
     stopIndex: number;
-    refAttrs: string;
-    stopSequence: string;
-    record: EditableStopTime | null;
+    cell: CellContext;
     isPendingRow: boolean;
-    isWindowed: boolean;
     frequencyOrigin: string | null;
-    presence?: FieldPresence;
     /** The previous time this one runs earlier than, when out of order. */
     earlierThan?: string;
+    /** A grid cell (`.time-span`) or a popover row outside the grid. */
+    inGrid: boolean;
+    /** Font size, height and layout classes for the span's slot. */
+    sizeClass: string;
   }): string {
     const {
       field,
       trip_id,
       stopIndex,
-      refAttrs,
-      stopSequence,
-      record,
+      cell,
       isPendingRow,
-      isWindowed,
       frequencyOrigin,
-      presence,
       earlierThan,
+      inGrid,
+      sizeClass,
     } = args;
+    const { refAttrs, stopSequence, record, isWindowed } = cell;
+    const presence = cell.presence.get(field);
 
     const kind = stopTimeFieldKind(field);
     const raw = record
@@ -323,7 +549,7 @@ export class TimetableCellRenderer {
     // strut's descender under it and push the sub-rows below out of line with
     // their labels. align-top keeps every sub-row exactly h-6.
     const classes = [
-      `time-span font-mono text-xs h-6 leading-6 rounded px-1 ${isPicker ? 'w-full align-top' : 'block truncate'}`,
+      `${inGrid ? 'time-span' : 'stop-time-popover-field'} font-mono ${sizeClass} rounded px-1 ${isPicker ? 'w-full align-top' : 'block truncate'}`,
       kind === 'time' && isWindowed ? 'text-info' : '',
       // A forbidden value and a dangling reference read the same way: an error
       // that is still editable, exactly as renderPropertyCell shows one.
@@ -344,7 +570,7 @@ export class TimetableCellRenderer {
       .join(' ');
 
     const attrs = `
-        role="gridcell"
+        ${inGrid ? 'role="gridcell"' : ''}
         tabindex="-1"
         data-trip-id="${escapeHtml(trip_id)}"
         ${refAttrs}

@@ -36,6 +36,8 @@ import {
   openInlineMenu,
   getLiveEditorState,
   discardLiveEditor,
+  flushInlineEdits,
+  hasLiveEditor,
 } from '../utils/inline-edit';
 import {
   arrowToGridDirection,
@@ -58,6 +60,7 @@ import {
   TIMETABLE_DIRECTION_TAB,
   TIMETABLE_ROUTE_PICKER,
   TIMETABLE_SERVICE_PICKER,
+  TIMETABLE_VIEW_MODE,
 } from './timetable-selectors';
 import { getRouteDisplay, getStopDisplay } from '../utils/entity-display';
 import { formatDateRange, formatDaysOfWeek } from '../utils/entity-references';
@@ -78,6 +81,7 @@ import {
   STOP_TIME_EDITABLE_FIELDS,
   TIME_FIELDS,
   WINDOW_FIELDS,
+  type TimetableViewMode,
 } from './timetable-fields';
 import {
   validateFrequencyRow,
@@ -91,6 +95,22 @@ import { t } from '../i18n/messages';
  * stopIndex is the supersequence position, not stop_id: a circular route visits
  * the same stop twice and stop_id alone would match the wrong row.
  */
+/** localStorage key for the timetable view mode. */
+const VIEW_MODE_STORAGE_KEY = 'timetable-view-mode';
+
+/** The compact popover, a child of the timetable modal so its clicks count. */
+const POPOVER_CLASS = 'stop-time-popover';
+
+function readViewMode(): TimetableViewMode {
+  try {
+    const stored = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+    return stored === 'explicit' ? 'explicit' : 'compact';
+  } catch (error) {
+    console.warn('[ScheduleController] could not read the view mode:', error);
+    return 'compact';
+  }
+}
+
 interface TimeCellKey {
   tripId: string;
   stopIndex: string;
@@ -347,6 +367,12 @@ export class ScheduleController {
    */
   private provisionalFields: string[] = [];
 
+  /** Compact or explicit cells. Remembered in localStorage. */
+  private viewMode: TimetableViewMode = readViewMode();
+
+  /** The cell whose compact popover is open, reopened after a re-render. */
+  private popoverCell: { tripId: string; stopIndex: number } | null = null;
+
   /**
    * Initialize ScheduleController with required dependencies
    *
@@ -375,6 +401,7 @@ export class ScheduleController {
         ) {
           this.timetableScrollLeft = target.scrollLeft;
           this.timetableScrollTop = target.scrollTop;
+          this.positionStopTimePopover();
         }
       },
       { capture: true, passive: true }
@@ -526,6 +553,33 @@ export class ScheduleController {
         if (field) {
           this.removeProvisionalField(field);
         }
+        return;
+      }
+
+      const viewModeBtn = (e.target as Element)?.closest?.(
+        `.${TIMETABLE_VIEW_MODE}`
+      );
+      if (viewModeBtn instanceof HTMLElement) {
+        const mode = viewModeBtn.dataset.mode;
+        if (mode === 'compact' || mode === 'explicit') {
+          this.setViewMode(mode);
+        }
+        return;
+      }
+
+      // Compact mode's enum icons and popover rows are not .time-span, but
+      // open the same editors from the same data-* attributes.
+      const fieldTarget = (e.target as Element)?.closest?.(
+        '.stop-time-icon, .stop-time-popover-field'
+      );
+      if (fieldTarget instanceof HTMLElement) {
+        this.openStopTimeEditor(fieldTarget);
+        return;
+      }
+
+      const moreBtn = (e.target as Element)?.closest?.('.stop-time-more');
+      if (moreBtn instanceof HTMLElement) {
+        this.toggleStopTimePopover(moreBtn);
         return;
       }
 
@@ -890,6 +944,189 @@ export class ScheduleController {
     void this.refreshCurrentTimetable();
   }
 
+  /** Switch between compact and explicit cells, and remember the choice. */
+  private setViewMode(mode: TimetableViewMode): void {
+    if (mode === this.viewMode) {
+      return;
+    }
+    this.viewMode = mode;
+    try {
+      localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
+    } catch (error) {
+      console.warn('[ScheduleController] could not save the view mode:', error);
+    }
+    console.log(`[ScheduleController] view mode ${mode}`);
+    this.closeStopTimePopover();
+    void this.refreshCurrentTimetable();
+  }
+
+  /** Open the popover for a marker's cell, or close it if it is that cell's. */
+  private toggleStopTimePopover(marker: HTMLElement): void {
+    const tripId = marker.dataset.tripId;
+    const stopIndex = Number(marker.dataset.stopIndex);
+    if (!tripId || !Number.isInteger(stopIndex)) {
+      return;
+    }
+    const open = this.popoverCell;
+    if (open && open.tripId === tripId && open.stopIndex === stopIndex) {
+      this.closeStopTimePopover();
+      return;
+    }
+    this.popoverCell = { tripId, stopIndex };
+    this.refreshStopTimePopover();
+  }
+
+  /** The marker of the cell whose popover is open, in the rendered grid. */
+  private popoverMarker(): HTMLElement | null {
+    const cell = this.popoverCell;
+    if (!cell) {
+      return null;
+    }
+    return (
+      document
+        .getElementById('schedule-view')
+        ?.querySelector<HTMLElement>(
+          `.stop-time-more[data-trip-id="${CSS.escape(cell.tripId)}"]` +
+            `[data-stop-index="${cell.stopIndex}"]`
+        ) ?? null
+    );
+  }
+
+  /**
+   * Build (or rebuild after a render) the popover for `popoverCell` from the
+   * timetable data on screen. Closes it when the cell no longer has a
+   * stop_time. A popover with an editor open is left alone, so a render does
+   * not throw away what is being typed.
+   */
+  private refreshStopTimePopover(): void {
+    const cell = this.popoverCell;
+    if (!cell) {
+      return;
+    }
+    const marker = this.popoverMarker();
+    const data = this.currentTimetableData();
+    const trip = data?.trips.find((tr) => tr.trip_id === cell.tripId);
+    const record = trip?.editableStopTimes?.get(cell.stopIndex);
+    const stop = data?.stops[cell.stopIndex];
+    if (!marker || !data || !trip || !record || !stop) {
+      console.log(
+        `[ScheduleController] popover cell trip=${cell.tripId} stopIndex=${cell.stopIndex} is gone, closing`
+      );
+      this.closeStopTimePopover();
+      return;
+    }
+
+    let popover = document.querySelector<HTMLElement>(`.${POPOVER_CLASS}`);
+    if (popover?.querySelector('input')) {
+      this.positionStopTimePopover();
+      return;
+    }
+    if (!popover) {
+      const modal = marker.closest('.modal');
+      if (!modal) {
+        throw new Error('[ScheduleController] timetable is not inside a modal');
+      }
+      popover = document.createElement('div');
+      popover.className = `${POPOVER_CLASS} fixed z-10 w-[30rem] max-w-[95vw] max-h-[70vh] overflow-y-auto p-2 bg-base-100 border border-base-300 rounded-lg shadow-lg`;
+      modal.appendChild(popover);
+      document.addEventListener('mousedown', this.onPopoverOutside, true);
+      document.addEventListener('keydown', this.onPopoverKeydown, true);
+    }
+
+    const body = this.renderer.renderStopTimePopover({
+      trip_id: cell.tripId,
+      stop_id: stop.stop_id,
+      stopIndex: cell.stopIndex,
+      fields: [],
+      editableStopTime: record,
+      isPendingRow: false,
+      isPendingFlex: false,
+      rowRef: data.sequence?.stops[cell.stopIndex]?.ref,
+      frequencyOrigin: null,
+      isFirstStop: record.stop_sequence === trip.firstStopSequence,
+      isLastStop: record.stop_sequence === trip.lastStopSequence,
+      orderWarnings: new Map(),
+      mode: 'compact',
+    });
+    popover.innerHTML = `
+      <div class="px-1 pb-1 text-xs opacity-60 font-mono truncate">${escapeHtml(cell.tripId)} - stop_sequence ${escapeHtml(record.stop_sequence)}</div>
+      ${body}
+    `;
+    this.positionStopTimePopover();
+    console.log(
+      `[ScheduleController] popover trip=${cell.tripId} stopIndex=${cell.stopIndex}`
+    );
+  }
+
+  /** Place the popover under its marker, kept inside the viewport. */
+  private positionStopTimePopover(): void {
+    const popover = document.querySelector<HTMLElement>(`.${POPOVER_CLASS}`);
+    const marker = this.popoverMarker();
+    if (!popover || !marker) {
+      return;
+    }
+    const rect = marker.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    const height = popover.offsetHeight;
+    const left = Math.max(
+      8,
+      Math.min(
+        rect.left + rect.width / 2 - width / 2,
+        window.innerWidth - width - 8
+      )
+    );
+    const below = rect.bottom + 4;
+    const top =
+      below + height > window.innerHeight - 8
+        ? Math.max(8, rect.top - height - 4)
+        : below;
+    popover.style.left = `${left}px`;
+    popover.style.top = `${top}px`;
+  }
+
+  public closeStopTimePopover(): void {
+    this.popoverCell = null;
+    document.querySelectorAll(`.${POPOVER_CLASS}`).forEach((el) => el.remove());
+    document.removeEventListener('mousedown', this.onPopoverOutside, true);
+    document.removeEventListener('keydown', this.onPopoverKeydown, true);
+  }
+
+  /**
+   * A press outside the popover closes it, after committing an editor open in
+   * it. Presses in the enum menu it opened, on a marker (whose click toggles)
+   * or in a modal stacked above (the booking rule picker) do not.
+   */
+  private onPopoverOutside = (e: MouseEvent): void => {
+    const target = e.target as Element | null;
+    const popover = document.querySelector<HTMLElement>(`.${POPOVER_CLASS}`);
+    if (!target || !popover || popover.contains(target)) {
+      return;
+    }
+    if (target.closest?.('.inline-enum-menu, .stop-time-more')) {
+      return;
+    }
+    if (target.closest?.('.modal') !== popover.closest('.modal')) {
+      return;
+    }
+    if (popover.querySelector('input')) {
+      void flushInlineEdits();
+    }
+    this.closeStopTimePopover();
+  };
+
+  /** Escape closes the popover, unless an editor or menu in it gets it first. */
+  private onPopoverKeydown = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape') {
+      return;
+    }
+    if (hasLiveEditor() || document.querySelector('.inline-enum-menu')) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    this.closeStopTimePopover();
+  };
+
   /**
    * Swap a time cell's display span for a live input, on click.
    *
@@ -1088,9 +1325,9 @@ export class ScheduleController {
       return;
     }
 
-    // A flag slot is not in the grid, so there is no cell to restore an editor
-    // onto after a re-render - leaving editingCell null just drops the edit
-    // rather than logging a missing cell.
+    // A popover row is not in the grid, so there is no cell to restore an
+    // editor onto after a re-render - leaving editingCell null just drops the
+    // edit rather than logging a missing cell.
     const isGridCell = span.classList.contains('time-span');
     if (isGridCell) {
       this.editingCell = { tripId, stopIndex: stopIndex ?? '', field };
@@ -1102,16 +1339,14 @@ export class ScheduleController {
       initialValue: seed?.value,
       selectionStart: seed?.caret,
       inputType: stopTimeFieldKind(field) === 'number' ? 'number' : 'text',
-      // A slot is 12px wide, so an editor sized to it would be unusable; it
-      // overflows its flag row for as long as it is open.
       className: isGridCell
         ? 'w-full text-center font-mono'
-        : 'w-24 shrink-0 text-center font-mono',
+        : 'w-full font-mono',
       title: field,
       arrowNavigation: isGridCell,
       onCommit: (newValue) =>
         this.updateStopTimeField(tripId, stopSequence, field, newValue),
-      // Only a grid cell has neighbours; arrowing out of a flag slot's editor
+      // Only a grid cell has neighbours; arrowing out of a popover row's editor
       // has nowhere to land.
       onNavigate: isGridCell
         ? (direction) => this.moveTimeCell(span, direction)
@@ -1310,9 +1545,9 @@ export class ScheduleController {
    * Make `span` the selected cell: it takes the roving tabindex, and every
    * other cell drops back to -1 so the grid stays a single tab stop.
    *
-   * Only a `.time-span` can be the selection. A compact-mode flag slot opens
-   * the same editors but is not part of the grid, so clicking one must not move
-   * the tab stop onto a button no arrow key can leave.
+   * Only a `.time-span` can be the selection. A compact-mode icon or popover
+   * row opens the same editors but is not part of the grid, so clicking one
+   * must not move the tab stop onto an element no arrow key can leave.
    */
   private selectTimeCell(span: HTMLElement, focus: boolean): void {
     if (!span.classList.contains('time-span')) {
@@ -3114,7 +3349,8 @@ export class ScheduleController {
       return this.renderer.renderTimetableHTML(
         timetableData,
         this.pendingRow?.ref,
-        this.provisionalFields
+        this.provisionalFields,
+        this.viewMode
       );
     } catch (error) {
       console.error('Error rendering schedule:', error);
@@ -3431,6 +3667,11 @@ export class ScheduleController {
 
     this.restoreTimetableEditor();
     this.applyTimetableSelection();
+    if (isRetarget) {
+      this.closeStopTimePopover();
+    } else {
+      this.refreshStopTimePopover();
+    }
   }
 
   /**

@@ -91,6 +91,12 @@ export const timetable: Translation<typeof en> = {
   'tt.noRecord': 'Aucun enregistrement avec {field} {value}',
   'tt.earlierThanPrevious': "Plus tôt que l'arrêt précédent ({time})",
   'tt.noStopTimeYet': 'pas encore de stop_time sur ce voyage',
+  'tt.moreFields': 'Modifier les autres champs de stop_times.txt de cet arrêt',
+  'tt.moreFieldsSet':
+    "D'autres champs de stop_times.txt sont renseignés ici : cliquer pour les voir et les modifier",
+  'tt.viewCompact': 'Compacte',
+  'tt.viewExplicit': 'Tous les champs',
+  'tt.viewMode': 'Vue',
   'tt.outbound': 'Aller',
   'tt.inbound': 'Retour',
   'tt.directionN': 'Direction {id}',

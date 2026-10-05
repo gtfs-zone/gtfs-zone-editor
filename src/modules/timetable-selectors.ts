@@ -19,3 +19,6 @@ export const TIMETABLE_DIRECTION_TAB = 'timetable-direction-tab';
  * `data-direction-id` carries the direction_id it will select.
  */
 export const TIMETABLE_ADD_DIRECTION = 'timetable-add-direction';
+
+/** View mode button; `data-mode` carries the mode it selects. */
+export const TIMETABLE_VIEW_MODE = 'timetable-view-mode';

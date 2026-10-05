@@ -149,3 +149,22 @@ export function visibleStopTimeFields(
       TIME_FIELDS.includes(field) || used.has(field) || added.has(field)
   );
 }
+
+/** How the timetable lays out a cell. */
+export type TimetableViewMode = 'compact' | 'explicit';
+
+/** The enum fields a compact cell shows as icons when not at their default. */
+export const COMPACT_ICON_FIELDS: readonly string[] = [
+  'pickup_type',
+  'drop_off_type',
+  'timepoint',
+];
+
+/**
+ * The fields a compact cell's popover lists: every editable field except the
+ * time fields, which the cell shows itself.
+ */
+export const POPOVER_STOP_TIME_FIELDS: readonly string[] =
+  STOP_TIME_EDITABLE_FIELDS.filter(
+    (field) => stopTimeFieldKind(field) !== 'time'
+  );

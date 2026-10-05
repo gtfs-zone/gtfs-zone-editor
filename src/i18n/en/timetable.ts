@@ -85,6 +85,12 @@ export const timetable = {
   'tt.noRecord': 'No record with {field} {value} exists',
   'tt.earlierThanPrevious': 'Earlier than the previous stop ({time})',
   'tt.noStopTimeYet': 'no stop_time on this trip yet',
+  'tt.moreFields': 'Edit the other stop_times.txt fields of this stop',
+  'tt.moreFieldsSet':
+    'Other stop_times.txt fields are set here: click to see and edit them',
+  'tt.viewCompact': 'Compact',
+  'tt.viewExplicit': 'All fields',
+  'tt.viewMode': 'View',
   'tt.outbound': 'Outbound',
   'tt.inbound': 'Inbound',
   'tt.directionN': 'Direction {id}',

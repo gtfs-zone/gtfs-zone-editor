@@ -11,6 +11,7 @@ import {
   TripFrequency,
 } from './timetable-data-processor';
 import {
+  StopTimeCellParams,
   TimetableCellRenderer,
   timeOrderWarnings,
 } from './timetable-cell-renderer';
@@ -22,7 +23,12 @@ import {
   buildFieldTooltipContent,
 } from '../utils/field-component';
 import { tooltipContentAttr } from 'gtfs-zone-web-common/ui/field-label';
-import { visibleStopTimeFields, WINDOW_FIELDS } from './timetable-fields';
+import {
+  stopTimeFieldKind,
+  TimetableViewMode,
+  visibleStopTimeFields,
+  WINDOW_FIELDS,
+} from './timetable-fields';
 import { describeFrequency } from '../utils/frequency-rules';
 import { renderTimeHtml } from '../utils/time-formatter';
 import { getEnumOptions } from '../types/gtfs-enums';
@@ -41,6 +47,7 @@ import {
   TIMETABLE_DIRECTION_TAB,
   TIMETABLE_ROUTE_PICKER,
   TIMETABLE_SERVICE_PICKER,
+  TIMETABLE_VIEW_MODE,
 } from './timetable-selectors';
 import { formatIssueValue, isDanglingReference } from './feed-issues';
 import {
@@ -149,6 +156,7 @@ interface RenderContext {
   fields: readonly string[];
   /** Fields the user added for this visit: labeled as UI-only, removable. */
   provisional: readonly string[];
+  mode: TimetableViewMode;
 }
 
 /**
@@ -165,6 +173,11 @@ interface RenderContext {
  */
 export class TimetableRenderer {
   private cellRenderer: TimetableCellRenderer;
+  /**
+   * The mode of the render in progress. Compact drops the field-label column,
+   * which every frozen-column cell's width depends on.
+   */
+  private mode: TimetableViewMode = 'compact';
 
   constructor() {
     this.cellRenderer = new TimetableCellRenderer();
@@ -181,9 +194,11 @@ export class TimetableRenderer {
    */
   public renderTimetableHTML(
     data: TimetableData,
-    pendingRef?: StopTimeRef,
-    provisionalFields: readonly string[] = []
+    pendingRef: StopTimeRef | undefined,
+    provisionalFields: readonly string[],
+    mode: TimetableViewMode
   ): string {
+    this.mode = mode;
     // An on-demand row needs its two window sub-rows even on a feed that has no
     // window anywhere yet, or a newly added zone row has nothing to type into
     // and can never be saved. The roster function cannot see the row refs, so
@@ -192,12 +207,19 @@ export class TimetableRenderer {
       (data.sequence?.stops ?? []).some((row) => row.ref.kind !== 'stop') ||
       (pendingRef !== undefined && pendingRef.kind !== 'stop');
 
+    // Compact mode shows only the time fields of the roster in the grid. The
+    // rest are reached from each cell's icons and popover.
+    const roster = visibleStopTimeFields(data.trips, [
+      ...(mode === 'explicit' ? provisionalFields : []),
+      ...(hasFlexRow ? WINDOW_FIELDS : []),
+    ]);
     const ctx: RenderContext = {
-      fields: visibleStopTimeFields(data.trips, [
-        ...provisionalFields,
-        ...(hasFlexRow ? WINDOW_FIELDS : []),
-      ]),
-      provisional: provisionalFields,
+      fields:
+        mode === 'compact'
+          ? roster.filter((field) => stopTimeFieldKind(field) === 'time')
+          : roster,
+      provisional: mode === 'explicit' ? provisionalFields : [],
+      mode,
     };
 
     // Every cell renders exactly this many spans, whatever its row references.
@@ -208,11 +230,17 @@ export class TimetableRenderer {
         class="h-full flex flex-col"
         data-fields-per-cell="${ctx.fields.length}"
         data-fields="${escapeHtml(ctx.fields.join(','))}"
+        data-view-mode="${mode}"
       >
         ${this.renderSelectorBar(data)}
         ${this.renderTimetableContent(data, ctx, pendingRef)}
       </div>
     `;
+  }
+
+  /** The compact popover's rows for one stop_time. */
+  public renderStopTimePopover(params: StopTimeCellParams): string {
+    return this.cellRenderer.renderStopTimePopover(params);
   }
 
   /**
@@ -254,6 +282,29 @@ export class TimetableRenderer {
           ${serviceTrigger}
         </label>
         ${this.renderDirectionTabs(data)}
+        ${this.renderViewModeToggle()}
+      </div>
+    `;
+  }
+
+  /** Compact / all-fields switch, persisted by ScheduleController. */
+  private renderViewModeToggle(): string {
+    const button = (mode: TimetableViewMode, label: string) => {
+      const active = mode === this.mode;
+      return `<button
+          type="button"
+          class="join-item btn btn-xs ${active ? 'btn-active' : ''} ${TIMETABLE_VIEW_MODE}"
+          data-mode="${mode}"
+          aria-pressed="${active}"
+        >${label}</button>`;
+    };
+    return `
+      <div class="flex items-center gap-2 text-sm ml-auto">
+        <span class="opacity-60">${t('tt.viewMode')}</span>
+        <div class="join">
+          ${button('compact', t('tt.viewCompact'))}
+          ${button('explicit', t('tt.viewExplicit'))}
+        </div>
       </div>
     `;
   }
@@ -363,7 +414,7 @@ export class TimetableRenderer {
   /** The declared width of every column in the header row, summed. */
   private tableWidthRem(data: TimetableData): number {
     return (
-      FROZEN_COLUMN_REM +
+      this.frozenColumnRem() +
       data.trips.length * TRIP_COLUMN_REM +
       NEW_TRIP_COLUMN_REM
     );
@@ -371,7 +422,11 @@ export class TimetableRenderer {
 
   /** The frozen first column's width: the stop name block plus the labels. */
   private labelColumnStyle(): string {
-    return `width:${FROZEN_COLUMN_REM}rem`;
+    return `width:${this.frozenColumnRem()}rem`;
+  }
+
+  private frozenColumnRem(): number {
+    return this.mode === 'compact' ? STOP_NAME_COLUMN_REM : FROZEN_COLUMN_REM;
   }
 
   /**
@@ -1087,6 +1142,9 @@ export class TimetableRenderer {
    * label column used to drift down by half that difference.
    */
   private renderFieldLabelColumn(ctx: RenderContext): string {
+    if (ctx.mode === 'compact') {
+      return '';
+    }
     const labels = ctx.fields
       .map((field) => {
         // A provisional field is UI-only and vanishes on leaving the timetable,
@@ -1292,6 +1350,7 @@ export class TimetableRenderer {
               frequencyOrigin:
                 trip.frequencies.length > 0 ? trip.firstDepartureTime : null,
               orderWarnings: orderWarningsByTrip.get(trip.trip_id)!,
+              mode: ctx.mode,
             });
           })
           .join('');
