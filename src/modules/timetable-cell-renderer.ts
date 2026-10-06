@@ -22,7 +22,10 @@ import { FieldPresence, stopTimeFieldPresence } from '../utils/flex-rules';
 import { formatIssueValue, isDanglingReference } from './feed-issues';
 import { tooltipContentAttr } from 'gtfs-zone-web-common/ui/field-label';
 import { renderPickerTrigger } from '../utils/picker-trigger';
-import { renderSpecFieldLabelContent } from '../utils/field-component';
+import {
+  buildFieldTooltipContent,
+  renderSpecFieldLabelContent,
+} from '../utils/field-component';
 import { t } from '../i18n/messages';
 
 /** Everything one cell needs to render its stack of sub-rows. */
@@ -441,17 +444,23 @@ export class TimetableCellRenderer {
         return '';
       }
       const forbidden = presence.get(field)?.state === 'forbidden';
-      const tip = [`${field} = ${this.displayValue(field, 'enum', value)}`];
       const reason = presence.get(field)?.reason;
-      if (reason) {
-        tip.push(reason);
-      }
+      // The value first, then why it is flagged, then the field's spec entry.
+      const tip =
+        `<div><code>${escapeHtml(field)}</code> = ${escapeHtml(this.displayValue(field, 'enum', value))}</div>` +
+        (reason ? `<div class="text-error">${escapeHtml(reason)}</div>` : '') +
+        buildFieldTooltipContent({
+          field,
+          label: field,
+          type: 'select',
+          tableName: 'stop_times.txt',
+        });
       return `<button
           type="button"
           tabindex="-1"
-          class="stop-time-icon inline-flex items-center rounded px-0.5 cursor-pointer hover:bg-base-200 ${forbidden ? 'text-error' : ''}"
+          class="stop-time-icon field-tooltip-trigger inline-flex items-center rounded px-0.5 cursor-pointer hover:bg-base-200 ${forbidden ? 'text-error' : ''}"
           ${dataAttrs(field)}
-          title="${escapeHtml(tip.join(' - '))}"
+          ${tooltipContentAttr(tip)}
         >${icon}</button>`;
     }).join('');
 
@@ -461,10 +470,10 @@ export class TimetableCellRenderer {
     const marker = `<button
         type="button"
         tabindex="-1"
-        class="stop-time-more inline-flex items-center rounded px-0.5 cursor-pointer hover:bg-base-200 ${otherSet ? 'text-primary' : 'opacity-0 group-hover:opacity-60'}"
+        class="stop-time-more field-tooltip-trigger inline-flex items-center rounded px-0.5 cursor-pointer hover:bg-base-200 ${otherSet ? 'text-primary' : 'opacity-0 group-hover:opacity-60'}"
         data-trip-id="${escapeHtml(params.trip_id)}"
         data-stop-index="${params.stopIndex}"
-        title="${escapeHtml(otherSet ? t('tt.moreFieldsSet') : t('tt.moreFields'))}"
+        ${tooltipContentAttr(escapeHtml(otherSet ? t('tt.moreFieldsSet') : t('tt.moreFields')))}
       >${renderMoreFieldsIcon()}</button>`;
 
     return `<div class="order-3 flex items-center justify-center gap-0.5 h-4">${icons}${marker}</div>`;
