@@ -1136,7 +1136,8 @@ export class TimetableRenderer {
    * cell span is exactly `h-6`, and the column's top padding matches the time
    * cells' `p-2`. Do not add JS height syncing here.
    *
-   * This only holds while the frozen `<th>` is `align-top`. A table cell is
+   * This only holds while the frozen `<th>` is `align-top` (explicit mode;
+   * compact has no label column and centres the `<th>`). A table cell is
    * vertically centred by default, and the time cells are taller than the
    * labels (the hover-only `+` button below the last sub-row), so the whole
    * label column used to drift down by half that difference.
@@ -1361,7 +1362,7 @@ export class TimetableRenderer {
         return `
         <tr class="${rowClass}" role="row">
           <th
-            class="stop-name ${STRIP_ROW_CLASS} align-top py-0 px-2 pl-0 font-medium border-r border-base-300 bg-base-100"
+            class="stop-name ${STRIP_ROW_CLASS} ${ctx.mode === 'compact' ? 'align-middle' : 'align-top'} py-0 px-2 pl-0 font-medium border-r border-base-300 bg-base-100"
             style="${this.labelColumnStyle()}"
             ${rowRefAttrs}
           >
