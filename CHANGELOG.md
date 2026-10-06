@@ -1,3 +1,62 @@
+## v0.41.0 (2026-10-06)
+
+### Feat
+
+- **timetable**: always show the compact arrival, portal tooltips on time cells
+- **timetable**: portal tooltips on compact view icons
+- **timetable**: move an equal arrival with the departure in compact view
+- **timetable**: compact view with icons and a field popover
+- **timetable**: mark times earlier than the previous stop
+- **translations**: click from one cell straight into another
+- translate the transfers, translations and attributions modals
+- **translations**: cascade renames and report orphaned rows
+- **translations**: add a language-column translations modal
+- split feed data into transfers and attributions modals
+- translate the fallback agency name
+- label languages, currencies and time zones in the active locale
+- translate feed loading progress, the import worker and database dialogs
+- translate validation messages and set Zod's French locale
+- translate the map tools, route diagram and GeoJSON exchange
+- translate the editable table, entity form, option picker and rename dialogs
+- translate the fares, feed data and on-demand modals
+- translate the shapes manager
+- translate the service calendar, timeline and new service dialog
+- translate the timetable editing actions and messages
+- translate the timetable grid, browser and cell tooltips
+- translate breadcrumbs, history, files and levels
+- translate dates, entity references, field labels and patch labels
+- translate the agency, stop, service, pathway, zone and location group pages
+- translate the home page and the entity delete dialogs
+- translate the guide pages, database dialogs and tab lock
+- add the i18n catalogs, the language toggle and French for the shell and load/export flows
+
+### Fix
+
+- **timetable**: center stop names vertically in compact view
+- **welcome**: add primary Get started and Start editing buttons
+- **timetable**: edit only the typed time, fill an empty partner
+- **timetable**: show a committed time before its write lands
+- **timetable**: keep a set departure when editing the arrival
+- **timetable**: keep a half-typed time across a background redraw
+- **translations**: write by-record cells and stop the blur refocus loop
+- **shapes**: cap the timetables column and widen the modal
+- **screenshots**: hide the blank search dropdown copy in headless shots
+- **map**: skip a fit whose camera is not finite
+- pin only the trip id row of the timetable header
+- add pathway layers when the stop layers are not on the map yet
+- redraw the timetable without waiting for feed revalidation
+
+### Refactor
+
+- build calendar modal from gtfs-zone-web-common
+- build help pages from gtfs-zone-web-common
+
+### Perf
+
+- **timetable**: defer the home panel refresh until the modal closes
+- **editable-table**: label only referenced foreign IDs
+- keep the full catalog out of the import worker bundle
+
 ## v0.40.5 (2026-10-02)
 
 ### Fix
