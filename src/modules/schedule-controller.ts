@@ -1206,11 +1206,14 @@ export class ScheduleController {
     // the roving tabindex where the user actually is.
     this.selectTimeCell(span, false);
 
+    // The input replaces the span inside a flex column, so it takes over the
+    // span's line (compact `order-*`) and is centred like the span's text.
+    const order = [...span.classList].find((c) => /^order-\d$/.test(c)) ?? '';
     openInlineEditor(span, {
       value: displayValue,
       initialValue: seed?.value,
       selectionStart: seed?.caret,
-      className: 'time-input-live w-20 text-center font-mono',
+      className: `time-input-live w-20 self-center text-center font-mono ${order}`,
       placeholder: '--:--:--',
       title: windowField ? t('sched.enterWindowTime') : t('sched.enterTime'),
       arrowNavigation: true,

@@ -71,16 +71,15 @@ interface CellContext {
 
 /**
  * Where a compact cell puts a time span. `main` is the dominant time,
- * `secondary` the small arrival above it, `slot` an invisible span in the
- * secondary line that keyboard focus reveals, `collapsed` a zero-height span
- * focus expands.
+ * `secondary` the small arrival above it, `slot` the same line dimmed (empty
+ * or equal to the main time), `collapsed` a zero-height span focus expands.
  */
 type CompactRole = 'main' | 'secondary' | 'slot' | 'collapsed';
 
 const COMPACT_ROLE_CLASS: Record<CompactRole, string> = {
   main: 'order-2 text-sm h-6 leading-6',
   secondary: 'order-1 text-[10px] h-4 leading-4 opacity-70',
-  slot: 'order-1 text-[10px] h-4 leading-4 [&:not(:focus)]:opacity-0 [&:not(:focus)]:pointer-events-none',
+  slot: 'order-1 text-[10px] h-4 leading-4 opacity-40',
   collapsed: 'text-[10px] h-0 leading-4 focus:h-4',
 };
 
@@ -333,17 +332,6 @@ export class TimetableCellRenderer {
     const { trip_id, stopIndex, isPendingRow, frequencyOrigin, orderWarnings } =
       params;
     const roles = this.compactRoles(params.fields, cell);
-    const warning = (field: string) =>
-      orderWarnings.get(orderWarningKey(stopIndex, field));
-
-    // A hidden arrival equal to the departure can be the out-of-order one: the
-    // walk compares the departure to it, not to the stop before. Its warning
-    // goes on the main span, the only one the user sees.
-    const main = params.fields.find((field) => roles.get(field) === 'main');
-    const hiddenWarning = params.fields
-      .filter((field) => roles.get(field) === 'slot')
-      .map(warning)
-      .find(Boolean);
 
     const spans = params.fields
       .map((field) =>
@@ -354,8 +342,7 @@ export class TimetableCellRenderer {
           cell,
           isPendingRow,
           frequencyOrigin,
-          earlierThan:
-            warning(field) ?? (field === main ? hiddenWarning : undefined),
+          earlierThan: orderWarnings.get(orderWarningKey(stopIndex, field)),
           inGrid: true,
           sizeClass: COMPACT_ROLE_CLASS[roles.get(field) ?? 'collapsed'],
         })
@@ -369,9 +356,8 @@ export class TimetableCellRenderer {
    * Which role each time span plays in a compact cell.
    *
    * A scheduled cell shows the departure as the main time, or the arrival when
-   * it is the only one set. The other one sits small above it when set and
-   * different, and otherwise stays in that line invisibly until focused, so
-   * arrow up still reaches a hidden arrival. A windowed cell shows both window
+   * it is the only one set. The other one always sits small above it: dimmed
+   * when empty or equal to the main time, so it stays a click target. A windowed cell shows both window
    * ends as main times and collapses arrival/departure.
    */
   private compactRoles(
@@ -558,16 +544,14 @@ export class TimetableCellRenderer {
     // strut's descender under it and push the sub-rows below out of line with
     // their labels. align-top keeps every sub-row exactly h-6.
     const classes = [
-      `${inGrid ? 'time-span' : 'stop-time-popover-field'} font-mono ${sizeClass} rounded px-1 ${isPicker ? 'w-full align-top' : 'block truncate'}`,
+      `${inGrid ? 'time-span' : 'stop-time-popover-field'} field-tooltip-trigger font-mono ${sizeClass} rounded px-1 ${isPicker ? 'w-full align-top' : 'block truncate'}`,
       kind === 'time' && isWindowed ? 'text-info' : '',
       // A forbidden value and a dangling reference read the same way: an error
       // that is still editable, exactly as renderPropertyCell shows one.
       (presence?.state === 'forbidden' && value !== '') || dangling
         ? 'text-error font-semibold'
         : '',
-      earlierThan
-        ? 'field-tooltip-trigger text-error font-semibold bg-error/10'
-        : '',
+      earlierThan ? 'text-error font-semibold bg-error/10' : '',
       presence?.state === 'required' ? 'text-warning' : '',
       forbiddenEmpty
         ? 'opacity-40 cursor-not-allowed pointer-events-none'
@@ -592,11 +576,14 @@ export class TimetableCellRenderer {
         data-windowed="${isWindowed}"
         ${editable ? '' : 'data-disabled="true"'}
         ${
-          // The portal tooltip shows on keyboard focus too, so the warning is
-          // reachable without a pointer. It replaces the native title.
-          earlierThan
-            ? tooltipContentAttr(titleParts.map(escapeHtml).join('<br>'))
-            : `title="${escapeHtml(titleParts.join(' - '))}"`
+          // The portal tooltip shows on keyboard focus too, so a warning is
+          // reachable without a pointer.
+          tooltipContentAttr(
+            [
+              `<code>${escapeHtml(field)}</code>`,
+              ...titleParts.slice(1).map(escapeHtml),
+            ].join('<br>')
+          )
         }`;
     const display =
       kind === 'time'
