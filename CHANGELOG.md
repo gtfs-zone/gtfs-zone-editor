@@ -1,3 +1,10 @@
+## v0.42.0 (2026-10-17)
+
+### Feat
+
+- **seo**: lead the title and description with fast, free, and open source
+- **routes**: render a route_color shared by every route as no color
+
 ## v0.41.0 (2026-10-06)
 
 ### Feat
