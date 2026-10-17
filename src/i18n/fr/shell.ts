@@ -3,7 +3,7 @@ import type { shell as en } from '../en/shell';
 
 /** App shell, navbar and keyboard shortcuts, in French. */
 export const shell: Translation<typeof en> = {
-  'app.title': 'edit.gtfs.zone - Éditeur de données de transport GTFS',
+  'app.title': 'edit.gtfs.zone - Éditeur GTFS rapide, gratuit et open source',
   'app.initFailed':
     "Échec de l'initialisation de l'application. Actualisez la page et réessayez.",
   'shell.pointer': 'Pointeur',

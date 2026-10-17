@@ -1,6 +1,6 @@
 /** App shell, navbar and keyboard shortcuts, in English. */
 export const shell = {
-  'app.title': 'edit.gtfs.zone - GTFS Transit Data Editor',
+  'app.title': 'edit.gtfs.zone - Fast, free, open source GTFS editor',
   'app.initFailed':
     'Failed to initialize application. Please refresh the page and try again.',
   'shell.pointer': 'Pointer',
