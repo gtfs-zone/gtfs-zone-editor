@@ -95,6 +95,10 @@ import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicato
 import { databaseFallbackManager } from './modules/database-fallback-manager';
 import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { CONFIG } from './config';
+import {
+  routeColor,
+  setFeedRouteColors,
+} from 'gtfs-zone-web-common/gtfs/route-colors';
 import { initFieldTooltipPortal } from 'gtfs-zone-web-common/util/tooltip-position';
 import { configureSpecMarkup } from 'gtfs-zone-web-common/gtfs/spec-markup';
 import twoLegSvg from './assets/gtfs-spec/2-leg.svg';
@@ -208,6 +212,30 @@ export class GTFSEditor {
       this.gtfsParser.gtfsDatabase,
       this.gtfsParser
     );
+    // A route_color shared by every route renders as no color. Registered
+    // before the map's patch listeners so its re-render reads the new state.
+    const onRoutesPatch = (r?: PatchRecord) => {
+      const patch = r?.patch;
+      const ops = !patch ? [] : patch.op === 'batch' ? patch.ops : [patch];
+      if (
+        patch &&
+        ops.some((op) => op.source.table === 'routes') &&
+        this.refreshRouteColors()
+      ) {
+        // The surgical map update only redraws the edited route.
+        this.mapController
+          .updateMap()
+          .catch((e: unknown) =>
+            console.error('[GTFSEditor] route color redraw failed:', e)
+          );
+      } else if (!patch) {
+        this.refreshRouteColors();
+      }
+    };
+    this.patchManager.on('change', onRoutesPatch);
+    this.patchManager.on('undo', onRoutesPatch);
+    this.patchManager.on('redo', onRoutesPatch);
+    this.patchManager.on('jump', onRoutesPatch);
     // Lets the home panel re-run validation itself when the feed has moved on
     // since the issues it is about to draw were published.
     setFeedIssueRevalidator({
@@ -455,6 +483,7 @@ export class GTFSEditor {
       // existed each swap path had to remember these by hand, and the boot
       // paths did not. The parser fires it only once the new rows are final.
       this.gtfsParser.onFeedReplaced(() => {
+        this.refreshRouteColors();
         // The new feed renders the home panel itself.
         this.browseRefreshDeferred = false;
         // The stop_times messages the validator cached describe the previous
@@ -722,6 +751,27 @@ export class GTFSEditor {
     }
     // 'loaded' has already parsed the chosen feed into place.
     return 'loaded';
+  }
+
+  /**
+   * Hand the feed's route colors to the shared route color rule. True when
+   * that turned a shared color on or off, which recolors every route.
+   */
+  private refreshRouteColors(): boolean {
+    const routes = this.gtfsParser.getFileDataSync('routes.txt') ?? [];
+    const colors = () =>
+      routes
+        .map((r) => routeColor(String(r.route_id), r.route_color as string))
+        .join();
+    const before = colors();
+    setFeedRouteColors(
+      routes.map((route) => route.route_color as string | undefined)
+    );
+    const changed = colors() !== before;
+    if (changed) {
+      console.log('[GTFSEditor] shared route color rule changed; recoloring');
+    }
+    return changed;
   }
 
   /** Hydrate the feed sitting in IndexedDB: rows first, then the patch log. */
