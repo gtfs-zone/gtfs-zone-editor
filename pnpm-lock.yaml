@@ -21,8 +21,8 @@ importers:
         specifier: ^5.7.46
         version: 5.7.46
       gtfs-zone-web-common:
-        specifier: github:gtfs-zone/gtfs-zone-web-common#v5.12.1
-        version: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/558ea38fcc719f1f9d7222be8f6a6123b09862b9(@leeoniya/ufuzzy@1.0.19)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0)
+        specifier: github:gtfs-zone/gtfs-zone-web-common#v5.13.0
+        version: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bd9feb52026298983dcd3e5562cf87c0a0ff3f0c(@leeoniya/ufuzzy@1.0.19)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0)
       idb:
         specifier: ^8.0.3
         version: 8.0.3
@@ -1118,9 +1118,9 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/558ea38fcc719f1f9d7222be8f6a6123b09862b9:
-    resolution: {gitHosted: true, integrity: sha512-GOv33oyr5zNtZWEvlDi6nVX4lTMQ0Z0OvW/q+stfYecHggo6Og63wfZfFnzUN4WWgThbgWb5ZVq4sLsSO7Ijaw==, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/558ea38fcc719f1f9d7222be8f6a6123b09862b9}
-    version: 5.12.1
+  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bd9feb52026298983dcd3e5562cf87c0a0ff3f0c:
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bd9feb52026298983dcd3e5562cf87c0a0ff3f0c}
+    version: 5.13.0
     peerDependencies:
       '@leeoniya/ufuzzy': '*'
       gtfs-realtime-bindings: '*'
@@ -2522,7 +2522,7 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/558ea38fcc719f1f9d7222be8f6a6123b09862b9(@leeoniya/ufuzzy@1.0.19)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0):
+  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bd9feb52026298983dcd3e5562cf87c0a0ff3f0c(@leeoniya/ufuzzy@1.0.19)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0):
     dependencies:
       '@leeoniya/ufuzzy': 1.0.19
       jszip: 3.10.2
