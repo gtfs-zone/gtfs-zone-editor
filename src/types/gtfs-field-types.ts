@@ -55,6 +55,16 @@ export interface GTFSFieldTypeMetadata {
   zodValidator: (z: any) => any;
 }
 
+/** HH:MM:SS with minutes and seconds below 60; hours may pass 24. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function timeOfDaySchema(z: any) {
+  return z
+    .string()
+    .regex(/^\d{1,2}:\d{2}:\d{2}$/, t('value.timeFormat'))
+    .refine((s: string) => Number(s.split(':')[1]) < 60, t('value.minutes'))
+    .refine((s: string) => Number(s.split(':')[2]) < 60, t('value.seconds'));
+}
+
 /**
  * Field type metadata registry
  * Contains validation rules, patterns, and constraints for each GTFS field type
@@ -75,7 +85,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     description: 'Fully qualified URL including http:// or https://',
     pattern: /^https?:\/\/.+/,
     inputType: 'url',
-    zodValidator: (z) => z.string().url(),
+    zodValidator: (z) => z.url({ protocol: /^https?$/, error: t('value.url') }),
   },
 
   [GTFSFieldType.Email]: {
@@ -83,7 +93,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     description: 'Email address',
     pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
     inputType: 'email',
-    zodValidator: (z) => z.string().email(),
+    zodValidator: (z) => z.email({ error: t('value.email') }),
   },
 
   [GTFSFieldType.PhoneNumber]: {
@@ -151,7 +161,18 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     description: 'Service day in YYYYMMDD format (e.g., 20180913)',
     pattern: /^\d{8}$/,
     inputType: 'date',
-    zodValidator: (z) => z.string().regex(/^\d{8}$/, t('value.dateFormat')),
+    zodValidator: (z) =>
+      z
+        .string()
+        .regex(/^\d{8}$/, t('value.dateFormat'))
+        .refine((s: string) => {
+          const month = Number(s.slice(4, 6));
+          return month >= 1 && month <= 12;
+        }, t('value.month'))
+        .refine((s: string) => {
+          const day = Number(s.slice(6, 8));
+          return day >= 1 && day <= 31;
+        }, t('value.day')),
   },
 
   [GTFSFieldType.Time]: {
@@ -160,8 +181,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
       'Time in HH:MM:SS format (can exceed 24:00:00 for next-day times)',
     pattern: /^\d{1,2}:\d{2}:\d{2}$/,
     inputType: 'text',
-    zodValidator: (z) =>
-      z.string().regex(/^\d{1,2}:\d{2}:\d{2}$/, t('value.timeFormat')),
+    zodValidator: (z) => timeOfDaySchema(z),
   },
 
   [GTFSFieldType.LocalTime]: {
@@ -170,8 +190,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
       'Wall-clock time in HH:MM:SS format, local to the specified location',
     pattern: /^\d{1,2}:\d{2}:\d{2}$/,
     inputType: 'text',
-    zodValidator: (z) =>
-      z.string().regex(/^\d{1,2}:\d{2}:\d{2}$/, t('value.timeFormat')),
+    zodValidator: (z) => timeOfDaySchema(z),
   },
 
   [GTFSFieldType.ID]: {
@@ -201,7 +220,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     description: 'Integer value',
     inputType: 'number',
     step: 1,
-    zodValidator: (z) => z.number().int(),
+    zodValidator: (z) => z.number().int(t('value.integerNoDecimals')),
   },
 
   [GTFSFieldType.NonNegativeInteger]: {
@@ -210,7 +229,11 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     inputType: 'number',
     step: 1,
     min: 0,
-    zodValidator: (z) => z.number().int().nonnegative(),
+    zodValidator: (z) =>
+      z
+        .number()
+        .int(t('value.integerNoDecimals'))
+        .nonnegative(t('value.nonNegative')),
   },
 
   [GTFSFieldType.NonZeroInteger]: {
@@ -221,7 +244,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     zodValidator: (z) =>
       z
         .number()
-        .int()
+        .int(t('value.integerNoDecimals'))
         .refine((n: number) => n !== 0, t('value.notZero')),
   },
 
@@ -231,7 +254,11 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     inputType: 'number',
     step: 1,
     min: 1,
-    zodValidator: (z) => z.number().int().positive(),
+    zodValidator: (z) =>
+      z
+        .number()
+        .int(t('value.integerNoDecimals'))
+        .positive(t('value.positive')),
   },
 
   [GTFSFieldType.Float]: {
@@ -248,7 +275,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     inputType: 'number',
     step: 'any',
     min: 0,
-    zodValidator: (z) => z.number().nonnegative(),
+    zodValidator: (z) => z.number().nonnegative(t('value.nonNegative')),
   },
 
   [GTFSFieldType.PositiveFloat]: {
@@ -257,7 +284,7 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     inputType: 'number',
     step: 'any',
     min: 0,
-    zodValidator: (z) => z.number().positive(),
+    zodValidator: (z) => z.number().positive(t('value.positive')),
   },
 
   [GTFSFieldType.Latitude]: {
@@ -268,7 +295,11 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     min: -90.0,
     max: 90.0,
     decimals: 6,
-    zodValidator: (z) => z.number().min(-90.0).max(90.0),
+    zodValidator: (z) =>
+      z
+        .number()
+        .min(-90.0, t('value.min', { min: -90 }))
+        .max(90.0, t('value.max', { max: 90 })),
   },
 
   [GTFSFieldType.Longitude]: {
@@ -279,7 +310,11 @@ export const GTFS_FIELD_TYPE_METADATA: Record<
     min: -180.0,
     max: 180.0,
     decimals: 6,
-    zodValidator: (z) => z.number().min(-180.0).max(180.0),
+    zodValidator: (z) =>
+      z
+        .number()
+        .min(-180.0, t('value.min', { min: -180 }))
+        .max(180.0, t('value.max', { max: 180 })),
   },
 
   [GTFSFieldType.Enum]: {

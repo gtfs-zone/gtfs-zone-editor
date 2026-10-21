@@ -160,9 +160,12 @@ function buildFieldSchema(
 
   if (field.allowEmpty) {
     // Wrap in union with empty literal, describe on the union so tooltips
-    // can find it after unwrapping the outer ZodOptional.
+    // can find it after unwrapping the outer ZodOptional. A failed non-empty
+    // value reports the base validator's issue, not the union's generic one.
     return z
-      .union([z.literal(''), baseValidator])
+      .union([z.literal(''), baseValidator], {
+        error: (iss) => iss.errors?.[1]?.[0]?.message,
+      })
       .describe(field.description)
       .optional();
   }
