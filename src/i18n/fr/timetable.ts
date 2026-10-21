@@ -103,8 +103,7 @@ export const timetable: Translation<typeof en> = {
   'tt.routeNotFound': 'Ligne {id} introuvable',
   'tt.stopMissing':
     'Arrêt {id} absent de stops.txt mais référencé dans stop_times.txt',
-  'tt.invalidTime':
-    'Format horaire invalide : {time}. Le format doit être HH:MM:SS.',
+  'tt.invalidTime': 'Heure invalide {time} : {reason}',
   'tt.dbLost': 'Connexion à la base de données perdue',
   'sched.offsetError':
     'Le décalage doit être en minutes signées, MM:SS ou HH:MM:SS, par ex. -5',

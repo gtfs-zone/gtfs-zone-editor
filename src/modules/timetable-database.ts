@@ -94,6 +94,27 @@ function describeRow(st: StopTimes): string {
  * Follows the GTFS standard property naming and Enhanced GTFS Object pattern.
  * Never implements fallback logic - always exposes real errors for debugging.
  */
+/** A time the stop_times schema rejected, as opposed to a failed write. */
+export class TimeValidationError extends Error {}
+
+/** Throw a `TimeValidationError` naming the reason when `time` is not a GTFS time. */
+export function assertValidTime(time: string): void {
+  const result =
+    // Cast to z.ZodType to access safeParse, ZodTypeAny from ZodRawShape
+    // doesn't expose safeParse in its TypeScript type in Zod v4
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (StopTimesSchema.shape.arrival_time as any).safeParse(time);
+  if (!result.success) {
+    console.error('Time validation failed:', result.error);
+    throw new TimeValidationError(
+      t('tt.invalidTime', {
+        time,
+        reason: result.error.issues[0]?.message ?? t('value.invalid'),
+      })
+    );
+  }
+}
+
 export class TimetableDatabase {
   private gtfsParser: GTFSParserInterface;
 
@@ -146,16 +167,7 @@ export class TimetableDatabase {
     coupled?: CoupledTimes
   ): Promise<StopTimeEditPlan> {
     if (newTime !== null) {
-      const timeValidation =
-        // Cast to z.ZodType to access safeParse, ZodTypeAny from ZodRawShape
-        // doesn't expose safeParse in its TypeScript type in Zod v4
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (StopTimesSchema.shape.arrival_time as any).safeParse(newTime);
-      if (!timeValidation.success) {
-        const error = t('tt.invalidTime', { time: newTime });
-        console.error('Time validation failed:', timeValidation.error);
-        throw new Error(error);
-      }
+      assertValidTime(newTime);
     }
 
     const field = timeType === 'arrival' ? 'arrival_time' : 'departure_time';

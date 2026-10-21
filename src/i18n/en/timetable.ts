@@ -97,7 +97,7 @@ export const timetable = {
   'tt.routeNotFound': 'Route {id} not found',
   'tt.stopMissing':
     'Stop {id} not found in stops.txt but referenced in stop_times.txt',
-  'tt.invalidTime': 'Invalid time format: {time}. Must be HH:MM:SS format.',
+  'tt.invalidTime': 'Invalid time {time}: {reason}',
   'tt.dbLost': 'Database connection lost',
   'sched.offsetError':
     'Offset must be signed minutes, MM:SS or HH:MM:SS, e.g. -5',

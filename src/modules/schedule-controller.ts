@@ -28,6 +28,8 @@ import {
   StopTimeEditPlan,
   FlexWindowField,
   FlexRowShape,
+  TimeValidationError,
+  assertValidTime,
 } from './timetable-database';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
 import { patchUpdate } from '../utils/patch-utils';
@@ -2176,6 +2178,11 @@ export class ScheduleController {
       const castedTime = isClear
         ? null
         : TimeFormatter.castTimeToHHMMSS(newTime);
+      // Checked before coupling, which compares the times as strings and would
+      // otherwise report an unparseable time as an order problem.
+      if (castedTime !== null) {
+        assertValidTime(castedTime);
+      }
 
       // The pending row has no stop_time yet, so there is nothing to couple
       // against and nothing to find: it always inserts. A cell with no
@@ -2293,7 +2300,13 @@ export class ScheduleController {
       }
     } catch (error) {
       console.error('Failed to update arrival/departure time:', error);
-      this.showTimeError(trip_id, stop_id, t('sched.saveTimeFailed'));
+      this.showTimeError(
+        trip_id,
+        stop_id,
+        error instanceof TimeValidationError
+          ? error.message
+          : t('sched.saveTimeFailed')
+      );
       // Drop the preview of the write that just failed.
       void this.refreshCurrentTimetable();
     }
@@ -2382,6 +2395,18 @@ export class ScheduleController {
     if (isClear && isFlexRefRow) {
       await this.deleteStopTimeRow(trip_id, stopSequence, rowId);
       return;
+    }
+
+    if (casted) {
+      try {
+        assertValidTime(casted);
+      } catch (error) {
+        if (!(error instanceof TimeValidationError)) {
+          throw error;
+        }
+        this.showTimeError(trip_id, rowId, error.message);
+        return;
+      }
     }
 
     // Same string comparison the arrival/departure constraint uses: GTFS times
@@ -2529,6 +2554,7 @@ export class ScheduleController {
     const ref = pending.ref;
     try {
       const casted = TimeFormatter.castTimeToHHMMSS(newTime);
+      assertValidTime(casted);
       const plan = await this.database.planFlexStopTimeInsert(
         trip_id,
         ref,
@@ -2561,7 +2587,13 @@ export class ScheduleController {
       notify.success(t('sched.addedFlex'), { duration: 2000 });
     } catch (error) {
       console.error('Failed to create on-demand stop_time:', error);
-      this.showTimeError(trip_id, ref.id, t('sched.saveFlexFailed'));
+      this.showTimeError(
+        trip_id,
+        ref.id,
+        error instanceof TimeValidationError
+          ? error.message
+          : t('sched.saveFlexFailed')
+      );
     }
   }
 
@@ -2600,6 +2632,7 @@ export class ScheduleController {
     const inherited = this.inheritedFlexShape(data, stopIndex, trip_id);
     try {
       const casted = TimeFormatter.castTimeToHHMMSS(newTime);
+      assertValidTime(casted);
       const plan = await this.database.planFlexStopTimeInsert(
         trip_id,
         ref,
@@ -2644,7 +2677,13 @@ export class ScheduleController {
       );
     } catch (error) {
       console.error('Failed to create on-demand stop_time:', error);
-      this.showTimeError(trip_id, ref.id, t('sched.saveFlexFailed'));
+      this.showTimeError(
+        trip_id,
+        ref.id,
+        error instanceof TimeValidationError
+          ? error.message
+          : t('sched.saveFlexFailed')
+      );
     }
   }
 
