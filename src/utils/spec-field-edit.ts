@@ -7,7 +7,7 @@
  * property pages both ask them, so they live here rather than in either.
  */
 
-import { GTFSSchemas } from '../types/gtfs';
+import { GTFS_FIELD_SPECS, GTFSSchemas } from '../types/gtfs';
 import { GTFSFieldType, mapGTFSTypeString } from '../types/gtfs-field-types';
 import {
   currencyOptions,
@@ -157,6 +157,28 @@ export function validateFieldValue(
   return result.success
     ? null
     : (result.error.issues[0]?.message ?? t('value.invalid'));
+}
+
+/**
+ * Coerce and validate a raw input for `tableName.field` in one step.
+ *
+ * For editors that store the text they were given but must still reject what
+ * the spec forbids. Returns the error message, or null when the value is fine.
+ */
+export function fieldInputError(
+  tableName: string,
+  field: string,
+  raw: string
+): string | null {
+  const spec = GTFS_FIELD_SPECS[tableName]?.[field];
+  if (!spec) {
+    throw new Error(`[spec-field-edit] no spec for ${tableName} ${field}`);
+  }
+  const coerced = coerceFieldValue(spec, raw);
+  if ('error' in coerced) {
+    return coerced.error;
+  }
+  return validateFieldValue(tableName, field, spec, coerced.value);
 }
 
 /** Plain-text display for a value, before escaping. */

@@ -233,11 +233,8 @@ const latitudeFormatter: FieldFormatter = {
   },
 
   toGTFS(value: string): string {
-    const num = parseFloat(value);
-    if (isNaN(num)) {
-      return value.trim();
-    }
-    return num.toFixed(6);
+    const num = strictNumber(value);
+    return num === null ? value.trim() : num.toFixed(6);
   },
 
   validate(value: string | number): { valid: boolean; error?: string } {
@@ -264,11 +261,8 @@ const longitudeFormatter: FieldFormatter = {
   },
 
   toGTFS(value: string): string {
-    const num = parseFloat(value);
-    if (isNaN(num)) {
-      return value.trim();
-    }
-    return num.toFixed(6);
+    const num = strictNumber(value);
+    return num === null ? value.trim() : num.toFixed(6);
   },
 
   validate(value: string | number): { valid: boolean; error?: string } {
@@ -279,6 +273,16 @@ const longitudeFormatter: FieldFormatter = {
     return validateFieldType(num, GTFSFieldType.Longitude);
   },
 };
+
+/**
+ * The number the whole trimmed text spells, or null. Unlike `parseFloat`, a
+ * trailing `abc` or `,5` makes it null, so the raw text reaches validation.
+ */
+function strictNumber(value: string): number | null {
+  const trimmed = value.trim();
+  const num = Number(trimmed);
+  return trimmed === '' || !Number.isFinite(num) ? null : num;
+}
 
 /**
  * Default formatter for simple string/number fields
@@ -306,8 +310,8 @@ const integerFormatter: FieldFormatter = {
   },
 
   toGTFS(value: string): string {
-    const num = parseInt(value, 10);
-    return isNaN(num) ? value.trim() : String(num);
+    const num = strictNumber(value);
+    return num === null || !Number.isInteger(num) ? value.trim() : String(num);
   },
 
   validate(value: string | number): { valid: boolean; error?: string } {
@@ -331,8 +335,8 @@ const floatFormatter: FieldFormatter = {
   },
 
   toGTFS(value: string): string {
-    const num = parseFloat(value);
-    return isNaN(num) ? value.trim() : String(num);
+    const num = strictNumber(value);
+    return num === null ? value.trim() : String(num);
   },
 
   validate(value: string | number): { valid: boolean; error?: string } {

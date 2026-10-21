@@ -88,6 +88,7 @@ import {
   frequencyPeriodKey,
 } from '../utils/frequency-rules';
 import { t } from '../i18n/messages';
+import { fieldInputError } from '../utils/spec-field-edit';
 
 /**
  * Identifies one time cell across a re-render.
@@ -1789,10 +1790,11 @@ export class ScheduleController {
       value: value ?? '',
       inputType: fieldKind === 'number' ? 'number' : 'text',
       className: 'w-full text-center',
-      onCommit: (newValue) => {
-        span.textContent = newValue || '-';
-        span.dataset.value = newValue;
-        return this.updateTripProperty(tripId, field, newValue);
+      onCommit: async (newValue) => {
+        if (await this.updateTripProperty(tripId, field, newValue)) {
+          span.textContent = newValue || '-';
+          span.dataset.value = newValue;
+        }
       },
     });
   }
@@ -2468,7 +2470,10 @@ export class ScheduleController {
       return;
     }
 
-    const invalid = validateFlexStopTimeRow({ ...record, [field]: value });
+    const typeError = fieldInputError('stop_times.txt', field, value);
+    const invalid = typeError
+      ? `${field}: ${typeError}`
+      : validateFlexStopTimeRow({ ...record, [field]: value });
     if (invalid) {
       this.showTimeError(trip_id, rowId, invalid);
       return;
@@ -3142,12 +3147,18 @@ export class ScheduleController {
    * @param trip_id - GTFS trip identifier
    * @param field - Property name (e.g., 'trip_headsign', 'direction_id')
    * @param newValue - New value for the property
+   * @returns Whether the value was accepted (written or already stored)
    */
   public async updateTripProperty(
     trip_id: string,
     field: string,
     newValue: string
-  ): Promise<void> {
+  ): Promise<boolean> {
+    const invalid = fieldInputError('trips.txt', field, newValue);
+    if (invalid) {
+      notify.error(`${field}: ${invalid}`, { duration: 5000 });
+      return false;
+    }
     try {
       // Type conversion based on field
       let processedValue: string | number | null = newValue;
@@ -3173,7 +3184,7 @@ export class ScheduleController {
 
       // No-op guard: skip if value is unchanged
       if (processedValue === storedValue) {
-        return;
+        return true;
       }
 
       // Update database
@@ -3190,6 +3201,7 @@ export class ScheduleController {
         `Updated trip property ${field} for ${trip_id} to:`,
         processedValue
       );
+      return true;
     } catch (error) {
       console.error('Failed to update trip property:', error);
       notify.show(
@@ -3199,6 +3211,7 @@ export class ScheduleController {
           duration: 5000,
         }
       );
+      return false;
     }
   }
 

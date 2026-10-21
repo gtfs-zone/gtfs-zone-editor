@@ -241,7 +241,14 @@ export function openInlineEditor(
   // state the native control does not have. See `color-input.ts`.
   const isDate = options.inputType === 'date';
   const isColor = options.inputType === 'color';
-  input.type = isDate || isColor ? 'text' : (options.inputType ?? 'text');
+  // A number is a text box too: a native number input hands back '' for text
+  // it cannot parse, so the commit could not say why the value was rejected.
+  const isNumber = options.inputType === 'number';
+  input.type =
+    isDate || isColor || isNumber ? 'text' : (options.inputType ?? 'text');
+  if (isNumber) {
+    input.inputMode = 'decimal';
+  }
   input.className =
     `${LIVE_EDITOR_CLASS} input ${options.sizeClass ?? 'input-xs'} ${options.className ?? 'w-full'}`.trim();
   input.value = options.initialValue ?? options.value;
