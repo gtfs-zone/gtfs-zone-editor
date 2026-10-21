@@ -16,6 +16,10 @@ export const load = {
   'help.continueFares': 'Continue to Fares',
   'help.continueOnDemand': 'Continue to On-Demand',
   'load.linkedFeed': 'Linked feed',
+  'load.linkedOverEdits_one':
+    'This link opens a different feed. The feed stored in this browser has {count} edit that would be lost. Continue with it, or load the linked feed.',
+  'load.linkedOverEdits_other':
+    'This link opens a different feed. The feed stored in this browser has {count} edits that would be lost. Continue with it, or load the linked feed.',
   'load.newEmpty': 'New Empty Feed',
   'load.urlErrorTitle': 'Failed to load feed',
   'load.attemptedUrl': 'Attempted URL: {link}',

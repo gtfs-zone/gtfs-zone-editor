@@ -368,14 +368,28 @@ export class UIController {
    * hydrate the stored feed. Cancelling falls back to the stored feed when
    * there is one, and to a fresh empty feed when there is not: closing the
    * boot screen must never leave the app without a feed.
+   *
+   * `linkedUrl` is a `#load=` link held back because loading it would drop the
+   * stored feed's edits: it is offered as a card next to the continue card.
    */
   async openBootLoadModal(
-    continueWith?: ContinueOffer
+    continueWith?: ContinueOffer,
+    linkedUrl?: string
   ): Promise<'continue' | 'empty' | 'loaded'> {
     let emptyChosen = false;
     const result = await showLoadModal(null, {
       realtime: false,
       continueWith,
+      linkedWith: linkedUrl
+        ? {
+            label: t('load.linkedFeed'),
+            scheduledUrl: linkedUrl,
+            canRetryWithCors: false,
+          }
+        : undefined,
+      notice: linkedUrl
+        ? t('load.linkedOverEdits', { count: continueWith?.edits ?? 0 })
+        : undefined,
       extraActions: [
         {
           label: t('load.newEmpty'),

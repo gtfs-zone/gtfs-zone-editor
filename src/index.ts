@@ -691,12 +691,21 @@ export class GTFSEditor {
    * Boot no longer restores the stored feed unconditionally: parsing it is the
    * expensive half of startup, and it is the wrong feed as often as it is the
    * right one. The load modal comes first and the stored feed is one of its
-   * offers. A `#load=` command and a deep link into an object both already
-   * state which feed is wanted, so neither shows the modal.
+   * offers. A deep link into an object already states which feed is wanted,
+   * so it skips the modal. So does a `#load=` command, unless the stored feed
+   * has edits: loading over it would drop them, so the modal offers both.
    */
   private async bootFeed(): Promise<BootOutcome> {
     const loadUrl = takeLoadCommand();
-    if (loadUrl) {
+
+    // Both reads are single meta records: the stored feed is described without
+    // parsing a byte of it.
+    const [summary, versions] = await Promise.all([
+      this.gtfsParser.gtfsDatabase.getFeedSummary(),
+      this.gtfsParser.gtfsDatabase.getVersions(),
+    ]);
+
+    if (loadUrl && (!summary || versions.currentVersion === 0)) {
       console.log('[boot] skipped modal: #load', loadUrl);
       await this.uiController.loadSelection({
         scheduled: {
@@ -710,20 +719,19 @@ export class GTFSEditor {
       return 'loaded';
     }
 
-    const deepLink = this.pageStateManager.pendingStateFromURL();
-    if (deepLink.type !== 'home' || deepLink.modal) {
+    if (loadUrl) {
       console.log(
-        `[boot] skipped modal: deep link to ${deepLink.modal?.type ?? deepLink.type}`
+        `[boot] #load held: stored feed has ${versions.currentVersion} edits`
       );
-      return this.restoreStoredFeed();
+    } else {
+      const deepLink = this.pageStateManager.pendingStateFromURL();
+      if (deepLink.type !== 'home' || deepLink.modal) {
+        console.log(
+          `[boot] skipped modal: deep link to ${deepLink.modal?.type ?? deepLink.type}`
+        );
+        return this.restoreStoredFeed();
+      }
     }
-
-    // Both reads are single meta records: the stored feed is described without
-    // parsing a byte of it.
-    const [summary, versions] = await Promise.all([
-      this.gtfsParser.gtfsDatabase.getFeedSummary(),
-      this.gtfsParser.gtfsDatabase.getVersions(),
-    ]);
 
     // The modal is the boot screen, not an interruption of a load in progress,
     // so the progress bar comes down while both it and the welcome page are up.
@@ -732,7 +740,8 @@ export class GTFSEditor {
       continueLabel: t('help.welcome.start'),
     });
     const choice = await this.uiController.openBootLoadModal(
-      summary ? { ...summary, edits: versions.currentVersion } : undefined
+      summary ? { ...summary, edits: versions.currentVersion } : undefined,
+      loadUrl ?? undefined
     );
     feedProgressIndicator.startLoading('boot', t('boot.openingFeed'));
     console.log(`[boot] load modal: user chose ${choice}`);

@@ -21,6 +21,10 @@ export const load: Translation<typeof en> = {
   'help.continueFares': 'Continuer vers les tarifs',
   'help.continueOnDemand': 'Continuer vers le transport à la demande',
   'load.linkedFeed': 'Flux lié',
+  'load.linkedOverEdits_one':
+    'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modification qui serait perdue. Continuez avec celui-ci, ou chargez le flux du lien.',
+  'load.linkedOverEdits_other':
+    'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modifications qui seraient perdues. Continuez avec celui-ci, ou chargez le flux du lien.',
   'load.newEmpty': 'Nouveau flux vide',
   'load.urlErrorTitle': 'Échec du chargement du flux',
   'load.attemptedUrl': 'URL demandée : {link}',
