@@ -109,7 +109,14 @@ export class UIController {
     document.getElementById('file-input')!.addEventListener('change', (e) => {
       const target = e.target as HTMLInputElement;
       if (target.files && target.files.length > 0) {
-        this.loadGTFSFile(target.files[0]);
+        const file = target.files[0];
+        // Cleared either way, so picking the same file again fires `change`.
+        target.value = '';
+        void this.confirmReplaceFeed().then((ok) => {
+          if (ok) {
+            void this.loadGTFSFile(file);
+          }
+        });
       }
     });
 
@@ -182,7 +189,12 @@ export class UIController {
       e.stopPropagation();
       const files = e.dataTransfer!.files;
       if (files.length > 0 && files[0].name.endsWith('.zip')) {
-        this.loadGTFSFile(files[0]);
+        const file = files[0];
+        void this.confirmReplaceFeed().then((ok) => {
+          if (ok) {
+            void this.loadGTFSFile(file);
+          }
+        });
       }
     });
   }
@@ -356,7 +368,7 @@ export class UIController {
       ],
     });
 
-    if (result?.kind === 'selection') {
+    if (result?.kind === 'selection' && (await this.confirmReplaceFeed())) {
       await this.loadSelection(result.selection);
     }
   }
@@ -674,6 +686,9 @@ export class UIController {
   }
 
   async createNewFeed() {
+    if (!(await this.confirmReplaceFeed())) {
+      return;
+    }
     try {
       // Reset to empty GTFS feed
       await this.gtfsParser!.initializeEmpty();
@@ -829,6 +844,57 @@ export class UIController {
     });
     closeDraft(draftId);
     return proceed;
+  }
+
+  /**
+   * Ask before a load replaces a feed that has edits.
+   *
+   * Resolves true to go on with the load. Only in-session loads ask: at boot
+   * the continue card already shows the edit count. "Export first" exports and
+   * resolves false, so the load is started again once the copy is saved.
+   */
+  private async confirmReplaceFeed(): Promise<boolean> {
+    const count = this.patchManager?.changeCount ?? 0;
+    if (count === 0) {
+      return true;
+    }
+
+    // Widened by hand: TS cannot see the onClick closures assigning it.
+    let choice = 'cancel' as 'replace' | 'export' | 'cancel';
+    await showModal({
+      title: t('load.replaceTitle'),
+      body: `<p class="text-sm">${t('load.replaceBody', { count })}</p>`,
+      escapeAction: 2,
+      actions: [
+        {
+          label: t('load.replaceConfirm'),
+          className: 'btn-error',
+          onClick: () => {
+            choice = 'replace';
+          },
+        },
+        {
+          label: t('load.exportFirst'),
+          className: 'btn-primary',
+          onClick: () => {
+            choice = 'export';
+          },
+        },
+        {
+          label: t('common.cancel'),
+          className: 'btn-ghost',
+          onClick: () => {
+            choice = 'cancel';
+          },
+        },
+      ],
+    });
+    console.log(`[UIController] replace feed: ${choice} (${count} edits)`);
+
+    if (choice === 'export') {
+      await this.exportGTFS();
+    }
+    return choice === 'replace';
   }
 
   async exportGTFS() {

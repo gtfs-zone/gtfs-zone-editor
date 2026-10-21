@@ -25,6 +25,13 @@ export const load: Translation<typeof en> = {
     'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modification qui serait perdue. Continuez avec celui-ci, ou chargez le flux du lien.',
   'load.linkedOverEdits_other':
     'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modifications qui seraient perdues. Continuez avec celui-ci, ou chargez le flux du lien.',
+  'load.replaceTitle': 'Remplacer le flux actuel ?',
+  'load.replaceBody_one':
+    "Le flux actuel contient {count} modification. Charger un autre flux l'efface, ainsi que l'historique d'annulation. Exportez d'abord pour en garder une copie.",
+  'load.replaceBody_other':
+    "Le flux actuel contient {count} modifications. Charger un autre flux les efface, ainsi que l'historique d'annulation. Exportez d'abord pour en garder une copie.",
+  'load.replaceConfirm': 'Effacer et remplacer',
+  'load.exportFirst': "Exporter d'abord",
   'load.newEmpty': 'Nouveau flux vide',
   'load.urlErrorTitle': 'Échec du chargement du flux',
   'load.attemptedUrl': 'URL demandée : {link}',

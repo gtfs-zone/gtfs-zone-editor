@@ -20,6 +20,13 @@ export const load = {
     'This link opens a different feed. The feed stored in this browser has {count} edit that would be lost. Continue with it, or load the linked feed.',
   'load.linkedOverEdits_other':
     'This link opens a different feed. The feed stored in this browser has {count} edits that would be lost. Continue with it, or load the linked feed.',
+  'load.replaceTitle': 'Replace the current feed?',
+  'load.replaceBody_one':
+    'The current feed has {count} edit. Loading another feed discards it, along with the undo history. Export first to keep a copy.',
+  'load.replaceBody_other':
+    'The current feed has {count} edits. Loading another feed discards them, along with the undo history. Export first to keep a copy.',
+  'load.replaceConfirm': 'Discard and Replace',
+  'load.exportFirst': 'Export First',
   'load.newEmpty': 'New Empty Feed',
   'load.urlErrorTitle': 'Failed to load feed',
   'load.attemptedUrl': 'Attempted URL: {link}',
