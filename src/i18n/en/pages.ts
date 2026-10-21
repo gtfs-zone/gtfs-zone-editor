@@ -41,6 +41,7 @@ export const pages = {
   'page.newAgencyTitle': 'New agency',
   'page.newRouteTitle': 'New route',
   'page.alreadyAtBound': 'Every service is already at that bound',
+  'page.serviceAtBound': 'This service is already at that bound',
   'page.trimmed': 'Trimmed {services}',
   'page.extended': 'Extended {services}',
   'page.trimmedRemoved': 'Trimmed {services}, removed {exceptions}',

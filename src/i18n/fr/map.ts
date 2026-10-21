@@ -55,6 +55,7 @@ export const map: Translation<typeof en> = {
     "Collez un lien de partage geojson.io, ou l'URL d'un fichier GeoJSON à récupérer. Rien n'est enregistré avant d'appuyer sur Enregistrer.",
   'geo.url': 'URL',
   'geo.useCors': 'Utiliser le proxy CORS',
+  'geo.urlRequired': 'Saisissez une URL à récupérer',
   'geo.fetch': 'Récupérer',
   'geo.defaultHint':
     "Pour récupérer une modification, utilisez Share dans geojson.io et collez le lien ici. geojson.io ne garde plus les données dans la barre d'adresse pendant le tracé.",

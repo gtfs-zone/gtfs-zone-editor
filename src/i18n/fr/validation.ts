@@ -88,6 +88,7 @@ export const validation: Translation<typeof en> = {
   'value.hexColor': 'Doit être une couleur hexadécimale à 6 chiffres',
   'value.dateFormat': 'Doit être au format AAAAMMJJ',
   'value.timeFormat': 'Doit être au format HH:MM:SS',
+  'value.fieldError': '{field} : {message}',
   'value.url': 'Doit être une URL complète commençant par http:// ou https://',
   'value.email': 'Doit être une adresse e-mail valide',
   'value.nonNegative': 'Doit être supérieur ou égal à 0',

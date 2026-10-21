@@ -45,6 +45,7 @@ export const pages: Translation<typeof en> = {
   'page.newAgencyTitle': 'Nouvelle agence',
   'page.newRouteTitle': 'Nouvelle ligne',
   'page.alreadyAtBound': 'Tous les services sont déjà à cette limite',
+  'page.serviceAtBound': 'Ce service est déjà à cette limite',
   'page.trimmed': '{services} raccourci(s)',
   'page.extended': '{services} prolongé(s)',
   'page.trimmedRemoved': '{services} raccourci(s), {exceptions} supprimée(s)',

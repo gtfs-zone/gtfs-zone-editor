@@ -133,6 +133,7 @@ export async function promptForGeojsonUrl(): Promise<{
           <input type="checkbox" class="toggle toggle-sm geojson-import-cors" checked />
           <span class="label-text">${t('geo.useCors')}</span>
         </label>
+        <p class="text-error text-sm hidden geojson-import-error"></p>
       </div>
     `,
     actions: [
@@ -142,9 +143,19 @@ export async function promptForGeojsonUrl(): Promise<{
         className: 'btn-primary',
         onClick: () => {
           const url = urlInput?.value.trim() ?? '';
-          if (url) {
-            result = { url, useCors: corsInput?.checked ?? false };
+          if (!url) {
+            const errorEl = document.querySelector<HTMLElement>(
+              '.geojson-import-error'
+            );
+            if (errorEl) {
+              errorEl.textContent = t('geo.urlRequired');
+              errorEl.classList.remove('hidden');
+            }
+            urlInput?.focus();
+            return true;
           }
+          result = { url, useCors: corsInput?.checked ?? false };
+          return false;
         },
       },
     ],

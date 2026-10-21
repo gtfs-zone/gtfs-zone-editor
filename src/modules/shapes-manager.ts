@@ -1202,6 +1202,7 @@ export class ShapesManager {
       console.log(
         `[ShapesManager] Simplify left shape ${shapeId} unchanged (${rows.length} points)`
       );
+      notify.info(t('shapes.simplifyUnchanged', { id: shapeId }));
       return;
     }
 
@@ -1354,6 +1355,7 @@ export class ShapesManager {
 
     if (changedShapes === 0) {
       console.log('[ShapesManager] Simplify all left every shape unchanged');
+      notify.info(t('shapes.simplifyAllUnchanged'));
       return;
     }
 

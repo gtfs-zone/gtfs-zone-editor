@@ -1527,7 +1527,7 @@ async function commitUpdate(
     config.rows.map((r) => rowKey(config, r)).filter((k) => !groupKeys.has(k))
   );
   if (newKeys.some((newKey) => taken.has(newKey))) {
-    markCellError(span, 'Another row already uses these key values');
+    markCellError(span, t('table.keyTaken'));
     return;
   }
 
@@ -1678,7 +1678,7 @@ async function commitListCell(
     config.rows.map((r) => rowKey(config, r)).filter((k) => !groupKeys.has(k))
   );
   if (inserts.some((entry) => taken.has(entry.key))) {
-    markCellError(span, 'Another row already uses these key values');
+    markCellError(span, t('table.keyTaken'));
     return;
   }
 
@@ -1748,6 +1748,27 @@ function rekeyRowElement(span: HTMLElement, newKey: string): void {
 }
 
 /**
+ * Show which required fields the blank row still needs, in a row under it, or
+ * remove that row once none are missing.
+ */
+function showNewRowHint(row: HTMLTableRowElement, missing: string[]): void {
+  const next = row.nextElementSibling;
+  const existing = next?.classList.contains('editable-table-new-row-hint')
+    ? next
+    : null;
+  if (missing.length === 0) {
+    existing?.remove();
+    return;
+  }
+  const hint = existing ?? document.createElement('tr');
+  hint.className = 'editable-table-new-row-hint';
+  hint.innerHTML = `<td colspan="${row.children.length}" class="px-2 pb-1 text-xs text-error">${escapeHtml(t('table.fillToSave', { fields: missing.join(', ') }))}</td>`;
+  if (!existing) {
+    row.after(hint);
+  }
+}
+
+/**
  * Accumulate the blank row's values, and write the record once every required
  * field has one. Missing required fields are marked in place instead of
  * failing loudly: the user is still filling the row in.
@@ -1768,6 +1789,10 @@ async function commitNewRow(
   }
 
   if (Object.keys(state.pending).length === 0) {
+    const row = span.closest('tr');
+    if (row) {
+      showNewRowHint(row, []);
+    }
     return;
   }
 
@@ -1781,10 +1806,19 @@ async function commitNewRow(
   fields.forEach((f) => {
     const cell = row?.querySelector<HTMLElement>(`[data-field="${f}"]`);
     if (cell) {
-      cell.classList.toggle('ring-1', missing.includes(f));
-      cell.classList.toggle('ring-error', missing.includes(f));
+      const isMissing = missing.includes(f);
+      cell.classList.toggle('ring-1', isMissing);
+      cell.classList.toggle('ring-error', isMissing);
+      if (isMissing) {
+        cell.title = t('value.required');
+      } else if (cell.title === t('value.required')) {
+        cell.removeAttribute('title');
+      }
     }
   });
+  if (row) {
+    showNewRowHint(row, missing);
+  }
   if (missing.length > 0) {
     return;
   }
@@ -1819,7 +1853,7 @@ async function commitNewRow(
       ? config.rows.some((r) => rowKey(config, r) === key)
       : (await config.deps.gtfsDatabase.getRow(table, key)) !== undefined;
   if (exists) {
-    markCellError(span, 'A row with these key values already exists');
+    markCellError(span, t('table.rowExists'));
     return;
   }
 

@@ -110,6 +110,7 @@ export const modals = {
   'translations.noValues': 'No record has a value in this field.',
   'translations.noMatch': 'No row matches.',
   'translations.noRow': 'No row {key}',
+  'translations.languageExists': '{lang} is already a column',
   'translations.exists': 'A translation with these key values already exists',
   'translations.forbiddenFeedInfo':
     '{field} is forbidden when table_name is feed_info',

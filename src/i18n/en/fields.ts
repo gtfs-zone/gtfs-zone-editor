@@ -54,6 +54,7 @@ export const fields = {
   'pathway.mode': 'Mode {mode}',
   'areas.notAllowed':
     'Only stops and stations can be assigned to areas (this one is location_type {type}).',
+  'areas.alreadyAssigned': 'This stop is already in area {area}',
   'areas.remove': 'Remove from this area',
   'areas.add': '+ Add area...',
   'areas.inherited':
@@ -110,6 +111,9 @@ export const fields = {
     'A field that is not part of the GTFS specification. It is preserved as-is on export, and validation ignores it.',
   'table.addFieldNote':
     'The exported file lists the columns the rows actually carry, so a field left empty on every row will not appear in it.',
+  'table.keyTaken': 'Another row already uses these key values',
+  'table.rowExists': 'A row with these key values already exists',
+  'table.fillToSave': 'Fill in {fields} to save this row',
   'table.addField': 'Add field',
   'table.fieldAdded': 'Added {name} to {table}',
   'table.leaveBlank': 'Leave blank',

@@ -79,6 +79,10 @@ export const shapes: Translation<typeof en> = {
   'shapes.hasPoints': 'Le tracé {id} a {count} points.',
   'shapes.labelSimplify': 'Simplification du tracé {id} ({from} -> {to} pts)',
   'shapes.simplifyAllTitle': 'Simplifier tous les tracés',
+  'shapes.simplifyUnchanged':
+    'Ce niveau garde tous les points, le tracé {id} est donc inchangé.',
+  'shapes.simplifyAllUnchanged':
+    'Ce niveau garde tous les points, aucun tracé ne change donc.',
   'shapes.nothingToSimplify':
     "Aucun tracé de ce flux n'a plus de deux points ; il n'y a rien à simplifier.",
   'shapes.keepsAcross':

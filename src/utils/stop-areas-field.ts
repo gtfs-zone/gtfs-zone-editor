@@ -241,7 +241,14 @@ async function addArea(stop_id: string): Promise<void> {
     return;
   }
   const stop = await stopRow(stop_id);
-  if (!stop || !canStopHaveAreas(stop)) {
+  if (!stop) {
+    return;
+  }
+  if (!canStopHaveAreas(stop)) {
+    notify.error(
+      t('areas.notAllowed', { type: String(stopLocationType(stop)) }),
+      { duration: 4000 }
+    );
     return;
   }
 
@@ -281,7 +288,13 @@ async function addArea(stop_id: string): Promise<void> {
     }
     area_id = created;
   }
-  if (area_id === '' || assigned.has(area_id)) {
+  if (area_id === '') {
+    return;
+  }
+  if (assigned.has(area_id)) {
+    notify.error(t('areas.alreadyAssigned', { area: area_id }), {
+      duration: 4000,
+    });
     return;
   }
 

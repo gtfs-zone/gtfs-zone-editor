@@ -46,6 +46,7 @@ export const map = {
     'Paste a geojson.io share link, or the URL of a GeoJSON file to fetch. Nothing is saved until you press Save.',
   'geo.url': 'URL',
   'geo.useCors': 'Use CORS proxy',
+  'geo.urlRequired': 'Enter a URL to fetch',
   'geo.fetch': 'Fetch',
   'geo.defaultHint':
     'To pull an edit back in, use Share in geojson.io and paste the link here. geojson.io no longer keeps the data in the address bar while you draw.',

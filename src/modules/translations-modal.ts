@@ -8,6 +8,7 @@
  */
 
 import { showSidebarModal } from 'gtfs-zone-web-common/ui/sidebar-modal';
+import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import {
   renderEditableTable,
@@ -344,6 +345,9 @@ export async function showTranslationsModal(
     }
     if (currentView?.languages.includes(picked)) {
       console.warn(`[Translations] ${picked} is already a column`);
+      notify.error(t('translations.languageExists', { lang: picked }), {
+        duration: 4000,
+      });
       return;
     }
     console.log(`[Translations] pending language ${picked}`);
@@ -394,6 +398,8 @@ export async function showTranslationsModal(
     input.focus();
 
     let done = false;
+    // The value last toasted, so a blur after an Enter does not repeat it.
+    let notifiedValue: string | null = null;
     const commit = async (
       move: 'stay' | 'next' | 'prev',
       fromBlur = false
@@ -413,6 +419,10 @@ export async function showTranslationsModal(
         input.classList.add('input-error');
         input.title = result;
         console.warn(`[Translations] rejected ${key} ${lang}: ${result}`);
+        if (notifiedValue !== input.value) {
+          notifiedValue = input.value;
+          notify.error(result, { duration: 4000 });
+        }
         // Refocusing on blur fights the element that took focus, in a loop.
         if (!fromBlur) {
           input.focus();

@@ -599,7 +599,7 @@ export async function writeCell(
     value
   );
   if (typeError) {
-    return typeError;
+    return t('value.fieldError', { field, message: typeError });
   }
 
   if (own) {

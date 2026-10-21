@@ -113,6 +113,7 @@ export const modals: Translation<typeof en> = {
   'translations.noValues': "Aucun enregistrement n'a de valeur dans ce champ.",
   'translations.noMatch': 'Aucune ligne ne correspond.',
   'translations.noRow': 'Aucune ligne {key}',
+  'translations.languageExists': '{lang} est déjà une colonne',
   'translations.exists': 'Une traduction avec ces valeurs de clé existe déjà',
   'translations.forbiddenFeedInfo':
     '{field} est interdit quand table_name vaut feed_info',

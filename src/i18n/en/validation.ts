@@ -82,6 +82,7 @@ export const validation = {
   'value.hexColor': 'Must be a 6-digit hexadecimal color',
   'value.dateFormat': 'Must be in YYYYMMDD format',
   'value.timeFormat': 'Must be in HH:MM:SS format',
+  'value.fieldError': '{field}: {message}',
   'value.url': 'Must be a full URL starting with http:// or https://',
   'value.email': 'Must be a valid email address',
   'value.nonNegative': 'Must be 0 or greater',

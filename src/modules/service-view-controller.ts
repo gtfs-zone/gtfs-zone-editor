@@ -26,6 +26,7 @@ import {
   type OptionPickerItem,
 } from './option-picker-modal';
 import { t } from '../i18n/messages';
+import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 
 const CREATE_TIMETABLE_BTN = 'create-timetable-btn';
 const TRIM_TO_FEED_START_BTN = 'trim-to-feed-start-btn';
@@ -446,6 +447,7 @@ export class ServiceViewController {
       new Set([service_id])
     );
     if (services === 0 && exceptions === 0) {
+      notify.info(t('page.serviceAtBound'));
       return;
     }
     this.dependencies.onServiceChanged?.(service_id);

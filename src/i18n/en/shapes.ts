@@ -74,6 +74,10 @@ export const shapes = {
   'shapes.hasPoints': 'Shape {id} has {count} points.',
   'shapes.labelSimplify': 'Simplify shape {id} ({from} -> {to} pts)',
   'shapes.simplifyAllTitle': 'Simplify all shapes',
+  'shapes.simplifyUnchanged':
+    'That level keeps every point, so shape {id} is unchanged.',
+  'shapes.simplifyAllUnchanged':
+    'That level keeps every point, so no shape changed.',
   'shapes.nothingToSimplify':
     'No shape in this feed has more than two points; there is nothing to simplify.',
   'shapes.keepsAcross':

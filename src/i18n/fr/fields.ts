@@ -59,6 +59,7 @@ export const fields: Translation<typeof en> = {
   'pathway.mode': 'Mode {mode}',
   'areas.notAllowed':
     'Seuls les arrêts et les stations peuvent être affectés à des secteurs (celui-ci a location_type {type}).',
+  'areas.alreadyAssigned': 'Cet arrêt est déjà dans le secteur {area}',
   'areas.remove': 'Retirer de ce secteur',
   'areas.add': '+ Ajouter un secteur...',
   'areas.inherited':
@@ -116,6 +117,9 @@ export const fields: Translation<typeof en> = {
     "Un champ qui ne fait pas partie de la spécification GTFS. Il est conservé tel quel à l'export, et la validation l'ignore.",
   'table.addFieldNote':
     "Le fichier exporté liste les colonnes réellement présentes dans les lignes : un champ vide sur toutes les lignes n'y apparaîtra pas.",
+  'table.keyTaken': 'Une autre ligne utilise déjà ces valeurs de clé',
+  'table.rowExists': 'Une ligne avec ces valeurs de clé existe déjà',
+  'table.fillToSave': 'Renseignez {fields} pour enregistrer cette ligne',
   'table.addField': 'Ajouter le champ',
   'table.fieldAdded': '{name} ajouté à {table}',
   'table.leaveBlank': 'Laisser vide',
