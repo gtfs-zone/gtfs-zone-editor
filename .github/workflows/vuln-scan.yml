@@ -1,10 +1,15 @@
 name: Vulnerability scan
 
 # Scans pnpm-lock.yaml with osv-scanner and fails on any critical finding.
+# On main, the result is pushed to status.gtfs.zone.
 
 on:
   push:
   pull_request:
+  # Daily, so advisories published after the last push still show up.
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,3 +37,18 @@ jobs:
 
       - name: Scan
         run: sh scripts/vuln-gate.sh
+
+      - name: Report to status.gtfs.zone
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+        # A status page outage must not fail the scan.
+        continue-on-error: true
+        env:
+          GATUS_TOKEN: ${{ secrets.GATUS_VULN_SCAN_TOKEN }}
+          SUCCESS: ${{ job.status == 'success' }}
+          REPO: ${{ github.event.repository.name }}
+        run: |
+          [ -n "$GATUS_TOKEN" ] || exit 0
+          error=""
+          [ "$SUCCESS" = true ] || error="&error=critical+finding+or+scan+error"
+          curl -fsS -X POST -H "Authorization: Bearer ${GATUS_TOKEN}" \
+            "https://status.gtfs.zone/api/v1/endpoints/vulnerabilities_${REPO}/external?success=${SUCCESS}${error}"
