@@ -707,15 +707,18 @@ export class GTFSEditor {
 
     if (loadUrl && (!summary || versions.currentVersion === 0)) {
       console.log('[boot] skipped modal: #load', loadUrl);
-      await this.uiController.loadSelection({
-        scheduled: {
-          kind: 'url',
-          url: loadUrl,
-          useCors: true,
-          label: t('load.linkedFeed'),
+      await this.uiController.loadSelection(
+        {
+          scheduled: {
+            kind: 'url',
+            url: loadUrl,
+            useCors: true,
+            label: t('load.linkedFeed'),
+          },
+          realtime: null,
         },
-        realtime: null,
-      });
+        { navigateHome: false }
+      );
       return 'loaded';
     }
 

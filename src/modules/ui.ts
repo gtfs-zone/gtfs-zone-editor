@@ -276,7 +276,7 @@ export class UIController {
     this.updateMapToolButtonState();
   }
 
-  async loadGTFSFile(file: File) {
+  async loadGTFSFile(file: File, { navigateHome = true } = {}) {
     try {
       console.log('Loading GTFS file:', file.name);
 
@@ -298,7 +298,7 @@ export class UIController {
         );
       }
 
-      await this.refreshAfterFeedSwap({ navigateHome: true });
+      await this.refreshAfterFeedSwap({ navigateHome });
 
       // Populate the file list without opening the Files modal
       this.showFileList();
@@ -420,27 +420,33 @@ export class UIController {
       return 'empty';
     }
     if (result?.kind === 'selection') {
-      await this.loadSelection(result.selection);
+      await this.loadSelection(result.selection, { navigateHome: false });
       return 'loaded';
     }
     return continueWith ? 'continue' : 'empty';
   }
 
-  /** Load whichever half of a selection this app cares about: the schedule. */
-  async loadSelection(selection: FeedSelection) {
+  /**
+   * Load whichever half of a selection this app cares about: the schedule.
+   * Boot passes `navigateHome: false` so a deep link in the URL survives.
+   */
+  async loadSelection(
+    selection: FeedSelection,
+    options: { navigateHome?: boolean } = {}
+  ) {
     this.currentSelection = selection;
     const src = selection.scheduled;
     if (!src) {
       return;
     }
     if (src.kind === 'file') {
-      await this.loadGTFSFile(src.file);
+      await this.loadGTFSFile(src.file, options);
     } else {
-      await this.loadGTFSFromURL(resolvedScheduledUrl(src));
+      await this.loadGTFSFromURL(resolvedScheduledUrl(src), options);
     }
   }
 
-  async loadGTFSFromURL(url: string) {
+  async loadGTFSFromURL(url: string, { navigateHome = true } = {}) {
     try {
       console.log('Loading GTFS from URL:', url);
 
@@ -454,7 +460,7 @@ export class UIController {
         );
       }
 
-      await this.refreshAfterFeedSwap({ navigateHome: true });
+      await this.refreshAfterFeedSwap({ navigateHome });
 
       notify.success(t('load.loadedUrl'));
     } catch (error) {
