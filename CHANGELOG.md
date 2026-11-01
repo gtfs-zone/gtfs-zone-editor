@@ -1,3 +1,9 @@
+## v0.43.0 (2026-11-01)
+
+### Feat
+
+- **navbar**: link to the GitHub repo
+
 ## v0.42.3 (2026-11-01)
 
 ### Fix
