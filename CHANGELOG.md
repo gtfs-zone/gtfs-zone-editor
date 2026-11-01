@@ -1,3 +1,16 @@
+## v0.42.3 (2026-11-01)
+
+### Fix
+
+- **boot**: keep a deep link through a #load boot
+- **load**: confirm before replacing a feed that has edits
+- **boot**: hold a #load link back when the stored feed has edits
+- **ui**: explain rejected and no-op inputs with a visible message
+- **timetable**: show why a typed time was rejected
+- **editing**: reject unparseable numbers with a reason instead of clearing them
+- **validation**: give URL, email, number, date and time schemas specific messages
+- **deps**: upgrade packages with published security advisories
+
 ## v0.42.2 (2026-10-19)
 
 ## v0.42.1 (2026-10-18)
