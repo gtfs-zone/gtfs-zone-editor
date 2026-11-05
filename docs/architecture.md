@@ -58,9 +58,34 @@ form the feed arrived in is remembered as `networksMode` in the `meta` store
 and decides the export form, unless a network has gained a name (which forces
 the files form). Never write `routes.network_id` outside export.
 
+## Spec overlays
+
+`baseGtfsSpec` in `src/gtfs-spec/index.ts` is the MobilityData spec, verbatim.
+Additions from other sources are overlays (`GTFSSpecExtension` in
+`src/gtfs-spec/extensions/types.ts`): files, fields (placed with `after`),
+enum values and behavior notes. `applyExtensions` layers them onto a copy of
+the base and stamps `origin` (e.g. `'google'`) on each item it adds; it throws
+when an overlay targets a missing file or field or re-adds an existing name or
+value. The result, `gtfsSpec`, is what the adapter and the rest of the app
+read, so overlay fields and values are known: they get typed specs, enum
+options and Zod schemas like base ones.
+
+Fields of an overlay file carry no `origin` of their own; the file's `origin`
+marks them. Enum values inside an overlay field likewise carry `origin` only
+when set by hand, so base route types in `stops.txt` `vehicle_type` stay
+unmarked.
+
+Never put an overlay item in `src/gtfs-spec/files/*.ts`. `pnpm check-spec`
+checks the base against `reference/gtfs-reference.md` and every
+`origin: 'google'` item against `reference/google-reference.md`; see
+[reference/README.md](../reference/README.md).
+
 ## Extension fields
 
-A non-spec column of a CSV table exists because rows carry that key, so
+Extension fields are unknown columns: neither the base spec nor an overlay
+names them. (A column an overlay names is a known extension and has a real
+spec; see [Spec overlays](#spec-overlays).) An unknown column of a CSV table
+exists because rows carry that key, so
 `extensionFields(tableName, rows)` in `src/utils/extension-fields.ts` is the
 only source of the list, and `extensionFieldSpec` supplies the synthetic
 optional-text spec every renderer needs. Both shared field renderers

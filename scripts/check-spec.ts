@@ -1,7 +1,9 @@
 #!/usr/bin/env tsx
 /**
  * Checks the hand-written spec in src/gtfs-spec/ against the official GTFS
- * reference snapshot in reference/gtfs-reference.md.
+ * reference snapshot in reference/gtfs-reference.md, then checks every
+ * Google overlay item against reference/google-reference.md (route_type codes
+ * against gtfs-zone-vocab).
  *
  * Run with: pnpm check-spec
  *   pnpm check-spec agency.txt routes.txt   # restrict to some files
@@ -13,8 +15,19 @@
 import { readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { gtfsSpec } from '../src/gtfs-spec/index';
-import type { GTFSPresence } from '../src/gtfs-spec/types';
+import {
+  ROUTE_TYPE_FAMILIES,
+  ROUTE_TYPES,
+  routeTypeInfo,
+} from 'gtfs-zone-vocab/route-types';
+import { baseGtfsSpec, gtfsSpec } from '../src/gtfs-spec/index';
+import { googleExtension } from '../src/gtfs-spec/extensions/google';
+import type {
+  GTFSEnumValue,
+  GTFSFieldSpec,
+  GTFSFileSpec,
+  GTFSPresence,
+} from '../src/gtfs-spec/types';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REFERENCE_PATH = join(
@@ -22,6 +35,12 @@ export const REFERENCE_PATH = join(
   '..',
   'reference',
   'gtfs-reference.md'
+);
+const GOOGLE_REFERENCE_PATH = join(
+  __dirname,
+  '..',
+  'reference',
+  'google-reference.md'
 );
 
 // locations.geojson describes a nested JSON object rather than a CSV table, so
@@ -38,7 +57,9 @@ type Aspect =
   | 'field-order'
   | 'type'
   | 'presence'
-  | 'description';
+  | 'description'
+  | 'enum-value'
+  | 'note';
 
 interface KnownDivergence {
   file: string;
@@ -50,6 +71,15 @@ interface KnownDivergence {
 // Deliberate differences from the reference. Every entry needs a reason.
 // This list starts empty on purpose: Phase 1 reports drift, it does not excuse it.
 const KNOWN_DIVERGENCES: KnownDivergence[] = [];
+
+// Deliberate differences between the Google overlay and google-reference.md.
+const GOOGLE_KNOWN_DIVERGENCES: KnownDivergence[] = [];
+
+// Fields whose enum values are route_type codes, checked against gtfs-zone-vocab.
+const ROUTE_TYPE_FIELDS = new Set([
+  'routes.txt route_type',
+  'stops.txt vehicle_type',
+]);
 
 // ─── Normalization ────────────────────────────────────────────────────────────
 
@@ -145,11 +175,17 @@ function stripBackticks(text: string): string {
   return text.replace(/`/g, '').trim();
 }
 
-function parseSummaryTable(markdown: string): Map<string, string> {
+function parseSummaryTable(
+  markdown: string,
+  requireSummary: boolean
+): Map<string, string> {
   const result = new Map<string, string>();
   const lines = markdown.split('\n');
   const start = lines.findIndex((l) => l.trim().startsWith('## Dataset Files'));
   if (start === -1) {
+    if (!requireSummary) {
+      return result;
+    }
     throw new Error('Could not find the "Dataset Files" section');
   }
   for (let i = start; i < lines.length; i++) {
@@ -173,8 +209,15 @@ function parseSummaryTable(markdown: string): Map<string, string> {
   return result;
 }
 
-export function parseReference(markdown: string): Map<string, ReferenceFile> {
-  const summaries = parseSummaryTable(markdown);
+/**
+ * Parses every `### file` section with a field table. The Google snapshot has
+ * no "Dataset Files" summary, so it passes `requireSummary: false`.
+ */
+export function parseReference(
+  markdown: string,
+  requireSummary = true
+): Map<string, ReferenceFile> {
+  const summaries = parseSummaryTable(markdown, requireSummary);
   const lines = markdown.split('\n');
   const files = new Map<string, ReferenceFile>();
 
@@ -380,8 +423,8 @@ interface Issue {
   lines: string[];
 }
 
-function isKnown(issue: Issue): boolean {
-  return KNOWN_DIVERGENCES.some(
+function isKnown(issue: Issue, known: KnownDivergence[]): boolean {
+  return known.some(
     (d) =>
       d.file === issue.file &&
       d.field === issue.field &&
@@ -395,7 +438,7 @@ function compare(
   full: boolean
 ): Issue[] {
   const issues: Issue[] = [];
-  const ourFiles = new Map(gtfsSpec.files.map((f) => [f.filename, f]));
+  const ourFiles = new Map(baseGtfsSpec.files.map((f) => [f.filename, f]));
 
   const wanted = (name: string) => only.size === 0 || only.has(name);
 
@@ -407,7 +450,7 @@ function compare(
       issues.push({
         file: filename,
         aspect: 'missing-file',
-        lines: ['file is in the reference but not in gtfsSpec'],
+        lines: ['file is in the reference but not in baseGtfsSpec'],
       });
     }
   }
@@ -420,7 +463,7 @@ function compare(
       issues.push({
         file: filename,
         aspect: 'extra-file',
-        lines: ['file is in gtfsSpec but not in the reference'],
+        lines: ['file is in baseGtfsSpec but not in the reference'],
       });
     }
   }
@@ -509,57 +552,11 @@ function compare(
     }
 
     for (const name of ref.fieldOrder) {
-      const refField = ref.fields.get(name)!;
       const ourField = ourFields.get(name);
-      if (!ourField) {
-        continue;
-      }
-
-      const refType = normalizeSpecText(refField.type);
-      const ourType = normalizeSpecText(ourField.type);
-      if (refType !== ourType) {
-        issues.push({
-          file: filename,
-          field: name,
-          aspect: 'type',
-          lines: [
-            `type: reference "${refField.type}", spec "${ourField.type}"`,
-          ],
-        });
-      }
-
-      if (refField.presence === null) {
-        issues.push({
-          file: filename,
-          field: name,
-          aspect: 'presence',
-          lines: [`unparseable reference presence "${refField.presenceRaw}"`],
-        });
-      } else if (refField.presence !== ourField.presence) {
-        issues.push({
-          file: filename,
-          field: name,
-          aspect: 'presence',
-          lines: [
-            `presence: reference "${refField.presence}", spec "${ourField.presence}"`,
-          ],
-        });
-      }
-
-      const refDescription = normalizeSpecText(refField.description);
-      const ourDescription = normalizeSpecText(ourField.description);
-      if (refDescription !== ourDescription) {
-        const lines = ['description mismatch:'];
-        lines.push(...renderDiff(refDescription, ourDescription, '    '));
-        if (full) {
-          lines.push(`    raw reference: ${refField.description}`);
-        }
-        issues.push({
-          file: filename,
-          field: name,
-          aspect: 'description',
-          lines,
-        });
+      if (ourField) {
+        issues.push(
+          ...compareField(filename, ref.fields.get(name)!, ourField, full)
+        );
       }
     }
   }
@@ -567,35 +564,385 @@ function compare(
   return issues;
 }
 
+/** Type, presence and description of one field against its reference row. */
+function compareField(
+  filename: string,
+  refField: ReferenceField,
+  ourField: GTFSFieldSpec,
+  full: boolean
+): Issue[] {
+  const issues: Issue[] = [];
+  const name = ourField.name;
+
+  const refType = normalizeSpecText(refField.type);
+  const ourType = normalizeSpecText(ourField.type);
+  if (refType !== ourType) {
+    issues.push({
+      file: filename,
+      field: name,
+      aspect: 'type',
+      lines: [`type: reference "${refField.type}", spec "${ourField.type}"`],
+    });
+  }
+
+  if (refField.presence === null) {
+    issues.push({
+      file: filename,
+      field: name,
+      aspect: 'presence',
+      lines: [`unparseable reference presence "${refField.presenceRaw}"`],
+    });
+  } else if (refField.presence !== ourField.presence) {
+    issues.push({
+      file: filename,
+      field: name,
+      aspect: 'presence',
+      lines: [
+        `presence: reference "${refField.presence}", spec "${ourField.presence}"`,
+      ],
+    });
+  }
+
+  const refDescription = normalizeSpecText(refField.description);
+  const ourDescription = normalizeSpecText(ourField.description);
+  if (refDescription !== ourDescription) {
+    const lines = ['description mismatch:'];
+    lines.push(...renderDiff(refDescription, ourDescription, '    '));
+    if (full) {
+      lines.push(`    raw reference: ${refField.description}`);
+    }
+    issues.push({
+      file: filename,
+      field: name,
+      aspect: 'description',
+      lines,
+    });
+  }
+
+  return issues;
+}
+
+// ─── Google overlay ───────────────────────────────────────────────────────────
+
+interface GoogleReference {
+  /** `### file` sections under "Extensions". */
+  extensions: Map<string, ReferenceFile>;
+  unsupportedFiles: Set<string>;
+  unsupportedText: string;
+  /** Keyed by "file field". */
+  ignoredFields: Set<string>;
+  ignoredText: string;
+  /** "Different interpretation" rows, keyed by "file field". */
+  interpretations: Map<string, ReferenceField>;
+}
+
+/** Prose and table rows (raw cells) of a flat `## heading` section. */
+function parseFlatSection(
+  markdown: string,
+  heading: string,
+  columns: number
+): { text: string; rows: string[][] } {
+  const lines = markdown.split('\n');
+  const start = lines.findIndex((l) => l.trim() === `## ${heading}`);
+  if (start === -1) {
+    throw new Error(`Could not find the "${heading}" section`);
+  }
+  const prose: string[] = [];
+  const rows: string[][] = [];
+  let header = true;
+  for (const line of lines.slice(start + 1)) {
+    if (/^##\s/.test(line)) {
+      break;
+    }
+    const trimmed = line.trim();
+    if (!trimmed || isSeparatorRow(trimmed)) {
+      continue;
+    }
+    const cells = splitRow(trimmed, columns);
+    if (!cells) {
+      prose.push(trimmed);
+    } else if (header) {
+      header = false;
+    } else {
+      rows.push(cells);
+    }
+  }
+  return { text: prose.join(' '), rows };
+}
+
+function parseGoogleReference(markdown: string): GoogleReference {
+  const unsupported = parseFlatSection(markdown, 'Unsupported files', 1);
+  const ignored = parseFlatSection(markdown, 'Ignored fields', 3);
+  const different = parseFlatSection(markdown, 'Different interpretation', 5);
+  const interpretations = new Map<string, ReferenceField>();
+  for (const [file, field, type, presence, description] of different.rows) {
+    const name = stripBackticks(field);
+    interpretations.set(`${stripBackticks(file)} ${name}`, {
+      name,
+      type,
+      presence: parsePresence(presence),
+      presenceRaw: presence,
+      description,
+    });
+  }
+  return {
+    extensions: parseReference(markdown, false),
+    unsupportedFiles: new Set(unsupported.rows.map(([f]) => stripBackticks(f))),
+    unsupportedText: unsupported.text,
+    ignoredFields: new Set(
+      ignored.rows.map(([f, n]) => `${stripBackticks(f)} ${stripBackticks(n)}`)
+    ),
+    ignoredText: ignored.text,
+    interpretations,
+  };
+}
+
+/** Values a Google description lists as `- **`N`.** ...` items. */
+function listedEnumValues(description: string): string[] {
+  return [...description.matchAll(/- \*\*`([^`]+)`\.\*\*/g)].map((m) => m[1]);
+}
+
+const FAMILY_LABELS = new Map(
+  ROUTE_TYPE_FAMILIES.map((f) => [f.slug, f.label.en])
+);
+
+/** A route_type code against its gtfs-zone-vocab entry. */
+function checkRouteTypeValue(value: GTFSEnumValue): string | null {
+  const info = routeTypeInfo(Number(value.value));
+  if (!info) {
+    return `${value.value}: not in gtfs-zone-vocab`;
+  }
+  const fromGoogle = value.origin === googleExtension.id;
+  if (fromGoogle !== (info.source === 'google-hvt')) {
+    return `${value.value}: origin "${value.origin ?? 'base'}" but vocab source "${info.source}"`;
+  }
+  if (value.label !== info.label.en) {
+    return `${value.value}: label "${value.label}", vocab "${info.label.en}"`;
+  }
+  const family = FAMILY_LABELS.get(info.family);
+  if (value.group !== undefined && value.group !== family) {
+    return `${value.value}: group "${value.group}", vocab family "${family}"`;
+  }
+  return null;
+}
+
+function checkEnumValue(
+  google: GoogleReference,
+  filename: string,
+  field: GTFSFieldSpec,
+  value: GTFSEnumValue
+): string | null {
+  const key = `${filename} ${field.name}`;
+  if (ROUTE_TYPE_FIELDS.has(key)) {
+    return checkRouteTypeValue(value);
+  }
+  const row =
+    google.extensions.get(filename)?.fields.get(field.name) ??
+    google.interpretations.get(key);
+  if (!row) {
+    return `${value.value}: no Google row describes ${field.name}`;
+  }
+  const listed = listedEnumValues(row.description);
+  if (listed.length === 0) {
+    return `${value.value}: the Google row lists no values`;
+  }
+  if (!listed.includes(String(value.value))) {
+    return `${value.value}: not among the listed values ${listed.join(', ')}`;
+  }
+  return null;
+}
+
+function checkNote(
+  google: GoogleReference,
+  filename: string,
+  field: string | undefined,
+  text: string
+): string | null {
+  const ours = normalizeSpecText(text);
+  if (field === undefined) {
+    if (!google.unsupportedFiles.has(filename)) {
+      return 'file note, but the file is not under "Unsupported files"';
+    }
+    return ours === normalizeSpecText(google.unsupportedText)
+      ? null
+      : 'note text differs from the "Unsupported files" prose';
+  }
+  const key = `${filename} ${field}`;
+  const interpretation = google.interpretations.get(key);
+  if (interpretation) {
+    return ours === normalizeSpecText(interpretation.description)
+      ? null
+      : 'note text differs from the "Different interpretation" row';
+  }
+  if (google.ignoredFields.has(key)) {
+    return ours === normalizeSpecText(google.ignoredText)
+      ? null
+      : 'note text differs from the "Ignored fields" prose';
+  }
+  return 'no "Ignored fields" or "Different interpretation" row';
+}
+
+/** Every Google-origin file, field, enum value and note against the snapshot. */
+function compareGoogle(
+  google: GoogleReference,
+  only: Set<string>,
+  full: boolean
+): Issue[] {
+  const issues: Issue[] = [];
+  const origin = googleExtension.id;
+  const wanted = (name: string) => only.size === 0 || only.has(name);
+
+  for (const file of gtfsSpec.files) {
+    const filename = file.filename;
+    if (!wanted(filename)) {
+      continue;
+    }
+    const ref = google.extensions.get(filename);
+    const overlayFile = file.origin === origin;
+
+    if (overlayFile && !ref) {
+      issues.push({
+        file: filename,
+        aspect: 'extra-file',
+        lines: ['overlay file is not in the Google snapshot'],
+      });
+    }
+    if (overlayFile && ref) {
+      const ours = new Set((file.fields ?? []).map((f) => f.name));
+      for (const name of ref.fieldOrder) {
+        if (!ours.has(name)) {
+          issues.push({
+            file: filename,
+            field: name,
+            aspect: 'missing-field',
+            lines: [
+              'field is in the Google snapshot but not in the overlay file',
+            ],
+          });
+        }
+      }
+    }
+
+    for (const field of file.fields ?? []) {
+      // Fields of an overlay file carry no origin of their own.
+      const overlayField = overlayFile || field.origin === origin;
+      if (overlayField && (ref || !overlayFile)) {
+        const refField = ref?.fields.get(field.name);
+        if (refField) {
+          issues.push(...compareField(filename, refField, field, full));
+        } else {
+          issues.push({
+            file: filename,
+            field: field.name,
+            aspect: 'extra-field',
+            lines: ['overlay field is not in the Google snapshot'],
+          });
+        }
+      }
+
+      const values = (field.enumValues ?? []).filter(
+        (v) => overlayField || v.origin === origin
+      );
+      for (const value of values) {
+        const problem = checkEnumValue(google, filename, field, value);
+        if (problem) {
+          issues.push({
+            file: filename,
+            field: field.name,
+            aspect: 'enum-value',
+            lines: [problem],
+          });
+        }
+      }
+
+      for (const note of field.notes ?? []) {
+        const problem =
+          note.origin === origin &&
+          checkNote(google, filename, field.name, note.text);
+        if (problem) {
+          issues.push({
+            file: filename,
+            field: field.name,
+            aspect: 'note',
+            lines: [problem],
+          });
+        }
+      }
+    }
+
+    for (const note of file.notes ?? []) {
+      const problem =
+        note.origin === origin &&
+        checkNote(google, filename, undefined, note.text);
+      if (problem) {
+        issues.push({ file: filename, aspect: 'note', lines: [problem] });
+      }
+    }
+  }
+
+  return issues;
+}
+
+/** Snapshot rows the overlay does not carry yet. Reported, never fatal. */
+function googleCoverage(google: GoogleReference): string[] {
+  const origin = googleExtension.id;
+  const files = new Map(gtfsSpec.files.map((f) => [f.filename, f]));
+  const findField = (file: string, name: string) =>
+    files.get(file)?.fields?.find((f) => f.name === name);
+  const hasNote = (notes: GTFSFileSpec['notes']) =>
+    (notes ?? []).some((n) => n.origin === origin);
+  const missing: string[] = [];
+
+  for (const [filename, ref] of google.extensions) {
+    for (const name of ref.fieldOrder) {
+      const ours = findField(filename, name);
+      if (filename === 'routes.txt' && name === 'route_type') {
+        const codes = new Set(ours?.enumValues?.map((v) => v.value));
+        const absent = ROUTE_TYPES.filter(
+          (rt) => rt.source === 'google-hvt' && !codes.has(rt.code)
+        );
+        if (absent.length > 0) {
+          missing.push(
+            `${filename} ${name}: ${absent.length} google-hvt codes`
+          );
+        }
+        continue;
+      }
+      const covered =
+        ours &&
+        (ours.origin === origin || files.get(filename)?.origin === origin);
+      if (!covered) {
+        missing.push(`${filename} ${name}`);
+      }
+    }
+  }
+  for (const key of [
+    ...google.ignoredFields,
+    ...google.interpretations.keys(),
+  ]) {
+    const [filename, name] = key.split(' ');
+    if (!hasNote(findField(filename, name)?.notes)) {
+      missing.push(`${key} (note)`);
+    }
+  }
+  for (const filename of google.unsupportedFiles) {
+    if (!hasNote(files.get(filename)?.notes)) {
+      missing.push(`${filename} (note)`);
+    }
+  }
+  return missing;
+}
+
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
-function main(): void {
-  const args = process.argv.slice(2);
-  const full = args.includes('--full');
-  const only = new Set(args.filter((a) => !a.startsWith('--')));
-
-  const markdown = readFileSync(REFERENCE_PATH, 'utf8');
-  const reference = parseReference(markdown);
-
-  const all = compare(reference, only, full);
-  const issues = all.filter((issue) => !isKnown(issue));
-  const excused = all.length - issues.length;
-
+/** Prints issues grouped by file and returns the per-aspect counts. */
+function printIssues(issues: Issue[]): Map<Aspect, number> {
   const byFile = new Map<string, Issue[]>();
   for (const issue of issues) {
     const list = byFile.get(issue.file) ?? [];
     list.push(issue);
     byFile.set(issue.file, list);
   }
-
-  console.log(`Reference: ${REFERENCE_PATH}`);
-  console.log(
-    `Parsed ${reference.size} files from the reference, ${gtfsSpec.files.length} from gtfsSpec (${gtfsSpec.specVersion}).`
-  );
-  console.log(
-    `Skipped by filename: ${[...STRUCTURAL_EXCEPTIONS].join(', ')} (no CSV field table).`
-  );
-  console.log('');
 
   const counts = new Map<Aspect, number>();
   for (const [filename, fileIssues] of byFile) {
@@ -610,18 +957,78 @@ function main(): void {
     }
     console.log('');
   }
+  return counts;
+}
 
-  console.log('--- summary ---');
+function printSummary(
+  title: string,
+  issues: Issue[],
+  counts: Map<Aspect, number>,
+  excused: number
+): void {
+  console.log(`--- ${title} ---`);
   for (const aspect of [...counts.keys()].sort()) {
     console.log(`  ${aspect}: ${counts.get(aspect)}`);
   }
-  console.log(`  files with drift: ${byFile.size}`);
+  console.log(`  files with drift: ${new Set(issues.map((i) => i.file)).size}`);
   console.log(`  total differences: ${issues.length}`);
   if (excused > 0) {
-    console.log(`  excused by KNOWN_DIVERGENCES: ${excused}`);
+    console.log(`  excused by known divergences: ${excused}`);
+  }
+}
+
+function main(): void {
+  const args = process.argv.slice(2);
+  const full = args.includes('--full');
+  const only = new Set(args.filter((a) => !a.startsWith('--')));
+
+  const reference = parseReference(readFileSync(REFERENCE_PATH, 'utf8'));
+  const all = compare(reference, only, full);
+  const issues = all.filter((issue) => !isKnown(issue, KNOWN_DIVERGENCES));
+
+  console.log(`Reference: ${REFERENCE_PATH}`);
+  console.log(
+    `Parsed ${reference.size} files from the reference, ${baseGtfsSpec.files.length} from baseGtfsSpec (${baseGtfsSpec.specVersion}).`
+  );
+  console.log(
+    `Skipped by filename: ${[...STRUCTURAL_EXCEPTIONS].join(', ')} (no CSV field table).`
+  );
+  console.log('');
+  const counts = printIssues(issues);
+
+  const google = parseGoogleReference(
+    readFileSync(GOOGLE_REFERENCE_PATH, 'utf8')
+  );
+  const googleAll = compareGoogle(google, only, full);
+  const googleIssues = googleAll.filter(
+    (issue) => !isKnown(issue, GOOGLE_KNOWN_DIVERGENCES)
+  );
+
+  console.log(`Google snapshot: ${GOOGLE_REFERENCE_PATH}`);
+  console.log(
+    `Parsed ${google.extensions.size} extension files, ${google.ignoredFields.size} ignored fields, ${google.interpretations.size} interpretation rows, ${google.unsupportedFiles.size} unsupported files.`
+  );
+  console.log('');
+  const googleCounts = printIssues(googleIssues);
+
+  printSummary('reference', issues, counts, all.length - issues.length);
+  printSummary(
+    'Google overlay',
+    googleIssues,
+    googleCounts,
+    googleAll.length - googleIssues.length
+  );
+  if (only.size === 0) {
+    const missing = googleCoverage(google);
+    console.log(`  snapshot rows not in the overlay yet: ${missing.length}`);
+    if (full) {
+      for (const line of missing) {
+        console.log(`    ${line}`);
+      }
+    }
   }
 
-  if (issues.length > 0) {
+  if (issues.length > 0 || googleIssues.length > 0) {
     process.exitCode = 1;
   }
 }

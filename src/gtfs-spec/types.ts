@@ -9,6 +9,16 @@ export interface GTFSEnumValue {
   value: number | string;
   label: string;
   description: string;
+  /** Overlay id (e.g. 'google') when the value comes from a spec extension. */
+  origin?: string;
+  /** Picker group heading for the value. */
+  group?: string;
+}
+
+/** A behavior note from a spec extension, shown alongside the description. */
+export interface GTFSSpecNote {
+  origin: string;
+  text: string;
 }
 
 export interface GTFSForeignKeyTarget {
@@ -28,6 +38,9 @@ export interface GTFSFieldSpec {
   /** A few fields legitimately reference more than one table, hence the array. */
   foreignKey?: GTFSForeignKeyTarget[];
   enumValues?: GTFSEnumValue[];
+  /** Overlay id when the field comes from a spec extension. */
+  origin?: string;
+  notes?: GTFSSpecNote[];
 }
 
 export interface GTFSFileSpec {
@@ -37,6 +50,9 @@ export interface GTFSFileSpec {
   presenceCondition?: string;
   description: string;
   fields?: GTFSFieldSpec[];
+  /** Overlay id when the file comes from a spec extension. */
+  origin?: string;
+  notes?: GTFSSpecNote[];
 }
 
 export interface GTFSSpec {

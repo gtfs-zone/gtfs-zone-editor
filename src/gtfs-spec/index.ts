@@ -1,4 +1,6 @@
 import type { GTFSSpec } from './types';
+import { applyExtensions } from './extensions/apply';
+import { googleExtension } from './extensions/google';
 import { agencySpec } from './files/agency';
 import { feedInfoSpec } from './files/feed-info';
 import { stopsSpec } from './files/stops';
@@ -32,7 +34,8 @@ import { translationsSpec } from './files/translations';
 import { attributionsSpec } from './files/attributions';
 import { locationsGeojsonSpec } from './files/locations-geojson';
 
-export const gtfsSpec: GTFSSpec = {
+/** The spec as the MobilityData reference states it, checked by pnpm check-spec. */
+export const baseGtfsSpec: GTFSSpec = {
   specVersion: '2026-04-27',
   files: [
     agencySpec,
@@ -69,3 +72,8 @@ export const gtfsSpec: GTFSSpec = {
     locationsGeojsonSpec,
   ],
 };
+
+/** The base spec plus the Google overlay; everything in the app reads this. */
+export const gtfsSpec: GTFSSpec = applyExtensions(baseGtfsSpec, [
+  googleExtension,
+]);
