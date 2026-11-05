@@ -72,6 +72,8 @@ import {
   addExtensionColumn,
   extensionFieldSpec,
   extensionFields,
+  hiddenOverlayFields,
+  shownSpecFields,
   validateExtensionColumnName,
   EXTENSION_FIELD_DESCRIPTION,
 } from '../utils/extension-fields';
@@ -291,15 +293,16 @@ function fieldSpecs(tableName: string): Record<string, GTFSFieldSpec> {
 }
 
 /**
- * The columns to render: the spec's fields, then any non-spec columns the rows
- * actually carry. An explicit `fields` list is taken as given.
+ * The columns to render: the spec's fields that show for these rows, then any
+ * non-spec columns the rows actually carry. An explicit `fields` list is taken
+ * as given.
  */
 function columnFields(config: EditableTableConfig): string[] {
   if (config.fields) {
     return config.fields;
   }
   return [
-    ...Object.keys(fieldSpecs(config.tableName)),
+    ...shownSpecFields(config.tableName, config.rows),
     ...extensionFields(config.tableName, config.rows),
   ];
 }
@@ -1022,6 +1025,21 @@ async function addFieldColumn(button: HTMLElement): Promise<void> {
   }
   const { config } = state;
   const inputId = `add-field-${config.instanceId}`;
+  // Overlay fields the table does not show yet, offered by name. Picking one
+  // fills the input; it then shows with its typed spec.
+  const overlay = hiddenOverlayFields(config.tableName, config.rows);
+  const overlayHtml =
+    overlay.length > 0
+      ? `<div class="flex flex-wrap items-center gap-1 mt-3">
+          <span class="text-sm opacity-70 mr-1">${t('table.addFieldGoogle')}</span>
+          ${overlay
+            .map(
+              (name) =>
+                `<button type="button" class="btn btn-xs btn-ghost font-mono" data-overlay-field="${escapeHtml(name)}">${escapeHtml(name)}</button>`
+            )
+            .join('')}
+        </div>`
+      : '';
 
   await showModal({
     title: t('table.addFieldTitle', { table: config.tableName }),
@@ -1031,6 +1049,7 @@ async function addFieldColumn(button: HTMLElement): Promise<void> {
       </p>
       <input id="${escapeHtml(inputId)}" type="text" class="input input-bordered w-full" placeholder="my_field" autocomplete="off" />
       <p id="${escapeHtml(inputId)}-error" class="text-error text-sm mt-2 hidden"></p>
+      ${overlayHtml}
       <p class="text-sm opacity-70 mt-3">
         ${t('table.addFieldNote')}
       </p>
@@ -1071,7 +1090,18 @@ async function addFieldColumn(button: HTMLElement): Promise<void> {
       { label: t('common.cancel'), className: 'btn-ghost', onClick: () => {} },
     ],
     onMount: () => {
-      document.getElementById(inputId)?.focus();
+      const input = document.getElementById(inputId) as HTMLInputElement | null;
+      for (const button of document.querySelectorAll<HTMLElement>(
+        '[data-overlay-field]'
+      )) {
+        button.addEventListener('click', () => {
+          if (input) {
+            input.value = button.dataset.overlayField ?? '';
+            input.focus();
+          }
+        });
+      }
+      input?.focus();
     },
   });
 }

@@ -33,6 +33,7 @@ import { describeFrequency } from '../utils/frequency-rules';
 import { renderTimeHtml } from '../utils/time-formatter';
 import { getEnumOptions } from '../types/gtfs-enums';
 import { TripsSchema, GTFS_TABLES } from '../types/gtfs';
+import { specFieldShown } from '../utils/extension-fields';
 import {
   getRouteDisplay,
   getStopDisplay,
@@ -433,12 +434,14 @@ export class TimetableRenderer {
    * Generate trip property field configurations from TripsSchema
    * Filters out non-editable fields (route_id, service_id, trip_id)
    *
-   * @param sampleTrip - Sample trip object for getting current values
+   * @param trips - The timetable's trips; the first gives current values, and
+   *   all of them decide which overlay fields show
    * @returns Array of field configurations for trip properties
    */
   private generateTripPropertyConfigs(
-    sampleTrip: Record<string, unknown>
+    trips: Record<string, unknown>[]
   ): FieldConfig[] {
+    const sampleTrip = trips[0];
     // Generate all field configs from TripsSchema
     const allConfigs = generateFieldConfigsFromSchema(
       TripsSchema,
@@ -450,7 +453,9 @@ export class TimetableRenderer {
     // route_id and service_id are fixed (timetable is already filtered by these)
     // trip_id is the column header, rendered as its rename trigger
     const editableConfigs = allConfigs.filter(
-      (config) => !['route_id', 'service_id', 'trip_id'].includes(config.field)
+      (config) =>
+        !['route_id', 'service_id', 'trip_id'].includes(config.field) &&
+        specFieldShown(GTFS_TABLES.TRIPS, config.field, trips)
     );
 
     return editableConfigs;
@@ -471,10 +476,8 @@ export class TimetableRenderer {
       return '';
     }
 
-    // Use first trip as sample to get property configs
-    const sampleTrip = trips[0];
     const propertyConfigs = this.generateTripPropertyConfigs(
-      sampleTrip as unknown as Record<string, unknown>
+      trips as unknown as Record<string, unknown>[]
     );
 
     // Render each property as a row

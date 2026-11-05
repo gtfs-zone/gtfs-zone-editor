@@ -115,6 +115,7 @@ export const fields: Translation<typeof en> = {
   'table.addFieldTitle': 'Ajouter un champ à {table}',
   'table.addFieldBody':
     "Un champ qui ne fait pas partie de la spécification GTFS. Il est conservé tel quel à l'export, et la validation l'ignore.",
+  'table.addFieldGoogle': 'Champs Google :',
   'table.addFieldNote':
     "Le fichier exporté liste les colonnes réellement présentes dans les lignes : un champ vide sur toutes les lignes n'y apparaîtra pas.",
   'table.keyTaken': 'Une autre ligne utilise déjà ces valeurs de clé',
@@ -138,6 +139,7 @@ export const fields: Translation<typeof en> = {
   'picker.more': '{shown} sur {total} de plus. Affinez votre recherche',
   'picker.search': 'Rechercher…',
   'picker.done': 'Terminé',
+  'spec.originGoogle': 'Google',
   'enum.googleExtension': 'Extension Google',
   'enum.filter': 'Filtrer les options…',
   'enum.groupAria': 'Options {group}',

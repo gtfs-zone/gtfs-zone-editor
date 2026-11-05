@@ -435,7 +435,7 @@ export function mapGTFSTypeString(typeString: string): GTFSFieldType {
   if (normalized === 'Local time') {
     return GTFSFieldType.LocalTime;
   }
-  if (normalized === 'Language code') {
+  if (normalized.toLowerCase() === 'language code') {
     return GTFSFieldType.LanguageCode;
   }
   if (normalized === 'Phone number') {

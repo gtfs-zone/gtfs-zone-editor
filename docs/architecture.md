@@ -68,7 +68,16 @@ the base and stamps `origin` (e.g. `'google'`) on each item it adds; it throws
 when an overlay targets a missing file or field or re-adds an existing name or
 value. The result, `gtfsSpec`, is what the adapter and the rest of the app
 read, so overlay fields and values are known: they get typed specs, enum
-options and Zod schemas like base ones.
+options and Zod schemas like base ones. Every field an overlay adds to a base
+file is Optional, so its schema entry is optional and a feed without the
+column still parses.
+
+A field an overlay adds to a base file shows only when the rows carry the
+column or the user added it (`specFieldShown` in
+`src/utils/extension-fields.ts`, the same rule as extension fields); the Add
+field dialog offers the hidden ones by name. Labels carry the overlay's badge
+and link to its reference, and overlay notes render under the description in
+field tooltips and, for file notes, in the Files view (`src/utils/spec-origin.ts`).
 
 Fields of an overlay file carry no `origin` of their own; the file's `origin`
 marks them. Enum values inside an overlay field likewise carry `origin` only
@@ -90,7 +99,7 @@ exists because rows carry that key, so
 only source of the list, and `extensionFieldSpec` supplies the synthetic
 optional-text spec every renderer needs. Both shared field renderers
 (`editable-table.ts`'s `columnFields`, `inline-editable-field.ts`'s
-`renderInlineEntityFields`) append them after the spec fields.
+`renderInlineEntityFields`) append them after the spec fields that show.
 
 The one thing data-derivation cannot express, a column the user just created
 with no values yet, lives in the `meta` store under `extensionColumns`. Never

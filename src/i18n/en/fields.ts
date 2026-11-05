@@ -109,6 +109,7 @@ export const fields = {
   'table.addFieldTitle': 'Add a field to {table}',
   'table.addFieldBody':
     'A field that is not part of the GTFS specification. It is preserved as-is on export, and validation ignores it.',
+  'table.addFieldGoogle': 'Google fields:',
   'table.addFieldNote':
     'The exported file lists the columns the rows actually carry, so a field left empty on every row will not appear in it.',
   'table.keyTaken': 'Another row already uses these key values',
@@ -131,6 +132,7 @@ export const fields = {
   'picker.more': '{shown} of {total} more. Refine your search',
   'picker.search': 'Search…',
   'picker.done': 'Done',
+  'spec.originGoogle': 'Google',
   'enum.googleExtension': 'Google extension',
   'enum.filter': 'Filter options…',
   'enum.groupAria': '{group} options',

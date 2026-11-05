@@ -4,7 +4,7 @@
  * fields `record_id` / `record_sub_id` name.
  */
 
-import { extensionFields } from './extension-fields';
+import { extensionFields, specFieldShown } from './extension-fields';
 import { getGTFSPrimaryKey } from './gtfs-primary-keys';
 import {
   GTFS_FIELD_SPECS,
@@ -24,14 +24,20 @@ export function translatableTables(): string[] {
   );
 }
 
-/** Spec fields of a translatable type, then the table's extension fields. */
+/**
+ * Spec fields of a translatable type that show for these rows, then the
+ * table's extension fields.
+ */
 export function translatableFields(
   file: string,
   rows: Record<string, unknown>[]
 ): string[] {
   const specs = GTFS_FIELD_SPECS[file] ?? {};
   const fields = Object.entries(specs)
-    .filter(([, spec]) => TRANSLATABLE_TYPES.has(spec.type))
+    .filter(
+      ([name, spec]) =>
+        TRANSLATABLE_TYPES.has(spec.type) && specFieldShown(file, name, rows)
+    )
     .map(([name]) => name);
   return [...fields, ...extensionFields(file, rows)];
 }

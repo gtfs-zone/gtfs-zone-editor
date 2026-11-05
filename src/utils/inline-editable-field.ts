@@ -57,6 +57,7 @@ import { getGTFSPrimaryKey, getNaturalKeyField } from './gtfs-primary-keys';
 import {
   extensionFieldSpec,
   extensionFields,
+  specFieldShown,
   EXTENSION_FIELD_DESCRIPTION,
 } from './extension-fields';
 import { renderTimeHtml } from './time-formatter';
@@ -384,7 +385,11 @@ export async function renderInlineEntityFields(
   }
 
   const configs = generateFieldConfigsFromSchema(schema, record, tableName)
-    .filter((c) => !exclude.includes(c.field))
+    .filter(
+      (c) =>
+        !exclude.includes(c.field) &&
+        specFieldShown(tableName, c.field, [record])
+    )
     .map<FieldConfig>((c) => ({ ...c, recordId, draftId }));
 
   const fieldsHtml: string[] = [];

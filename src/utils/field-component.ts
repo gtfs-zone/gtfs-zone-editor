@@ -34,6 +34,7 @@ import {
   type GTFSEnumOption,
 } from '../types/gtfs-enums';
 import { t } from '../i18n/messages';
+import { originLabel, originSourceUrl, renderSpecNotes } from './spec-origin';
 
 export interface FieldConfig {
   /** Field name in the GTFS specification (e.g., 'stop_name', 'stop_lat') */
@@ -149,6 +150,12 @@ export function buildFieldTooltipContent(config: FieldConfig): string {
   if (description) {
     parts.push(renderSpecDescription(description));
   }
+  const notes = config.tableName
+    ? GTFS_FIELD_SPECS[config.tableName]?.[config.field]?.notes
+    : undefined;
+  if (notes && notes.length > 0) {
+    parts.push(renderSpecNotes(notes));
+  }
   parts.push(
     `<div class="opacity-70">${t('field.tipId', { id: `<code class="text-xs">${escapeHtml(config.field)}</code>` })}</div>`
   );
@@ -180,12 +187,22 @@ export function renderFieldLabelContent(
   config: FieldConfig,
   options?: FieldLabelOptions
 ): string {
-  // A non-spec field has nothing to link to, and says so instead.
-  const specUrl = config.isExtension ? '' : getSpecUrl(config.tableName);
+  // A non-spec field has nothing to link to, and says so instead. An overlay
+  // field links to its overlay's reference and carries its label.
+  const origin = config.tableName
+    ? GTFS_FIELD_SPECS[config.tableName]?.[config.field]?.origin
+    : undefined;
+  const specUrl = config.isExtension
+    ? ''
+    : origin
+      ? originSourceUrl(origin)
+      : getSpecUrl(config.tableName);
   const tipContent = buildFieldTooltipContent(config);
   const labelText = config.isExtension
     ? `<span class="italic">${escapeHtml(config.label)}</span> <span class="badge badge-ghost badge-xs align-middle">${t('field.nonSpec')}</span>`
-    : escapeHtml(config.label);
+    : origin
+      ? `${escapeHtml(config.label)} <span class="badge badge-ghost badge-xs align-middle">${escapeHtml(originLabel(origin))}</span>`
+      : escapeHtml(config.label);
   const linkContent = specUrl
     ? `<a href="${specUrl}" target="_blank" rel="noopener noreferrer">${labelText}</a>`
     : labelText;

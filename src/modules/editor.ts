@@ -1,4 +1,6 @@
 import { CONFIG } from '../config';
+import { gtfsSpec } from '../gtfs-spec';
+import { renderSpecNotes } from '../utils/spec-origin';
 import Clusterize from 'clusterize.js';
 import {
   getGTFSFieldDescription,
@@ -92,6 +94,8 @@ export class Editor {
       fileNameElement.textContent = fileName;
     }
 
+    this.renderFileNotes(fileName);
+
     // Show table editor view
     const tableView = document.getElementById('table-editor-view');
     if (tableView) {
@@ -100,6 +104,18 @@ export class Editor {
     document.getElementById('raw-editor-view')?.classList.add('hidden');
 
     await this.buildTableEditor();
+  }
+
+  /** Show the overlay notes on a file (Google's "Unsupported files"), if any. */
+  private renderFileNotes(fileName: string): void {
+    const el = document.getElementById('file-spec-notes');
+    if (!el) {
+      return;
+    }
+    const notes =
+      gtfsSpec.files.find((f) => f.filename === fileName)?.notes ?? [];
+    el.innerHTML = renderSpecNotes(notes);
+    el.classList.toggle('hidden', notes.length === 0);
   }
 
   /**
@@ -116,6 +132,8 @@ export class Editor {
     if (fileNameElement) {
       fileNameElement.textContent = fileName;
     }
+
+    this.renderFileNotes(fileName);
 
     if (this.clusterize) {
       this.clusterize.destroy();

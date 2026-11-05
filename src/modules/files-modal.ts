@@ -35,6 +35,9 @@ const filesModalBody = (): string => `
           </div>
         </div>
 
+        <!-- Overlay notes on the open file, filled by editor.ts -->
+        <div id="file-spec-notes" class="text-xs opacity-70 py-2 border-b border-base-300 shrink-0 hidden"></div>
+
         <!-- Editor Content -->
         <div class="flex-1 min-h-0 overflow-hidden">
           <div id="table-editor-view" class="h-full hidden">

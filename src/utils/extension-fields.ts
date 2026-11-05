@@ -11,6 +11,10 @@
  * express is a column the user just created and has not filled in yet, so that
  * single case is mirrored from the `meta` store into `added` below.
  *
+ * Fields an overlay adds to a base file (Google's `trip_direction_name`, ...)
+ * follow the same rule to decide whether they show, but render with their
+ * typed overlay spec rather than the plain text one an extension column gets.
+ *
  * Nothing here writes to the Zod schemas: those are generated from
  * `src/gtfs-spec/` and `pnpm check-spec` blocks a commit that diverges.
  */
@@ -32,12 +36,6 @@ let store: ExtensionColumnStore | null = null;
 let added: Record<string, string[]> = {};
 
 /**
- * Bumped whenever `added` changes, so the memo below cannot serve a list from
- * before a column was added.
- */
-let generation = 0;
-
-/**
  * Read the user-added columns into memory and keep the store for later writes.
  *
  * Called once at boot. `extensionFields` is synchronous because every caller
@@ -49,27 +47,42 @@ export async function loadExtensionColumns(
 ): Promise<void> {
   store = db;
   added = await db.getExtensionColumns();
-  generation++;
   const count = Object.values(added).reduce((n, list) => n + list.length, 0);
   console.log(`[ExtensionFields] loaded ${count} user-added column(s)`);
 }
 
 // ─── Deriving the columns ─────────────────────────────────────────────────────
 
-const memo = new WeakMap<
-  object,
-  Map<string, { gen: number; fields: string[] }>
->();
+const keyMemo = new WeakMap<object, Set<string>>();
+
+/**
+ * Every key the rows carry, in order of first appearance.
+ *
+ * Memoised on the rows array so the several callers per render share one pass.
+ * Rows are only ever mutated in place field-by-field, and a key a row gains
+ * that way belongs to a column already listed in `added`, so a result keyed on
+ * the array's identity cannot go stale.
+ */
+function rowKeys(rows: Record<string, unknown>[]): Set<string> {
+  const cached = keyMemo.get(rows);
+  if (cached) {
+    return cached;
+  }
+  const keys = new Set<string>();
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      keys.add(key);
+    }
+  }
+  keyMemo.set(rows, keys);
+  return keys;
+}
 
 /**
  * The non-spec columns of a table, in order of first appearance.
  *
  * Returns nothing for a file with no field specs (`locations.geojson`), which
  * is not a CSV table and whose feature properties are not columns.
- *
- * Memoised on the rows array so the several callers per render share one pass.
- * Rows are only ever mutated in place field-by-field, never gaining a key, so
- * a result keyed on the array's identity cannot go stale.
  */
 export function extensionFields(
   tableName: string,
@@ -79,36 +92,59 @@ export function extensionFields(
   if (!specs) {
     return [];
   }
-
-  const byTable = memo.get(rows) ?? new Map();
-  memo.set(rows, byTable);
-  const cached = byTable.get(tableName);
-  if (cached && cached.gen === generation) {
-    return cached.fields;
-  }
-
-  const seen = new Set(Object.keys(specs));
-  const fields: string[] = [];
-  for (const row of rows) {
-    for (const key of Object.keys(row)) {
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      fields.push(key);
+  const fields = new Set<string>();
+  for (const key of rowKeys(rows)) {
+    if (!(key in specs)) {
+      fields.add(key);
     }
   }
   // A column the user just created has no values in any row yet, so it only
   // exists here.
   for (const key of added[tableName] ?? []) {
-    if (!seen.has(key)) {
-      seen.add(key);
-      fields.push(key);
+    if (!(key in specs)) {
+      fields.add(key);
     }
   }
+  return [...fields];
+}
 
-  byTable.set(tableName, { gen: generation, fields });
-  return fields;
+/**
+ * Whether a spec field of a table shows for these rows.
+ *
+ * A base field always does. A field an overlay adds to a base file (Google's
+ * `vehicle_type`, ...) shows only when the rows carry the column or the user
+ * added it, so a feed that never used one is not cluttered with it.
+ */
+export function specFieldShown(
+  tableName: string,
+  field: string,
+  rows: Record<string, unknown>[]
+): boolean {
+  const spec = GTFS_FIELD_SPECS[tableName]?.[field];
+  if (!spec?.origin) {
+    return true;
+  }
+  return rowKeys(rows).has(field) || (added[tableName] ?? []).includes(field);
+}
+
+/** The table's spec fields that show for these rows, in spec order. */
+export function shownSpecFields(
+  tableName: string,
+  rows: Record<string, unknown>[]
+): string[] {
+  return Object.keys(GTFS_FIELD_SPECS[tableName] ?? {}).filter((field) =>
+    specFieldShown(tableName, field, rows)
+  );
+}
+
+/** The overlay fields of a table hidden for these rows, in spec order. */
+export function hiddenOverlayFields(
+  tableName: string,
+  rows: Record<string, unknown>[]
+): string[] {
+  return Object.keys(GTFS_FIELD_SPECS[tableName] ?? {}).filter(
+    (field) => !specFieldShown(tableName, field, rows)
+  );
 }
 
 const syntheticSpecs = new Map<string, GTFSFieldSpec>();
@@ -165,6 +201,11 @@ export function validateExtensionColumnName(
   if (!specs) {
     return t('field.extNoFields', { table: tableName });
   }
+  // A hidden overlay field is added by its exact name, and then shows with its
+  // typed spec.
+  if (hiddenOverlayFields(tableName, rows).includes(trimmed)) {
+    return null;
+  }
   const lower = trimmed.toLowerCase();
   if (Object.keys(specs).some((f) => f.toLowerCase() === lower)) {
     return t('field.extIsSpec', { name: trimmed, table: tableName });
@@ -189,7 +230,6 @@ export async function addExtensionColumn(
 ): Promise<void> {
   const field = name.trim();
   added = { ...added, [tableName]: [...(added[tableName] ?? []), field] };
-  generation++;
   console.log(`[ExtensionFields] added column ${tableName}.${field}`);
   if (!store) {
     console.warn(
