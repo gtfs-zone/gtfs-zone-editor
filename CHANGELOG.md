@@ -1,3 +1,9 @@
+## v0.44.1 (2026-11-05)
+
+### Fix
+
+- **timetable**: give every field type an editor, checked exhaustively
+
 ## v0.44.0 (2026-11-05)
 
 ### Feat
