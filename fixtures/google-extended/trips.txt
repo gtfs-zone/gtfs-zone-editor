@@ -1,0 +1,6 @@
+route_id,service_id,trip_id,original_trip_id,trip_headsign,direction_id,trip_direction_name,exceptional,vehicle_category_id,ticketing_trip_id,ticketing_type
+s1,daily,s1_out,S1-0800,Airport,0,Northbound,0,,S1T-0800,0
+m1,daily,m1_out,,Museum,0,Eastbound,0,,,
+d1,daily,d1_out,,Village,0,Outbound,0,,,1
+f1,daily,f1_out,,Lakeside,0,Southbound,0,ferry_cat,F1T-0900,0
+h1,daily,h1_out,,Old Town,0,Loop,1,,,1

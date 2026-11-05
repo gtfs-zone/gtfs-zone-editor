@@ -447,6 +447,11 @@ export function mapGTFSTypeString(typeString: string): GTFSFieldType {
   if (normalized === 'Currency amount') {
     return GTFSFieldType.CurrencyAmount;
   }
+  // Google extension files type free text as "String" and Android intent
+  // URIs (intent://...) as "URI"; neither is a URL, so both are Text.
+  if (normalized === 'String' || normalized === 'URI') {
+    return GTFSFieldType.Text;
+  }
   // translations.txt declares union types ("Text or URL or Email or Phone
   // number"); the widest member is Text, which accepts all of them.
   if (normalized.startsWith('Text or ')) {

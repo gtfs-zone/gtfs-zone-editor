@@ -1,0 +1,11 @@
+trip_id,arrival_time,departure_time,stop_id,stop_sequence,stop_headsign,stop_direction_name,ticketing_stop_time_id,ticketing_type
+s1_out,08:00:00,08:00:00,central,1,,Northbound to Airport,S1-CEN,0
+s1_out,08:12:00,08:12:00,airport,2,,,S1-AIR,0
+m1_out,08:05:00,08:05:00,central,1,,,,
+m1_out,08:09:00,08:09:00,museum,2,,,,
+d1_out,08:30:00,08:30:00,central,1,,,,
+d1_out,08:55:00,08:55:00,village,2,,,,
+f1_out,09:00:00,09:00:00,harbor,1,,Southbound to Lakeside,,
+f1_out,09:40:00,09:40:00,lakeside,2,,,,
+h1_out,10:00:00,10:00:00,oldtown,1,,,,1
+h1_out,10:30:00,10:30:00,oldtown,2,,,,1

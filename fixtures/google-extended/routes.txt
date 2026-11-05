@@ -1,0 +1,6 @@
+route_id,agency_id,route_short_name,route_long_name,route_type,ticketing_deep_link_id,checkin_duration
+s1,gx,S1,Central - Airport,109,gx_tickets,
+m1,gx,M1,Central - Museum,401,,
+d1,gx,D1,Central - Village on demand,715,,
+f1,gx,F1,Harbor - Lakeside,1200,gx_tickets,600
+h1,gx,H1,Old Town carriage,1702,,

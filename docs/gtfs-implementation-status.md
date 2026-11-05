@@ -41,3 +41,26 @@ UI support levels:
 | `translations.txt` | Optional | Full | Translations modal: a matrix per table and field with a column per language, plus the raw rows; ID renames carry over, orphans are flagged in Feed Issues; not yet applied to displayed labels |
 | `attributions.txt` | Optional | Full | Attributions modal |
 | `locations.geojson` | Optional | Full | Zones on the map, own zone page, geometry edited through a geojson.io round trip |
+
+## Google extensions
+
+Google Transit additions from the [reference](https://developers.google.com/transit/gtfs/reference), layered on the base spec as an overlay (`src/gtfs-spec/extensions/google.ts`). Overlay files are listed in Files only when the feed has rows in them or the user adds them, tagged "Google extension", and open in the editable table (add, edit, delete rows). Overlay fields show on entity pages only when the feed uses them, with a Google badge.
+
+| Item | Presence | UI Support | Notes |
+|------|----------|------------|-------|
+| `ticketing_deep_links.txt` | Optional | Partial | Files table; `agency.ticketing_deep_link_id` and `routes.ticketing_deep_link_id` reference it |
+| `ticketing_identifiers.txt` | Optional | Partial | Files table; keyed on `agency_id` + `stop_id` |
+| `vehicle_categories.txt` | Optional | Partial | Files table; `trips.vehicle_category_id` references it |
+| `vehicle_amenities.txt` | Optional | Partial | Files table |
+| `vehicle_category_amenities.txt` | Optional | Partial | Files table; keyed on `vehicle_category_id` + `vehicle_amenity_id` |
+| `routes.route_type` extended codes | Required | Full | HVT codes 100-1702 from `gtfs-zone-vocab`, grouped by family in the picker |
+| `stops.vehicle_type` | Optional | Partial | Route type picker, shown when the feed uses it |
+| `stops.signposted_as` | Optional | Partial | Entity field |
+| `agency.ticketing_deep_link_id` | Optional | Partial | Entity field, foreign key |
+| `routes.ticketing_deep_link_id`, `routes.checkin_duration` | Optional | Partial | Entity fields |
+| `trips.original_trip_id`, `trips.trip_direction_name`, `trips.exceptional`, `trips.vehicle_category_id`, `trips.ticketing_trip_id`, `trips.ticketing_type` | Optional | Partial | Entity fields |
+| `stop_times.stop_direction_name`, `stop_times.ticketing_stop_time_id`, `stop_times.ticketing_type` | Optional | Partial | Timetable fields |
+| `fare_attributes.ic_price` | Optional | Partial | Files table |
+| `fare_rules.contains_route_id` | Optional | Partial | Files table, foreign key to routes |
+| `translations.lang`, `translations.trans_id` | Optional | Partial | Raw translation rows |
+| Behavior notes | - | Partial | Google's ignored fields, unsupported files and different interpretations shown as notes on the field or file |

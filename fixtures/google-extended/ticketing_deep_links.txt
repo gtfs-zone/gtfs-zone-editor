@@ -1,0 +1,2 @@
+ticketing_deep_link_id,android_intent_uri,ios_universal_link_url,web_url
+gx_tickets,intent://tickets.example.com/#Intent;scheme=https;package=com.example.tickets;end,https://tickets.example.com/ios,https://tickets.example.com

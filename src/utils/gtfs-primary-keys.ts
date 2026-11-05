@@ -2,7 +2,8 @@
  * GTFS Primary Key Configuration
  *
  * Mirrors the "Primary key (...)" line of each file section in
- * reference/gtfs-reference.md.
+ * reference/gtfs-reference.md. Google extension files have no stated key, so
+ * theirs are curated.
  */
 
 import { normalizeAgencyId } from './agency-helpers';
@@ -221,6 +222,33 @@ export const GTFS_PRIMARY_KEYS: GTFSTablePrimaryKey[] = [
     tableName: 'booking_rules',
     fields: ['booking_rule_id'],
     type: 'natural',
+  },
+
+  // Google extension files
+  {
+    tableName: 'ticketing_deep_links',
+    fields: ['ticketing_deep_link_id'],
+    type: 'natural',
+  },
+  {
+    tableName: 'ticketing_identifiers',
+    fields: ['agency_id', 'stop_id'],
+    type: 'composite',
+  },
+  {
+    tableName: 'vehicle_categories',
+    fields: ['vehicle_category_id'],
+    type: 'natural',
+  },
+  {
+    tableName: 'vehicle_amenities',
+    fields: ['vehicle_amenity_id'],
+    type: 'natural',
+  },
+  {
+    tableName: 'vehicle_category_amenities',
+    fields: ['vehicle_category_id', 'vehicle_amenity_id'],
+    type: 'composite',
   },
   {
     // locations.geojson is stored as a single row holding the whole

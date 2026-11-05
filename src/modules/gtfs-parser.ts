@@ -24,6 +24,7 @@ import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { GTFSTableMap, StopTimes } from '../types/gtfs-entities';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
+import { overlayFileNames } from '../utils/spec-origin';
 import { splitInnerZipPath } from 'gtfs-zone-web-common/gtfs/feed-url-resolve';
 import { yieldToEventLoop } from '../utils/async-yield';
 import { processParsedData } from '../utils/gtfs-field-values';
@@ -2056,23 +2057,33 @@ export class GTFSParser {
    * Optional is the inverse of required rather than an explicit presence list:
    * the spec uses five presence values, and testing only for Optional and
    * Conditionally Required dropped Conditionally Forbidden files (networks.txt,
-   * route_networks.txt) into the wrong bucket. `additional` is the non-spec
-   * passthrough files, which are the only files that genuinely have no schema.
+   * route_networks.txt) into the wrong bucket. `extensions` is the overlay
+   * files (Google) that hold rows; an empty one is left out. `additional` is
+   * the non-spec passthrough files, which are the only files that genuinely
+   * have no schema.
    */
   categorizeFiles(): {
     required: string[];
     optional: string[];
+    extensions: string[];
     additional: string[];
   } {
     const allFiles = this.getAllFileNames();
     const requiredFiles = GTFS_FILES.filter(
       (f) => f.presence === 'Required'
     ).map((f) => f.filename);
+    const overlayFiles = new Set(overlayFileNames());
 
     return {
       required: allFiles.filter((f) => requiredFiles.includes(f)),
       optional: allFiles.filter(
-        (f) => !requiredFiles.includes(f) && ALL_GTFS_FILES.includes(f)
+        (f) =>
+          !requiredFiles.includes(f) &&
+          !overlayFiles.has(f) &&
+          ALL_GTFS_FILES.includes(f)
+      ),
+      extensions: allFiles.filter(
+        (f) => overlayFiles.has(f) && (this.gtfsData[f]?.data.length ?? 0) > 0
       ),
       additional: this.getPassthroughFileNames(),
     };

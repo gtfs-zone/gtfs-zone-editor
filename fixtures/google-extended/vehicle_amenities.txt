@@ -1,0 +1,3 @@
+vehicle_amenity_id,ac_availability,wifi_availability,toilet_availability,gender_accessibility,seat_type,service_class,service_class_code,seat_plug,row_layout_summary,row_leg_space
+amen_std,1,1,1,1,0,2,2,2,2+2,1
+amen_first,1,1,1,1,2,1,1A,1,1+1,2

@@ -1,6 +1,14 @@
 import { CONFIG } from '../config';
 import { gtfsSpec } from '../gtfs-spec';
-import { renderSpecNotes } from '../utils/spec-origin';
+import { fileOrigin, renderSpecNotes } from '../utils/spec-origin';
+import {
+  installEditableTableHandlers,
+  renderEditableTable,
+  uninstallEditableTableHandlers,
+  type EditableTableConfig,
+  type EditableTableDeps,
+} from './editable-table';
+import { specStoreName } from '../utils/spec-field-edit';
 import Clusterize from 'clusterize.js';
 import {
   getGTFSFieldDescription,
@@ -48,6 +56,9 @@ interface PendingUpdate {
 
 type CSVRow = Record<string, string | number | boolean>;
 
+/** editable-table instance id for an overlay file open in the Files view. */
+const OVERLAY_TABLE_ID = 'files-overlay';
+
 export class Editor {
   private currentFile: string | null = null;
   private tableData: CSVRow[] | null = null;
@@ -59,9 +70,16 @@ export class Editor {
   private patchManager: PatchManagerRef | null = null;
   private debounceTimeout: NodeJS.Timeout | null = null;
   private readonly DEBOUNCE_DELAY = CONFIG.DEBOUNCE_DELAY;
+  private tableDeps: EditableTableDeps | null = null;
+  private overlayTable: EditableTableConfig | null = null;
 
   initialize(gtfsParser: GTFSParser): void {
     this.gtfsParser = gtfsParser;
+  }
+
+  /** Deps for the editable table overlay files open in. */
+  setTableDeps(deps: EditableTableDeps): void {
+    this.tableDeps = deps;
   }
 
   setPatchManager(pm: PatchManagerRef): void {
@@ -86,6 +104,7 @@ export class Editor {
 
     // Clear table data when switching to a new file
     this.tableData = null;
+    this.closeOverlayTable();
 
     // Update current file
     this.currentFile = fileName;
@@ -103,7 +122,59 @@ export class Editor {
     }
     document.getElementById('raw-editor-view')?.classList.add('hidden');
 
+    if (fileOrigin(fileName)) {
+      await this.openOverlayTable(fileName);
+      return;
+    }
     await this.buildTableEditor();
+  }
+
+  /**
+   * Overlay files open in the spec-driven editable table rather than the
+   * cell grid, so rows can be added and deleted: a file added from the Files
+   * list starts out empty.
+   */
+  private async openOverlayTable(fileName: string): Promise<void> {
+    if (!this.tableDeps) {
+      throw new Error('[Editor] table deps not set');
+    }
+    if (this.clusterize) {
+      this.clusterize.destroy();
+      this.clusterize = null;
+    }
+    const deps = this.tableDeps;
+    const store = specStoreName(fileName);
+    const refresh = async (): Promise<void> => {
+      const container = document.getElementById('table-editor');
+      if (!container || this.overlayTable !== config) {
+        return;
+      }
+      config.rows = await deps.gtfsDatabase.getAllRows(store);
+      container.innerHTML = `<div class="p-2">${await renderEditableTable(config)}</div>`;
+    };
+    const config: EditableTableConfig = {
+      instanceId: OVERLAY_TABLE_ID,
+      tableName: fileName,
+      rows: [],
+      deps,
+      onInsert: () => void refresh(),
+      onDelete: () => void refresh(),
+      onRowsChanged: () => void refresh(),
+    };
+    this.overlayTable = config;
+    installEditableTableHandlers(config);
+    await refresh();
+    console.log(
+      '[Editor] opened overlay file in the editable table:',
+      fileName
+    );
+  }
+
+  private closeOverlayTable(): void {
+    if (this.overlayTable) {
+      uninstallEditableTableHandlers(OVERLAY_TABLE_ID);
+      this.overlayTable = null;
+    }
   }
 
   /** Show the overlay notes on a file (Google's "Unsupported files"), if any. */
@@ -126,6 +197,7 @@ export class Editor {
    */
   private openRawFile(fileName: string, rawContent: string): void {
     this.tableData = null;
+    this.closeOverlayTable();
     this.currentFile = fileName;
 
     const fileNameElement = document.getElementById('current-file-name');
@@ -190,10 +262,12 @@ export class Editor {
     this.pendingUpdates.clear();
     this.pendingBeforeRows.clear();
     this.currentFile = null;
+    this.closeOverlayTable();
   }
 
   clearEditor() {
     this.currentFile = null;
+    this.closeOverlayTable();
 
     // Clear table view
     if (this.clusterize) {

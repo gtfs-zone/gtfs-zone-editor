@@ -30,6 +30,11 @@ import {
   renderInlineEditableField,
 } from '../utils/inline-editable-field';
 import { flushInlineEdits } from '../utils/inline-edit';
+import {
+  fileOrigin,
+  originLabel,
+  overlayFileNames,
+} from '../utils/spec-origin';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 
@@ -68,6 +73,11 @@ export class UIController {
   /** Cancels a map update scheduled for a feed that has since been replaced. */
   private cancelPendingMapUpdate: (() => void) | null = null;
   private patchManager: PatchManager | null = null;
+  /** Overlay files the user added to the Files list, for one feed generation. */
+  private addedExtensionFiles: { gen: number; files: Set<string> } = {
+    gen: -1,
+    files: new Set(),
+  };
 
   constructor() {
     this.gtfsParser = null;
@@ -523,7 +533,7 @@ export class UIController {
     fileList.innerHTML = '';
 
     // Get categorized files
-    const { required, optional, additional } =
+    const { required, optional, extensions, additional } =
       this.gtfsParser!.categorizeFiles();
     // Create DaisyUI menu structure
     const menu = document.createElement('ul');
@@ -557,6 +567,8 @@ export class UIController {
     optionalSection.appendChild(optionalList);
     menu.appendChild(optionalSection);
 
+    menu.appendChild(this.extensionFilesSection(extensions));
+
     // Non-spec files carried through from the imported ZIP, if any
     if (additional.length > 0) {
       const additionalSection = document.createElement('li');
@@ -576,6 +588,62 @@ export class UIController {
     fileList.appendChild(menu);
   }
 
+  /**
+   * Overlay files: the ones holding rows or added this feed generation, then
+   * an "Add" submenu offering the rest.
+   */
+  private extensionFilesSection(withRows: string[]): HTMLElement {
+    const gen = this.gtfsParser!.feedGeneration;
+    if (this.addedExtensionFiles.gen !== gen) {
+      this.addedExtensionFiles = { gen, files: new Set() };
+    }
+    const added = this.addedExtensionFiles.files;
+    const all = overlayFileNames();
+    const shown = all.filter((f) => withRows.includes(f) || added.has(f));
+    const addable = all.filter((f) => !shown.includes(f));
+
+    const section = document.createElement('li');
+    const header = document.createElement('div');
+    header.className = 'menu-title';
+    header.textContent = t('files.extensions');
+    section.appendChild(header);
+
+    const list = document.createElement('ul');
+    shown.forEach((fileName) => {
+      this.addFileItem(list, fileName, false);
+    });
+
+    if (addable.length > 0) {
+      const addItem = document.createElement('li');
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.className = 'opacity-70';
+      summary.textContent = t('files.addExtension');
+      details.appendChild(summary);
+      const addList = document.createElement('ul');
+      addable.forEach((fileName) => {
+        const li = document.createElement('li');
+        const link = document.createElement('a');
+        link.textContent = fileName;
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          added.add(fileName);
+          console.log('[UI] extension file added to the Files list:', fileName);
+          this.updateFileList();
+          void this.openFile(fileName);
+        });
+        li.appendChild(link);
+        addList.appendChild(li);
+      });
+      details.appendChild(addList);
+      addItem.appendChild(details);
+      list.appendChild(addItem);
+    }
+
+    section.appendChild(list);
+    return section;
+  }
+
   addFileItem(container: HTMLElement, fileName: string, isRequired: boolean) {
     const listItem = document.createElement('li');
 
@@ -584,6 +652,15 @@ export class UIController {
 
     const nameSpan = document.createElement('span');
     nameSpan.textContent = fileName;
+    const origin = fileOrigin(fileName);
+    if (origin) {
+      const tag = document.createElement('span');
+      tag.className = 'badge badge-ghost badge-xs ml-2 align-middle';
+      tag.textContent = t('files.extensionTag', {
+        origin: originLabel(origin),
+      });
+      nameSpan.appendChild(tag);
+    }
     link.appendChild(nameSpan);
 
     // Passthrough files have no table, so count lines instead of records

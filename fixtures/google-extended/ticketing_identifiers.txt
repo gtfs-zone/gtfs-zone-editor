@@ -1,0 +1,2 @@
+agency_id,stop_id,ticketing_stop_id
+gx,central,GX-CEN

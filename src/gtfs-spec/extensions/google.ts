@@ -4,7 +4,7 @@ import {
   routeTypeInfo,
   type RouteTypeInfo,
 } from 'gtfs-zone-vocab/route-types';
-import type { GTFSEnumValue } from '../types';
+import type { GTFSEnumValue, GTFSFileSpec } from '../types';
 import { routesSpec } from '../files/routes';
 import type { GTFSSpecExtension } from './types';
 
@@ -50,6 +50,269 @@ function baseVehicleValue(value: GTFSEnumValue): GTFSEnumValue {
   return { ...value, label: info.label.en };
 }
 
+// Shared by ac_availability, wifi_availability and toilet_availability.
+const AVAILABILITY_VALUES: GTFSEnumValue[] = [
+  { value: 0, label: 'Unknown', description: 'Default.' },
+  { value: 1, label: 'Available anywhere, anytime', description: '' },
+  { value: 2, label: 'Not available', description: '' },
+];
+
+const FILES: GTFSFileSpec[] = [
+  {
+    filename: 'ticketing_deep_links.txt',
+    presence: 'Optional',
+    description:
+      'Google Transit ticketing extension.<br><br>Deep links used to ticket the trips of an agency or route.',
+    fields: [
+      {
+        name: 'ticketing_deep_link_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit ticketing extension.<br><br>The `ticketing_deep_link_id` field represents the identifier of the deep link.',
+        isPrimaryKey: true,
+      },
+      {
+        name: 'android_intent_uri',
+        type: 'URI',
+        presence: 'Optional',
+        description:
+          "Google Transit ticketing extension.<br><br>The `android_intent_uri` field represents the intent URI that's used for deep linking on Android.",
+      },
+      {
+        name: 'ios_universal_link_url',
+        type: 'URL',
+        presence: 'Optional',
+        description:
+          "Google Transit ticketing extension.<br><br>The `ios_universal_link_url` field represents the universal link URL that's used for deep linking on iOS.",
+      },
+      {
+        name: 'web_url',
+        type: 'URL',
+        presence: 'Optional',
+        description:
+          "Google Transit ticketing extension.<br><br>The `web_url` field represents the URL that's used for deep linking on the web.",
+      },
+    ],
+  },
+  {
+    filename: 'ticketing_identifiers.txt',
+    presence: 'Optional',
+    description:
+      'Google Transit ticketing extension.<br><br>Default ticketing IDs of stops.',
+    fields: [
+      {
+        name: 'agency_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit ticketing extension.<br><br>To specify the agency of the stop that the default `ticketing_stop_id` field is defined for, the `agency_id` field contains the ID from the GTFS [`agency.txt`](https://gtfs.org/schedule/reference/#agencytxt) file.',
+        foreignKey: [{ file: 'agency.txt', field: 'agency_id' }],
+      },
+      {
+        name: 'stop_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit ticketing extension.<br><br>To specify the stop that the default `ticketing_stop_id` field is defined for, the `stop_id` field contains the ID from the GTFS [`stops.txt`](https://gtfs.org/schedule/reference/#stopstxt) file.',
+        foreignKey: [{ file: 'stops.txt', field: 'stop_id' }],
+      },
+      {
+        name: 'ticketing_stop_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit ticketing extension.<br><br>The `ticketing_stop_id` field contains the ticketing ID that is applied to the stop. Optionally, an agency qualifies the ID.',
+      },
+    ],
+  },
+  {
+    filename: 'vehicle_categories.txt',
+    presence: 'Optional',
+    description:
+      'Google Transit extension.<br><br>Vehicle categories that trips are allotted to.',
+    fields: [
+      {
+        name: 'vehicle_category_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit extension.<br><br>Identifies a vehicle category.',
+        isPrimaryKey: true,
+      },
+      {
+        name: 'vehicle_amenity_id',
+        type: 'ID',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Identifies a set of amenities available to all passengers in the vehicle category. Alternatively, see `vehicle_category_amenities.txt ` for when different amenity sets are available in the same vehicle category.',
+        foreignKey: [
+          { file: 'vehicle_amenities.txt', field: 'vehicle_amenity_id' },
+        ],
+      },
+    ],
+  },
+  {
+    filename: 'vehicle_amenities.txt',
+    presence: 'Optional',
+    description:
+      'Google Transit extension.<br><br>Sets of amenities available on board.',
+    fields: [
+      {
+        name: 'vehicle_amenity_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit extension.<br><br>Identifies a set of amenities.',
+        isPrimaryKey: true,
+      },
+      {
+        name: 'ac_availability',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines if air conditioning is available.<br><br>Google accepts the following values:<br>- **`0`.** Default. Unknown.<br>- **`1`.** Available anywhere, anytime.<br>- **`2`.** Not available.',
+        enumValues: AVAILABILITY_VALUES,
+      },
+      {
+        name: 'wifi_availability',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines if Wifi is available onboard.<br><br>Google accepts the following values:<br>- **`0`.** Default. Unknown.<br>- **`1`.** Available anywhere, anytime.<br>- **`2`.** Not available.',
+        enumValues: AVAILABILITY_VALUES,
+      },
+      {
+        name: 'toilet_availability',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines if a toilet is available inside the vehicle.<br><br>Google accepts the following values:<br>- **`0`.** Default. Unknown.<br>- **`1`.** Available anywhere, anytime.<br>- **`2`.** Not available.',
+        enumValues: AVAILABILITY_VALUES,
+      },
+      {
+        name: 'gender_accessibility',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines if gender restrictions apply.<br><br>Google accepts the following values:<br>- **`0`.** Default. Unknown.<br>- **`1`.** No gender restrictions.<br>- **`2`.** Restricted to women only.<br>- **`3`.** Restricted to men only.',
+        enumValues: [
+          { value: 0, label: 'Unknown', description: 'Default.' },
+          { value: 1, label: 'No gender restrictions', description: '' },
+          { value: 2, label: 'Restricted to women only', description: '' },
+          { value: 3, label: 'Restricted to men only', description: '' },
+        ],
+      },
+      {
+        name: 'seat_type',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines the type of seat.<br><br>Google accepts the following values:<br>- **`0`.** Default. Seat (not foldable, may be reclining).<br>- **`1`.** Fixed bed (cannot be reclined back as seat).<br>- **`2`.** Reclining seat.',
+        enumValues: [
+          {
+            value: 0,
+            label: 'Seat',
+            description: 'Default. Not foldable, may be reclining.',
+          },
+          {
+            value: 1,
+            label: 'Fixed bed',
+            description: 'Cannot be reclined back as seat.',
+          },
+          { value: 2, label: 'Reclining seat', description: '' },
+        ],
+      },
+      {
+        name: 'service_class',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines the class of the seat.<br><br>Google accepts the following values:<br>- **`0`.** Default. Unknown.<br>- **`1`.** First class.<br>- **`2`.** Second class.<br>- **`3`.** Third class.<br>- **`4`.** Business.<br>- **`5`.** Premium Economy.<br>- **`6`.** Economy.',
+        enumValues: [
+          { value: 0, label: 'Unknown', description: 'Default.' },
+          { value: 1, label: 'First class', description: '' },
+          { value: 2, label: 'Second class', description: '' },
+          { value: 3, label: 'Third class', description: '' },
+          { value: 4, label: 'Business', description: '' },
+          { value: 5, label: 'Premium Economy', description: '' },
+          { value: 6, label: 'Economy', description: '' },
+        ],
+      },
+      {
+        name: 'service_class_code',
+        type: 'String',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines a short form class code (e.g. 1A for Air-Conditioned First Class). This field is a more specific version of the class field, where the classes not available in the class enum can be specified.',
+      },
+      {
+        name: 'seat_plug',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines if either an electric or usb plug (of any type) is available at the seat.<br><br>Google accepts the following values:<br>- **`0`.** Default. Unknown.<br>- **`1`.** Available at all seats.<br>- **`2`.** Not available.',
+        enumValues: [
+          { value: 0, label: 'Unknown', description: 'Default.' },
+          { value: 1, label: 'Available at all seats', description: '' },
+          { value: 2, label: 'Not available', description: '' },
+        ],
+      },
+      {
+        name: 'row_layout_summary',
+        type: 'String',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines the number of seats or beds in one row of the vehicle. Some examples are: "2" (2 seats in a row, but whether they are separated or next to each other is unknown), "1+1" (2 individual seats in a row), "2+2" (4 seats in a row with a separation in the middle).',
+      },
+      {
+        name: 'row_leg_space',
+        type: 'Enum',
+        presence: 'Optional',
+        description:
+          'Google Transit extension.<br><br>Defines if rows have additional leg space.<br><br>Google accepts the following values:<br>- **`0`.** Default. Unknown / Not applicable.<br>- **`1`.** Standard leg space.<br>- **`2`.** Additional leg space.',
+        enumValues: [
+          {
+            value: 0,
+            label: 'Unknown / Not applicable',
+            description: 'Default.',
+          },
+          { value: 1, label: 'Standard leg space', description: '' },
+          { value: 2, label: 'Additional leg space', description: '' },
+        ],
+      },
+    ],
+  },
+  {
+    filename: 'vehicle_category_amenities.txt',
+    presence: 'Optional',
+    description:
+      'Google Transit extension.<br><br>Amenity sets of a vehicle category, for categories with more than one.',
+    fields: [
+      {
+        name: 'vehicle_category_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit extension.<br><br>Identifies the vehicle category. The same vehicle category can have numerous amenity sets by repeating the value of this field in multiple rows. This is typically helpful when a vehicle category has various classes of service.',
+        foreignKey: [
+          { file: 'vehicle_categories.txt', field: 'vehicle_category_id' },
+        ],
+      },
+      {
+        name: 'vehicle_amenity_id',
+        type: 'ID',
+        presence: 'Required',
+        description:
+          'Google Transit extension.<br><br>Identifies a set of amenities available to all passengers in the vehicle category.',
+        foreignKey: [
+          { file: 'vehicle_amenities.txt', field: 'vehicle_amenity_id' },
+        ],
+      },
+    ],
+  },
+];
+
 // The prose of both the "Unsupported files" and "Ignored fields" sections.
 const NOT_USED =
   "Google Transit ingests this data without error but doesn't proactively use the data.";
@@ -59,7 +322,7 @@ export const googleExtension: GTFSSpecExtension = {
   id: ID,
   sourceUrl: 'https://developers.google.com/transit/gtfs/reference',
   revision: '2025-05-15',
-  files: [],
+  files: FILES,
   fields: [
     {
       file: 'stops.txt',
@@ -86,6 +349,9 @@ export const googleExtension: GTFSSpecExtension = {
         presence: 'Optional',
         description:
           "Google Transit ticketing extension.<br><br>In the [`agency.txt`](https://gtfs.org/schedule/reference/#agencytxt) file, the `ticketing_deep_link_id` field represents the deep link that's used to ticket the trips of this agency.",
+        foreignKey: [
+          { file: 'ticketing_deep_links.txt', field: 'ticketing_deep_link_id' },
+        ],
       },
     },
     {
@@ -108,6 +374,9 @@ export const googleExtension: GTFSSpecExtension = {
         presence: 'Optional',
         description:
           "Google Transit ticketing extension.<br><br>In the [`routes.txt`](https://gtfs.org/schedule/reference/#routestxt) file, the `ticketing_deep_link_id` field represents the deep link that's used to ticket the trips of this route.",
+        foreignKey: [
+          { file: 'ticketing_deep_links.txt', field: 'ticketing_deep_link_id' },
+        ],
       },
     },
     {
@@ -172,6 +441,9 @@ export const googleExtension: GTFSSpecExtension = {
         presence: 'Optional',
         description:
           "Google Transit extension.<br><br>In the [`trips.txt`](https://gtfs.org/schedule/reference/#tripstxt) file, the `vehicle_category_id` field identifies the vehicle that's allotted to this trip. When this field is in the `trips.txt` file, its value overrides the `vehicle_category_id` value in the [`routes.txt`](https://gtfs.org/schedule/reference/#routestxt) file.",
+        foreignKey: [
+          { file: 'vehicle_categories.txt', field: 'vehicle_category_id' },
+        ],
       },
     },
     {

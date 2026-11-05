@@ -1,0 +1,2 @@
+vehicle_category_id,vehicle_amenity_id
+ferry_cat,amen_first

@@ -256,7 +256,7 @@ export class GTFSDatabase {
   private db: IDBPDatabase<GTFSDBSchema> | null = null;
   private readonly dbName = CONFIG.DB_NAME;
   // Fixed schema version: bump only for schema changes; pre-upgrade modal handles export.
-  private readonly dbVersion = 12;
+  private readonly dbVersion = 13;
   /** Virtual table registry: large tables that bypass per-row IDB storage. */
   private virtualTables = new Map<string, VirtualTableHandlers>();
 

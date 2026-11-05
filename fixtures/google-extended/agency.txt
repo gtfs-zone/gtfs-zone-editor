@@ -1,0 +1,2 @@
+agency_id,agency_name,agency_url,agency_timezone,agency_lang,ticketing_deep_link_id
+gx,Google Extended Demo,https://example.com,Europe/Zurich,en,gx_tickets
