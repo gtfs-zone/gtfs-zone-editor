@@ -46,7 +46,7 @@ const FIELD_TYPES: Map<string, string> = new Map(
 );
 
 /**
- * The 13 editable fields, in stop_times.txt spec order.
+ * The editable fields, in stop_times.txt spec order.
  */
 export const STOP_TIME_EDITABLE_FIELDS: readonly string[] = stopTimesFields()
   .map((field) => field.name)
@@ -78,7 +78,10 @@ export function stopTimeFieldKind(field: string): StopTimeFieldKind {
     throw new Error(`[timetable-fields] unknown stop_times field '${field}'`);
   }
 
-  switch (mapGTFSTypeString(type)) {
+  // Exhaustive over GTFSFieldType: a new member fails typecheck until it is
+  // given an editor here.
+  const fieldType = mapGTFSTypeString(type);
+  switch (fieldType) {
     case GTFSFieldType.Time:
     case GTFSFieldType.LocalTime:
       return 'time';
@@ -91,13 +94,29 @@ export function stopTimeFieldKind(field: string): StopTimeFieldKind {
     case GTFSFieldType.Float:
     case GTFSFieldType.NonNegativeFloat:
     case GTFSFieldType.PositiveFloat:
+    case GTFSFieldType.CurrencyAmount:
+    case GTFSFieldType.Latitude:
+    case GTFSFieldType.Longitude:
       return 'number';
     case GTFSFieldType.Text:
+    case GTFSFieldType.URL:
+    case GTFSFieldType.Email:
+    case GTFSFieldType.PhoneNumber:
+    case GTFSFieldType.LanguageCode:
+    case GTFSFieldType.CurrencyCode:
+    case GTFSFieldType.Timezone:
+    case GTFSFieldType.Color:
+    case GTFSFieldType.Date:
+    case GTFSFieldType.ID:
+    case GTFSFieldType.UniqueID:
+    case GTFSFieldType.ForeignID:
       return 'text';
-    default:
+    default: {
+      const unhandled: never = fieldType;
       throw new Error(
-        `[timetable-fields] no editor for stop_times field '${field}' of type '${type}'`
+        `[timetable-fields] no editor for stop_times field '${field}' of type '${String(unhandled)}'`
       );
+    }
   }
 }
 
