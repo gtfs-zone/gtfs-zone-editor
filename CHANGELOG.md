@@ -1,3 +1,12 @@
+## v0.44.0 (2026-11-05)
+
+### Feat
+
+- **spec**: add Google ticketing and vehicle files as overlay tables
+- **spec**: add Google overlay fields and behavior notes
+- **spec**: add Google HVT route types and grouped enum menus
+- **spec**: layer Google additions as a checked spec overlay
+
 ## v0.43.0 (2026-11-01)
 
 ### Feat
