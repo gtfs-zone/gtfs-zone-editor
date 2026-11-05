@@ -12,6 +12,10 @@ export interface GTFSEnumOption {
   value: number | string;
   label: string;
   description?: string;
+  /** Overlay id when the value comes from a spec extension. */
+  origin?: string;
+  /** Picker group heading. */
+  group?: string;
 }
 
 /**

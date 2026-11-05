@@ -138,6 +138,9 @@ export const fields: Translation<typeof en> = {
   'picker.more': '{shown} sur {total} de plus. Affinez votre recherche',
   'picker.search': 'Rechercher…',
   'picker.done': 'Terminé',
+  'enum.googleExtension': 'Extension Google',
+  'enum.filter': 'Filtrer les options…',
+  'enum.groupAria': 'Options {group}',
   'renameModal.noRefs': "Rien d'autre dans le flux ne fait référence à cet ID.",
   'renameModal.rowsRewritten': 'Lignes qui seront réécrites :',
   'renameModal.total_one':

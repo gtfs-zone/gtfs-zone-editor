@@ -48,6 +48,7 @@ import {
 } from './stop-times-validation-cache';
 import { CONFIG } from '../config';
 import { t } from '../i18n/messages';
+import { getEnumOptions } from '../types/gtfs-enums';
 
 /** The offending row, so a message can be traced back to an editable object. */
 export interface ValidationEntity {
@@ -649,18 +650,9 @@ export class GTFSValidator {
           rowNum
         );
       } else {
-        const validRouteTypes = [
-          '0',
-          '1',
-          '2',
-          '3',
-          '4',
-          '5',
-          '6',
-          '7',
-          '11',
-          '12',
-        ];
+        const validRouteTypes = (getEnumOptions('route_type') ?? []).map(
+          (opt) => String(opt.value)
+        );
         if (!validRouteTypes.includes(String(route.route_type))) {
           this.addWarning(
             `Row ${rowNum}: Unknown route_type '${route.route_type}'`,

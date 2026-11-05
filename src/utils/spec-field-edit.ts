@@ -18,7 +18,9 @@ import { getGTFSPrimaryKey } from './gtfs-primary-keys';
 import { getEntityDisplay, renderOptionLabel } from './entity-display';
 import { TimeFormatter } from './time-formatter';
 import type { OptionPickerItem } from '../modules/option-picker-modal';
-import type { GTFSFieldSpec } from '../gtfs-spec/types';
+import type { GTFSEnumValue, GTFSFieldSpec } from '../gtfs-spec/types';
+import { googleExtension } from '../gtfs-spec/extensions/google';
+import type { InlineMenuOption } from './inline-edit';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';
 
@@ -105,6 +107,29 @@ export function specFieldKind(spec: GTFSFieldSpec): SpecFieldKind {
     return 'constrained';
   }
   return NUMERIC_FIELD_TYPES.has(type) ? 'number' : 'text';
+}
+
+/** The marker an overlay value carries in a picker. */
+function originMarker(origin: string | undefined): string | undefined {
+  if (origin === undefined) {
+    return undefined;
+  }
+  if (origin !== googleExtension.id) {
+    throw new Error(`[SpecFieldEdit] no marker for origin ${origin}`);
+  }
+  return t('enum.googleExtension');
+}
+
+/** Enum values as inline menu rows, keeping their group and origin marker. */
+export function enumMenuOptions(
+  values: readonly GTFSEnumValue[]
+): InlineMenuOption[] {
+  return values.map((v) => ({
+    value: String(v.value),
+    label: `${v.value} - ${v.label}`,
+    group: v.group,
+    marker: originMarker(v.origin),
+  }));
 }
 
 /** Parse a raw input into the type the spec (and Zod) expect. */

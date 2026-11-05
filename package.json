@@ -61,7 +61,7 @@
     "clusterize.js": "^1.0.0",
     "daisyui": "^5.7.46",
     "gtfs-zone-vocab": "github:gtfs-zone/gtfs-zone-vocab#v0.1.0",
-    "gtfs-zone-web-common": "github:gtfs-zone/gtfs-zone-web-common#v5.15.0",
+    "gtfs-zone-web-common": "github:gtfs-zone/gtfs-zone-web-common#v5.16.0",
     "idb": "^8.0.3",
     "jszip": "^3.10.2",
     "maplibre-gl": "^6.11.2",

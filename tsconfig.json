@@ -23,7 +23,8 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "gtfs-zone-web-common/*": ["node_modules/gtfs-zone-web-common/src/*"]
+      "gtfs-zone-web-common/*": ["node_modules/gtfs-zone-web-common/src/*"],
+      "gtfs-zone-vocab/*": ["node_modules/gtfs-zone-vocab/ts/*"]
     }
   },
   "include": [

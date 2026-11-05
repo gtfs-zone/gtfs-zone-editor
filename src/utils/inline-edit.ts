@@ -25,6 +25,7 @@ import {
   HEX_COLOR_CODEC,
 } from 'gtfs-zone-web-common/ui/color-input';
 import { CONFIG } from '../config';
+import { t } from '../i18n/messages';
 import { getFeedActiveRange } from './feed-active-range';
 import {
   keyToGridDirection,
@@ -436,6 +437,10 @@ export function openInlineEditor(
 export interface InlineMenuOption {
   value: string;
   label: string;
+  /** Group heading. Ungrouped options come first, then each group in order. */
+  group?: string;
+  /** Short tag shown after the label, e.g. where the value comes from. */
+  marker?: string;
 }
 
 export interface InlineMenuOptions {
@@ -448,11 +453,67 @@ export interface InlineMenuOptions {
 /** Class on the floating menu, so a second open can clear the first. */
 const MENU_CLASS = 'inline-enum-menu';
 
+function renderMenuRow(row: InlineMenuOption, currentValue: string): string {
+  const activeClass =
+    row.value === currentValue ? ' bg-base-200 font-medium' : '';
+  const marker = row.marker
+    ? ` <span class="badge badge-ghost badge-xs ml-1 align-middle">${escapeHtml(row.marker)}</span>`
+    : '';
+  return `<div role="option" class="px-3 py-1.5 text-sm text-center cursor-pointer hover:bg-base-200${activeClass}" data-value="${escapeHtml(row.value)}" data-search="${escapeHtml(row.label.toLowerCase())}">${escapeHtml(row.label)}${marker}</div>`;
+}
+
+/** Ungrouped rows, then one headed block per group in first-seen order. */
+function renderMenuRows(
+  options: InlineMenuOption[],
+  currentValue: string
+): string {
+  const groups = new Map<string, InlineMenuOption[]>();
+  const ungrouped: InlineMenuOption[] = [];
+  for (const row of options) {
+    if (row.group === undefined) {
+      ungrouped.push(row);
+    } else {
+      const list = groups.get(row.group) ?? [];
+      list.push(row);
+      groups.set(row.group, list);
+    }
+  }
+  const blocks = [
+    ungrouped.map((r) => renderMenuRow(r, currentValue)).join(''),
+  ];
+  for (const [group, rows] of groups) {
+    blocks.push(
+      `<div role="group" aria-label="${escapeHtml(t('enum.groupAria', { group }))}" data-menu-group>` +
+        `<div class="px-3 pt-2 pb-1 text-xs font-semibold opacity-60 text-left" aria-hidden="true">${escapeHtml(group)}</div>` +
+        rows.map((r) => renderMenuRow(r, currentValue)).join('') +
+        '</div>'
+    );
+  }
+  return blocks.join('');
+}
+
+/** Hides rows not matching `query`, and groups left with no visible row. */
+function filterMenu(menu: HTMLElement, query: string): void {
+  const needle = query.trim().toLowerCase();
+  menu.querySelectorAll<HTMLElement>('[data-search]').forEach((row) => {
+    row.hidden = needle !== '' && !row.dataset.search?.includes(needle);
+  });
+  menu.querySelectorAll<HTMLElement>('[data-menu-group]').forEach((group) => {
+    group.hidden = !group.querySelector('[data-search]:not([hidden])');
+  });
+  const empty = menu.querySelector<HTMLElement>('[data-menu-empty]');
+  if (empty) {
+    empty.hidden = !!menu.querySelector('[data-search]:not([hidden])');
+  }
+}
+
 /**
  * Open a small menu of fixed options anchored under a span.
  *
  * Small enums get this rather than the searchable modal: it is one click
- * instead of three, and the whole option set is visible at once.
+ * instead of three, and the whole option set is visible at once. Above
+ * `CONFIG.ENUM_FILTER_THRESHOLD` options a filter input heads the menu, and
+ * Enter in it picks the first visible option.
  */
 export function openInlineMenu(
   span: HTMLElement,
@@ -464,16 +525,17 @@ export function openInlineMenu(
   const menu = document.createElement('div');
   // Above the modal layer: the menu is a body child, so a z-index below a
   // modal's would hide it behind the modal that opened the cell.
-  menu.className = `${MENU_CLASS} fixed z-[2000] -translate-x-1/2 bg-base-100 border border-base-300 rounded-lg shadow-lg py-1 min-w-40 max-h-72 overflow-y-auto`;
+  menu.className = `${MENU_CLASS} fixed z-[2000] -translate-x-1/2 bg-base-100 border border-base-300 rounded-lg shadow-lg py-1 min-w-40 max-w-sm max-h-72 overflow-y-auto`;
+  menu.setAttribute('role', 'listbox');
   menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
   menu.style.left = `${rect.left + rect.width / 2 + window.scrollX}px`;
-  menu.innerHTML = options.options
-    .map((row) => {
-      const activeClass =
-        row.value === options.currentValue ? ' bg-base-200 font-medium' : '';
-      return `<div class="px-3 py-1.5 text-sm text-center cursor-pointer hover:bg-base-200${activeClass}" data-value="${escapeHtml(row.value)}">${escapeHtml(row.label)}</div>`;
-    })
-    .join('');
+  const filterable = options.options.length > CONFIG.ENUM_FILTER_THRESHOLD;
+  const filterRow = filterable
+    ? `<div class="sticky top-0 z-10 bg-base-100 px-2 pt-1 pb-2"><input type="search" class="input input-sm w-full" placeholder="${escapeHtml(t('enum.filter'))}" aria-label="${escapeHtml(t('enum.filter'))}" autocomplete="off" data-menu-filter /></div>` +
+      `<div class="px-3 py-1.5 text-sm opacity-60 text-center" data-menu-empty hidden>${escapeHtml(t('picker.noOptions'))}</div>`
+    : '';
+  menu.innerHTML =
+    filterRow + renderMenuRows(options.options, options.currentValue);
   document.body.appendChild(menu);
 
   const close = (): void => {
@@ -494,6 +556,31 @@ export function openInlineMenu(
       close();
     }
   };
+  const pick = (newValue: string): void => {
+    close();
+    if (newValue !== options.currentValue) {
+      const picked = options.options.find((r) => r.value === newValue);
+      options.onPick(newValue, picked?.label ?? newValue);
+    }
+  };
+
+  const filter = menu.querySelector<HTMLInputElement>('[data-menu-filter]');
+  if (filter) {
+    filter.addEventListener('input', () => filterMenu(menu, filter.value));
+    filter.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') {
+        return;
+      }
+      e.preventDefault();
+      const first = menu.querySelector<HTMLElement>(
+        '[data-search]:not([hidden])'
+      );
+      if (first) {
+        pick(first.dataset.value ?? '');
+      }
+    });
+    filter.focus();
+  }
 
   menu.addEventListener('click', (e) => {
     const row = (e.target as Element).closest(
@@ -502,12 +589,7 @@ export function openInlineMenu(
     if (!row) {
       return;
     }
-    const newValue = row.dataset.value ?? '';
-    close();
-    if (newValue !== options.currentValue) {
-      const picked = options.options.find((r) => r.value === newValue);
-      options.onPick(newValue, picked?.label ?? newValue);
-    }
+    pick(row.dataset.value ?? '');
   });
 
   document.addEventListener('mousedown', onOutside, true);

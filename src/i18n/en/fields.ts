@@ -131,6 +131,9 @@ export const fields = {
   'picker.more': '{shown} of {total} more. Refine your search',
   'picker.search': 'Search…',
   'picker.done': 'Done',
+  'enum.googleExtension': 'Google extension',
+  'enum.filter': 'Filter options…',
+  'enum.groupAria': '{group} options',
   'renameModal.noRefs': 'Nothing else in the feed references this ID.',
   'renameModal.rowsRewritten': 'Rows that will be rewritten:',
   'renameModal.total_one':

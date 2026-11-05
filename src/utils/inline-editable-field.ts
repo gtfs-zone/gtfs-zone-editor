@@ -39,6 +39,7 @@ import {
   buildForeignKeyOptions,
   coerceFieldValue,
   constrainedOptions,
+  enumMenuOptions,
   formatSpecValue,
   resolveForeignLabel,
   specFieldKind,
@@ -472,10 +473,7 @@ function openFieldEditor(span: HTMLElement): void {
       currentValue: current,
       options: [
         { value: '', label: '-' },
-        ...(spec.enumValues ?? []).map((v) => ({
-          value: String(v.value),
-          label: `${v.value} - ${v.label}`,
-        })),
+        ...enumMenuOptions(spec.enumValues ?? []),
       ],
       onPick: (value, label) => void commit(span, spec, value, label),
     });

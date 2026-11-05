@@ -2324,22 +2324,6 @@ export class GTFSParser {
     }
   }
 
-  getRouteTypeText(routeType: string) {
-    const types: { [key: string]: string } = {
-      '0': 'Tram/Streetcar',
-      '1': 'Subway/Metro',
-      '2': 'Rail',
-      '3': 'Bus',
-      '4': 'Ferry',
-      '5': 'Cable Tram',
-      '6': 'Aerial Lift',
-      '7': 'Funicular',
-      '11': 'Trolleybus',
-      '12': 'Monorail',
-    };
-    return types[routeType] || `Type ${routeType}`;
-  }
-
   async getRoutesForStopAsync(stop_id: string) {
     const routes = await this.getFileDataTyped(GTFS_TABLES.ROUTES);
     const trips = await this.getFileDataTyped(GTFS_TABLES.TRIPS);

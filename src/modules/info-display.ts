@@ -10,6 +10,8 @@ import {
   createTooltip,
 } from '../utils/zod-tooltip-helper';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
+import { getLocale } from 'gtfs-zone-web-common/i18n/index';
+import { routeTypeInfo } from 'gtfs-zone-vocab/route-types';
 
 export class InfoDisplay {
   private relationships: {
@@ -141,7 +143,7 @@ export class InfoDisplay {
               ${route.route_short_name ? `<div>${createTooltip('<strong>Short Name:</strong>', getRouteFieldDescription('routeShortName'))} ${this.escapeHtml(route.route_short_name as string)}</div>` : ''}
               ${route.route_long_name ? `<div>${createTooltip('<strong>Long Name:</strong>', getRouteFieldDescription('routeLongName'))} ${this.escapeHtml(route.route_long_name as string)}</div>` : ''}
               ${route.route_desc ? `<div>${createTooltip('<strong>Description:</strong>', getRouteFieldDescription('routeDesc'))} ${this.escapeHtml(route.route_desc as string)}</div>` : ''}
-              <div>${createTooltip('<strong>Type:</strong>', getRouteFieldDescription('routeType'))} ${this.getRouteTypeText(route.route_type as number)}</div>
+              <div>${createTooltip('<strong>Type:</strong>', getRouteFieldDescription('routeType'))} ${this.escapeHtml(routeTypeInfo(route.route_type as number)?.label[getLocale()] ?? `route_type ${route.route_type}`)}</div>
               ${agency ? `<div>${createTooltip('<strong>Agency:</strong>', getAgencyFieldDescription('agency_id'))} ${this.escapeHtml(agency.name as string)}</div>` : ''}
               ${route.route_color ? `<div>${createTooltip('<strong>Color:</strong>', getRouteFieldDescription('routeColor'))} <span style="background: #${route.route_color}; color: #${route.route_text_color || 'ffffff'};" class="px-2 py-1 rounded">#${route.route_color}</span></div>` : ''}
               ${route.route_url ? `<div>${createTooltip('<strong>URL:</strong>', getRouteFieldDescription('routeUrl'))} <a href="${route.route_url}" target="_blank" class="text-info hover:underline">${route.route_url}</a></div>` : ''}
@@ -533,22 +535,6 @@ export class InfoDisplay {
         </div>
       `;
     }
-  }
-
-  getRouteTypeText(routeType: number): string {
-    const types: Record<number, string> = {
-      0: 'Tram/Light Rail',
-      1: 'Subway/Metro',
-      2: 'Rail',
-      3: 'Bus',
-      4: 'Ferry',
-      5: 'Cable Tram',
-      6: 'Aerial Lift',
-      7: 'Funicular',
-      11: 'Trolleybus',
-      12: 'Monorail',
-    };
-    return types[routeType] || `Unknown (${routeType})`;
   }
 
   getLocationTypeText(locationType: number): string {

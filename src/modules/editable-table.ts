@@ -62,6 +62,7 @@ import {
   coerceFieldValue,
   formatSpecValue,
   constrainedOptions,
+  enumMenuOptions,
   specFieldKind,
   specStoreName,
   validateFieldValue,
@@ -1149,10 +1150,7 @@ function openCellEditor(span: HTMLElement): void {
       currentValue: current,
       options: [
         { value: '', label: '-' },
-        ...(spec.enumValues ?? []).map((v) => ({
-          value: String(v.value),
-          label: `${v.value} - ${v.label}`,
-        })),
+        ...enumMenuOptions(spec.enumValues ?? []),
       ],
       onPick: (value) => void commitCell(state, span, field, spec, value),
     });
