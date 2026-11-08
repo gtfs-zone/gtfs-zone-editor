@@ -134,7 +134,6 @@ export const fields = {
   'picker.done': 'Done',
   'spec.originGoogle': 'Google',
   'enum.googleExtension': 'Google extension',
-  'enum.filter': 'Filter options…',
   'enum.groupAria': '{group} options',
   'renameModal.noRefs': 'Nothing else in the feed references this ID.',
   'renameModal.rowsRewritten': 'Rows that will be rewritten:',

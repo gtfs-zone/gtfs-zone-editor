@@ -26,6 +26,7 @@ import {
 } from 'gtfs-zone-web-common/ui/color-input';
 import { CONFIG } from '../config';
 import { t } from '../i18n/messages';
+import { showOptionPickerModal } from '../modules/option-picker-modal';
 import { getFeedActiveRange } from './feed-active-range';
 import {
   keyToGridDirection,
@@ -444,6 +445,8 @@ export interface InlineMenuOption {
 }
 
 export interface InlineMenuOptions {
+  /** Modal title, used when the option count opens the picker modal. */
+  title: string;
   options: InlineMenuOption[];
   currentValue: string;
   /** Called only when the picked value differs from `currentValue`. */
@@ -459,7 +462,7 @@ function renderMenuRow(row: InlineMenuOption, currentValue: string): string {
   const marker = row.marker
     ? ` <span class="badge badge-ghost badge-xs ml-1 align-middle">${escapeHtml(row.marker)}</span>`
     : '';
-  return `<div role="option" class="px-3 py-1.5 text-sm text-center cursor-pointer hover:bg-base-200${activeClass}" data-value="${escapeHtml(row.value)}" data-search="${escapeHtml(row.label.toLowerCase())}">${escapeHtml(row.label)}${marker}</div>`;
+  return `<div role="option" class="px-3 py-1.5 text-sm text-center cursor-pointer hover:bg-base-200${activeClass}" data-value="${escapeHtml(row.value)}">${escapeHtml(row.label)}${marker}</div>`;
 }
 
 /** Ungrouped rows, then one headed block per group in first-seen order. */
@@ -483,7 +486,7 @@ function renderMenuRows(
   ];
   for (const [group, rows] of groups) {
     blocks.push(
-      `<div role="group" aria-label="${escapeHtml(t('enum.groupAria', { group }))}" data-menu-group>` +
+      `<div role="group" aria-label="${escapeHtml(t('enum.groupAria', { group }))}">` +
         `<div class="px-3 pt-2 pb-1 text-xs font-semibold opacity-60 text-left" aria-hidden="true">${escapeHtml(group)}</div>` +
         rows.map((r) => renderMenuRow(r, currentValue)).join('') +
         '</div>'
@@ -492,18 +495,21 @@ function renderMenuRows(
   return blocks.join('');
 }
 
-/** Hides rows not matching `query`, and groups left with no visible row. */
-function filterMenu(menu: HTMLElement, query: string): void {
-  const needle = query.trim().toLowerCase();
-  menu.querySelectorAll<HTMLElement>('[data-search]').forEach((row) => {
-    row.hidden = needle !== '' && !row.dataset.search?.includes(needle);
+/** Picks from the searchable modal, for enums too long for the dropdown. */
+async function pickFromModal(options: InlineMenuOptions): Promise<void> {
+  const picked = await showOptionPickerModal({
+    title: options.title,
+    selectedValue: options.currentValue,
+    options: options.options.map((o) => ({
+      value: o.value,
+      primary: o.label,
+      group: o.group,
+      marker: o.marker,
+    })),
   });
-  menu.querySelectorAll<HTMLElement>('[data-menu-group]').forEach((group) => {
-    group.hidden = !group.querySelector('[data-search]:not([hidden])');
-  });
-  const empty = menu.querySelector<HTMLElement>('[data-menu-empty]');
-  if (empty) {
-    empty.hidden = !!menu.querySelector('[data-search]:not([hidden])');
+  if (picked !== null && picked !== options.currentValue) {
+    const row = options.options.find((r) => r.value === picked);
+    options.onPick(picked, row?.label ?? picked);
   }
 }
 
@@ -512,14 +518,17 @@ function filterMenu(menu: HTMLElement, query: string): void {
  *
  * Small enums get this rather than the searchable modal: it is one click
  * instead of three, and the whole option set is visible at once. Above
- * `CONFIG.ENUM_FILTER_THRESHOLD` options a filter input heads the menu, and
- * Enter in it picks the first visible option.
+ * `CONFIG.ENUM_MODAL_THRESHOLD` options the searchable modal opens instead.
  */
 export function openInlineMenu(
   span: HTMLElement,
   options: InlineMenuOptions
 ): void {
   document.querySelectorAll(`.${MENU_CLASS}`).forEach((el) => el.remove());
+  if (options.options.length > CONFIG.ENUM_MODAL_THRESHOLD) {
+    void pickFromModal(options);
+    return;
+  }
 
   const rect = span.getBoundingClientRect();
   const menu = document.createElement('div');
@@ -529,13 +538,7 @@ export function openInlineMenu(
   menu.setAttribute('role', 'listbox');
   menu.style.top = `${rect.bottom + window.scrollY + 2}px`;
   menu.style.left = `${rect.left + rect.width / 2 + window.scrollX}px`;
-  const filterable = options.options.length > CONFIG.ENUM_FILTER_THRESHOLD;
-  const filterRow = filterable
-    ? `<div class="sticky top-0 z-10 bg-base-100 px-2 pt-1 pb-2"><input type="search" class="input input-sm w-full" placeholder="${escapeHtml(t('enum.filter'))}" aria-label="${escapeHtml(t('enum.filter'))}" autocomplete="off" data-menu-filter /></div>` +
-      `<div class="px-3 py-1.5 text-sm opacity-60 text-center" data-menu-empty hidden>${escapeHtml(t('picker.noOptions'))}</div>`
-    : '';
-  menu.innerHTML =
-    filterRow + renderMenuRows(options.options, options.currentValue);
+  menu.innerHTML = renderMenuRows(options.options, options.currentValue);
   document.body.appendChild(menu);
 
   const close = (): void => {
@@ -563,24 +566,6 @@ export function openInlineMenu(
       options.onPick(newValue, picked?.label ?? newValue);
     }
   };
-
-  const filter = menu.querySelector<HTMLInputElement>('[data-menu-filter]');
-  if (filter) {
-    filter.addEventListener('input', () => filterMenu(menu, filter.value));
-    filter.addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') {
-        return;
-      }
-      e.preventDefault();
-      const first = menu.querySelector<HTMLElement>(
-        '[data-search]:not([hidden])'
-      );
-      if (first) {
-        pick(first.dataset.value ?? '');
-      }
-    });
-    filter.focus();
-  }
 
   menu.addEventListener('click', (e) => {
     const row = (e.target as Element).closest(

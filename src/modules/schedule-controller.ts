@@ -1389,6 +1389,7 @@ export class ScheduleController {
       }));
 
     openInlineMenu(span, {
+      title: t('field.selectTitle', { field }),
       currentValue: value ?? '',
       options: restricted
         ? enumOptions
@@ -1816,6 +1817,7 @@ export class ScheduleController {
     const enumOptions = getEnumOptions(field) ?? [];
 
     openInlineMenu(span, {
+      title: t('field.selectTitle', { field }),
       currentValue: value ?? '',
       options: [
         { value: '', label: '-' },
@@ -2774,6 +2776,7 @@ export class ScheduleController {
 
     if (fieldKind === 'enum') {
       openInlineMenu(span, {
+        title: t('field.selectTitle', { field }),
         currentValue: value ?? '',
         options: [
           { value: '', label: t('sched.emptySameAs0') },

@@ -13,6 +13,13 @@ export interface OptionPickerItem {
    * primary, wrapped to two lines with the full text as a tooltip.
    */
   detail?: string;
+  /**
+   * Group heading. With an empty query, ungrouped items come first, then a
+   * heading per group in first-seen order; a query lists matches flat.
+   */
+  group?: string;
+  /** Short tag shown as a badge after the primary, e.g. the value's origin. */
+  marker?: string;
 }
 
 export interface OptionPickerOptions {
@@ -65,6 +72,22 @@ function debounce(fn: () => void, ms: number): void {
     debounceTimer = null;
     fn();
   }, ms);
+}
+
+/** Ungrouped items first, then each group's items in first-seen order. */
+function groupOrder(items: OptionPickerItem[]): OptionPickerItem[] {
+  const ungrouped: OptionPickerItem[] = [];
+  const groups = new Map<string, OptionPickerItem[]>();
+  for (const item of items) {
+    if (item.group === undefined) {
+      ungrouped.push(item);
+    } else {
+      const list = groups.get(item.group) ?? [];
+      list.push(item);
+      groups.set(item.group, list);
+    }
+  }
+  return [...ungrouped, ...[...groups.values()].flat()];
 }
 
 /** How many matches the list shows before it asks for a narrower search. */
@@ -154,12 +177,16 @@ function mountPicker(
   };
 
   let shown: OptionPickerItem[] = [];
+  // The row element per `shown` entry. Group headings sit between rows, so
+  // `resultsEl.children` cannot be indexed by position in `shown`.
+  let rowEls: HTMLElement[] = [];
   let activeIndex = 0;
+  const grouped = options.some((o) => o.group !== undefined);
 
   // A selected row keeps its highlight and never takes the gray active
   // background; when it is also active it gets an outline instead.
   const paintRow = (index: number) => {
-    const row = resultsEl.children[index];
+    const row = rowEls[index];
     const item = shown[index];
     if (!row || !item) {
       return;
@@ -179,7 +206,7 @@ function mountPicker(
     activeIndex = index;
     paintRow(previous);
     paintRow(index);
-    resultsEl.children[index]?.scrollIntoView({ block: 'nearest' });
+    rowEls[index]?.scrollIntoView({ block: 'nearest' });
   };
 
   const render = (query: string) => {
@@ -189,7 +216,8 @@ function mountPicker(
       filtered = options;
     } else {
       const haystack = options.map(
-        (o) => `${o.primary} ${o.secondary ?? ''} ${o.detail ?? ''}`
+        (o) =>
+          `${o.primary} ${o.secondary ?? ''} ${o.group ?? ''} ${o.detail ?? ''}`
       );
       const [idxs] = uf.search(haystack, q);
       filtered = idxs && idxs.length > 0 ? idxs.map((i) => options[i]) : [];
@@ -200,10 +228,17 @@ function mountPicker(
     // unselected remainder is capped, so the cap is what the note counts.
     // Partitioning happens per render, not per toggle, so rows only move when
     // the query changes, never out from under the pointer.
+    // A grouped list with no query is shown whole, in group order, so every
+    // group heading is reachable by scrolling.
+    const groupedView = grouped && !q;
     const picked = filtered.filter((o) => mode.selected.has(o.value));
     const rest = filtered.filter((o) => !mode.selected.has(o.value));
-    const hidden = Math.max(rest.length - MAX_SHOWN, 0);
-    shown = [...picked, ...rest.slice(0, MAX_SHOWN)];
+    const cap = groupedView ? rest.length : MAX_SHOWN;
+    const hidden = Math.max(rest.length - cap, 0);
+    shown = groupedView
+      ? groupOrder(filtered)
+      : [...picked, ...rest.slice(0, cap)];
+    rowEls = [];
 
     if (shown.length === 0) {
       resultsEl.innerHTML = `<div class="text-base-content/60 text-sm p-4 text-center">${t('picker.noOptions')}</div>`;
@@ -211,7 +246,24 @@ function mountPicker(
     }
 
     resultsEl.innerHTML = '';
+    let currentGroup: string | undefined;
     shown.forEach((item, i) => {
+      if (
+        groupedView &&
+        item.group !== undefined &&
+        item.group !== currentGroup
+      ) {
+        currentGroup = item.group;
+        const heading = document.createElement('div');
+        heading.className =
+          'px-3 pt-3 pb-1 text-xs font-semibold opacity-60 border-b border-base-200';
+        heading.textContent = item.group;
+        resultsEl.appendChild(heading);
+      }
+      // A flat result names its group in the trailing hint.
+      const secondary = groupedView
+        ? item.secondary
+        : (item.secondary ?? item.group);
       const row = document.createElement('div');
       row.className =
         'flex items-center gap-2 px-3 py-2 cursor-pointer border-b border-base-200 last:border-0';
@@ -222,7 +274,8 @@ function mountPicker(
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2">
             <span class="min-w-0 flex-1 truncate text-sm">${escapeHtml(item.primary)}</span>
-            ${item.secondary ? `<span class="shrink-0 text-xs opacity-60">${escapeHtml(item.secondary)}</span>` : ''}
+            ${item.marker ? `<span class="badge badge-ghost badge-xs shrink-0">${escapeHtml(item.marker)}</span>` : ''}
+            ${secondary ? `<span class="shrink-0 text-xs opacity-60">${escapeHtml(secondary)}</span>` : ''}
           </div>
           ${item.detail ? `<div class="text-xs opacity-60 line-clamp-2" title="${escapeHtml(item.detail)}">${escapeHtml(item.detail)}</div>` : ''}
         </div>
@@ -236,6 +289,7 @@ function mountPicker(
         }
       });
       resultsEl.appendChild(row);
+      rowEls.push(row);
     });
 
     if (hidden > 0) {
@@ -255,7 +309,7 @@ function mountPicker(
     const preselected = shown.findIndex((o) => o.value === mode.selectedValue);
     activeIndex = preselected >= 0 ? preselected : 0;
     shown.forEach((_, i) => paintRow(i));
-    resultsEl.children[activeIndex]?.scrollIntoView({ block: 'nearest' });
+    rowEls[activeIndex]?.scrollIntoView({ block: 'nearest' });
   };
 
   const onKeyDown = (e: KeyboardEvent) => {

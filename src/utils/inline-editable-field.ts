@@ -475,6 +475,7 @@ function openFieldEditor(span: HTMLElement): void {
 
   if (kind === 'enum') {
     openInlineMenu(span, {
+      title: t('field.selectTitle', { field }),
       currentValue: current,
       options: [
         { value: '', label: '-' },

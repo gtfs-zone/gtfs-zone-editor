@@ -47,8 +47,8 @@ export const CONFIG = {
   CLUSTERIZE_ROWS_IN_BLOCK: 50,
   CLUSTERIZE_BLOCKS_IN_CLUSTER: 4,
 
-  // Enum menus: option count above which a filter input is shown.
-  ENUM_FILTER_THRESHOLD: 15,
+  // Enum menus: option count above which the searchable modal opens instead.
+  ENUM_MODAL_THRESHOLD: 15,
 
   // Renaming an ID: cascade size above which the impact modal warns before
   // applying. A stop rename on a city feed rewrites every stop_times row that

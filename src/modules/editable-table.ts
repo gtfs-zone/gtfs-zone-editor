@@ -1177,6 +1177,7 @@ function openCellEditor(span: HTMLElement): void {
 
   if (span.dataset.kind === 'enum') {
     openInlineMenu(span, {
+      title: t('field.selectTitle', { field }),
       currentValue: current,
       options: [
         { value: '', label: '-' },
