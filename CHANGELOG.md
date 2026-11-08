@@ -1,3 +1,14 @@
+## v0.45.0 (2026-11-08)
+
+### Feat
+
+- **enum**: open long enums in a grouped picker modal
+- **navigation**: route the Files modal and sidebar modal tabs through the hash
+
+### Refactor
+
+- **i18n**: name every Google overlay label through originLabel
+
 ## v0.44.1 (2026-11-05)
 
 ### Fix
