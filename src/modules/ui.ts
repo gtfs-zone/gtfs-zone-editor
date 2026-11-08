@@ -38,6 +38,7 @@ import {
   originLabel,
   overlayFileNames,
 } from '../utils/spec-origin';
+import { googleExtension } from '../gtfs-spec/extensions/google';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 
@@ -674,7 +675,9 @@ export class UIController {
     const section = document.createElement('li');
     const header = document.createElement('div');
     header.className = 'menu-title';
-    header.textContent = t('files.extensions');
+    header.textContent = t('files.extensions', {
+      origin: originLabel(googleExtension.id),
+    });
     section.appendChild(header);
 
     const list = document.createElement('ul');
@@ -725,9 +728,7 @@ export class UIController {
     if (origin) {
       const tag = document.createElement('span');
       tag.className = 'badge badge-ghost badge-xs ml-2 align-middle';
-      tag.textContent = t('files.extensionTag', {
-        origin: originLabel(origin),
-      });
+      tag.textContent = originLabel(origin);
       nameSpan.appendChild(tag);
     }
     link.appendChild(nameSpan);

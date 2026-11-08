@@ -19,7 +19,7 @@ import { getEntityDisplay, renderOptionLabel } from './entity-display';
 import { TimeFormatter } from './time-formatter';
 import type { OptionPickerItem } from '../modules/option-picker-modal';
 import type { GTFSEnumValue, GTFSFieldSpec } from '../gtfs-spec/types';
-import { googleExtension } from '../gtfs-spec/extensions/google';
+import { originLabel } from './spec-origin';
 import type { InlineMenuOption } from './inline-edit';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';
@@ -114,10 +114,7 @@ function originMarker(origin: string | undefined): string | undefined {
   if (origin === undefined) {
     return undefined;
   }
-  if (origin !== googleExtension.id) {
-    throw new Error(`[SpecFieldEdit] no marker for origin ${origin}`);
-  }
-  return t('enum.googleExtension');
+  return originLabel(origin);
 }
 
 /** Enum values as inline menu rows, keeping their group and origin marker. */

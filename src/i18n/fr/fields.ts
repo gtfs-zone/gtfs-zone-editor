@@ -140,7 +140,6 @@ export const fields: Translation<typeof en> = {
   'picker.search': 'Rechercher…',
   'picker.done': 'Terminé',
   'spec.originGoogle': 'Google',
-  'enum.googleExtension': 'Extension Google',
   'enum.groupAria': 'Options {group}',
   'renameModal.noRefs': "Rien d'autre dans le flux ne fait référence à cet ID.",
   'renameModal.rowsRewritten': 'Lignes qui seront réécrites :',
