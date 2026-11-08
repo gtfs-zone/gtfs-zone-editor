@@ -3,10 +3,13 @@
  * static page by `vite.config.js`, so it is what renders without JS.
  */
 
-import { getLocale } from 'gtfs-zone-web-common/i18n/index';
+import { getLocale, type Locale } from 'gtfs-zone-web-common/i18n/index';
 import introEn from './intro.html?raw';
 import introFr from './intro.fr.html?raw';
+import introDe from './intro.de.html?raw';
+
+const INTRO: Record<Locale, string> = { en: introEn, fr: introFr, de: introDe };
 
 export function introHtml(): string {
-  return getLocale() === 'fr' ? introFr : introEn;
+  return INTRO[getLocale()];
 }

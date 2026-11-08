@@ -22,11 +22,12 @@ import {
 import { defineCatalog, type Locale } from 'gtfs-zone-web-common/i18n/index';
 import { worker as en } from '../i18n/en/worker';
 import { worker as fr } from '../i18n/fr/worker';
+import { worker as de } from '../i18n/de/worker';
 
 // A worker has no cookie or localStorage to resolve the locale from, so the
 // main thread sends its own with the parse request.
 let locale: Locale = 'en';
-const t = defineCatalog(en, { fr }, () => locale);
+const t = defineCatalog(en, { fr, de }, () => locale);
 
 type GTFSDatabaseRecord = {
   [key: string]: string | number | boolean | undefined;

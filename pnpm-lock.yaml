@@ -21,11 +21,11 @@ importers:
         specifier: ^5.7.46
         version: 5.7.46
       gtfs-zone-vocab:
-        specifier: github:gtfs-zone/gtfs-zone-vocab#v0.1.0
-        version: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/52bc8ee4eb2f7059e1b5050ee73dbb55858e3599
+        specifier: github:gtfs-zone/gtfs-zone-vocab#v0.2.0
+        version: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be
       gtfs-zone-web-common:
-        specifier: github:gtfs-zone/gtfs-zone-web-common#v5.19.0
-        version: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/90a17c2a1b2518569826de16900a11599b84d7ee(@leeoniya/ufuzzy@1.0.19)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/52bc8ee4eb2f7059e1b5050ee73dbb55858e3599)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0)
+        specifier: github:gtfs-zone/gtfs-zone-web-common#v5.20.0
+        version: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bb9d85daa60b3965d8a78ddbd56188ec19db5ac9(@leeoniya/ufuzzy@1.0.19)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0)
       idb:
         specifier: ^8.0.3
         version: 8.0.3
@@ -1121,13 +1121,13 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/52bc8ee4eb2f7059e1b5050ee73dbb55858e3599:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/52bc8ee4eb2f7059e1b5050ee73dbb55858e3599}
-    version: 0.1.0
+  gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be:
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be}
+    version: 0.2.0
 
-  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/90a17c2a1b2518569826de16900a11599b84d7ee:
-    resolution: {gitHosted: true, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/90a17c2a1b2518569826de16900a11599b84d7ee}
-    version: 5.19.0
+  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bb9d85daa60b3965d8a78ddbd56188ec19db5ac9:
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bb9d85daa60b3965d8a78ddbd56188ec19db5ac9}
+    version: 5.20.0
     peerDependencies:
       '@leeoniya/ufuzzy': '*'
       gtfs-realtime-bindings: '*'
@@ -2539,12 +2539,12 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/52bc8ee4eb2f7059e1b5050ee73dbb55858e3599: {}
+  gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be: {}
 
-  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/90a17c2a1b2518569826de16900a11599b84d7ee(@leeoniya/ufuzzy@1.0.19)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/52bc8ee4eb2f7059e1b5050ee73dbb55858e3599)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0):
+  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/bb9d85daa60b3965d8a78ddbd56188ec19db5ac9(@leeoniya/ufuzzy@1.0.19)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be)(jszip@3.10.2)(maplibre-gl@6.11.2)(papaparse@5.7.0):
     dependencies:
       '@leeoniya/ufuzzy': 1.0.19
-      gtfs-zone-vocab: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/52bc8ee4eb2f7059e1b5050ee73dbb55858e3599
+      gtfs-zone-vocab: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be
       jszip: 3.10.2
       maplibre-gl: 6.11.2
       papaparse: 5.7.0
