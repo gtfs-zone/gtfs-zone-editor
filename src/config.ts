@@ -55,9 +55,6 @@ export const CONFIG = {
   // stops there, which is slow but fine - the patch log holds it.
   RENAME_CASCADE_WARN: 5_000,
 
-  // Navigation history
-  MAX_NAVIGATION_HISTORY: 50,
-
   // Patch system: how often to compress and store a full-state snapshot
   SNAPSHOT_INTERVAL: 50, // take a full snapshot every N patches
 

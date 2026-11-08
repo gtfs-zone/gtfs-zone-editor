@@ -27,11 +27,7 @@ export function initializePageStateWithGTFS(
   globalBreadcrumbLookup = createGTFSBreadcrumbLookup(gtfsParser.getDatabase());
 
   // Initialize PageStateManager with hash-based URL sync enabled
-  const pageStateManager = initPageStateManager({
-    enableHistory: true,
-    maxHistoryLength: 50,
-    enableUrlSync: true,
-  });
+  const pageStateManager = initPageStateManager({ enableUrlSync: true });
 
   // Set up breadcrumb lookup
   pageStateManager.setBreadcrumbLookup(globalBreadcrumbLookup);
@@ -86,7 +82,8 @@ export function takeLoadCommand(): string | null {
     return null;
   }
   params.delete('load');
-  window.location.hash = params.toString(); // suppress normal hash-change nav; guard in PSM handles it
+  // The PSM ignores a hashchange that names the state it already holds.
+  window.location.hash = params.toString();
   console.log('[page-state-integration] takeLoadCommand:', loadUrl);
   return loadUrl;
 }

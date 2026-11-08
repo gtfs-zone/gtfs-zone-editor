@@ -27,7 +27,6 @@ import { BreadcrumbItem } from 'gtfs-zone-web-common/ui/breadcrumb-trail';
 import { BreadcrumbLookup, buildBreadcrumbs } from './breadcrumbs';
 import { flushInlineEdits, hasLiveEditor } from '../utils/inline-edit';
 import { followRenameInState } from '../utils/follow-rename';
-import { CONFIG } from '../config';
 
 export type { BreadcrumbLookup };
 
@@ -174,8 +173,6 @@ const pageStateCodec: PageStateCodec<PageState> = {
 };
 
 export interface PageStateManagerOptions {
-  enableHistory?: boolean;
-  maxHistoryLength?: number;
   enableUrlSync?: boolean;
 }
 
@@ -193,7 +190,6 @@ export class PageStateManager extends SharedPageStateManager<
   constructor(options: PageStateManagerOptions = {}) {
     super({
       codec: pageStateCodec,
-      maxHistoryLength: CONFIG.MAX_NAVIGATION_HISTORY,
       ...options,
     });
     this.urlSync = options.enableUrlSync ?? false;
@@ -322,16 +318,12 @@ export class PageStateManager extends SharedPageStateManager<
 
   /**
    * Drop the modal from the current state, leaving the page beneath it.
-   * Awaits the navigation, which here flushes inline edits first.
+   * Flushes inline edits first, since the shared close bypasses
+   * `setPageState`.
    */
   override async clearModal(): Promise<void> {
-    const current = this.getPageState();
-    if (!current.modal) {
-      return;
-    }
-    const rest = { ...current };
-    delete rest.modal;
-    await this.setPageState(rest as PageState);
+    await flushInlineEdits();
+    await super.clearModal();
   }
 }
 
