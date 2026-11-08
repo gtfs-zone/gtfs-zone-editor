@@ -9,6 +9,7 @@
  */
 
 import { showSidebarModal } from 'gtfs-zone-web-common/ui/sidebar-modal';
+import { routeSidebarTabs } from './routed-sidebar-tabs';
 import {
   attachGeojsonExchangeHandlers,
   geojsonExchangeInput,
@@ -404,55 +405,65 @@ export async function showOnDemandModal(
 
   installEditableTableHandlers(tableConfig);
 
-  await showSidebarModal({
-    title: t('flex.title'),
-    intro: INTRO,
-    groupOrder: GROUP_ORDER,
-    groupLabel: (group) => t(`flex.group.${group as OnDemandGroup}`),
-    initialId: target.table,
-    refreshRef,
-    entries: ON_DEMAND_ENTRIES.map((entry) => ({
-      id: entry.table,
-      label: entry.label,
-      group: entry.group,
-      note: entry.note ? escapeHtml(entry.note) : undefined,
-      guidePage: entry.table === ZONES_ENTRY_ID ? 'on-demand' : undefined,
-      primaryAction:
-        entry.table === ZONES_ENTRY_ID
-          ? { label: t('flex.newZone'), onClick: createZone }
-          : undefined,
-      count: () => countEntry(entry),
-      renderPane: () => renderPane(entry),
-    })),
-    onPaneRendered: (paneEl, close) => {
-      paneEl.addEventListener('click', (e) => {
-        const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
-          '[data-zone-id]'
-        );
-        const location_id = btn?.dataset.zoneId;
-        if (!location_id) {
+  const tabs = routeSidebarTabs(
+    'on_demand',
+    target.table ?? ON_DEMAND_ENTRIES[0].table
+  );
+  try {
+    await showSidebarModal({
+      title: t('flex.title'),
+      intro: INTRO,
+      groupOrder: GROUP_ORDER,
+      groupLabel: (group) => t(`flex.group.${group as OnDemandGroup}`),
+      initialId: target.table,
+      refreshRef,
+      onSelect: tabs.onSelect,
+      selectRef: tabs.selectRef,
+      entries: ON_DEMAND_ENTRIES.map((entry) => ({
+        id: entry.table,
+        label: entry.label,
+        group: entry.group,
+        note: entry.note ? escapeHtml(entry.note) : undefined,
+        guidePage: entry.table === ZONES_ENTRY_ID ? 'on-demand' : undefined,
+        primaryAction:
+          entry.table === ZONES_ENTRY_ID
+            ? { label: t('flex.newZone'), onClick: createZone }
+            : undefined,
+        count: () => countEntry(entry),
+        renderPane: () => renderPane(entry),
+      })),
+      onPaneRendered: (paneEl, close) => {
+        paneEl.addEventListener('click', (e) => {
+          const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
+            '[data-zone-id]'
+          );
+          const location_id = btn?.dataset.zoneId;
+          if (!location_id) {
+            return;
+          }
+          close();
+          deps.onZoneClick(location_id);
+        });
+
+        if (!pendingRowKey) {
           return;
         }
-        close();
-        deps.onZoneClick(location_id);
-      });
-
-      if (!pendingRowKey) {
-        return;
-      }
-      const row = paneEl.querySelector(
-        `[data-et-row="${CSS.escape(pendingRowKey)}"]`
-      );
-      const rowKey = pendingRowKey;
-      pendingRowKey = undefined;
-      if (row instanceof HTMLElement) {
-        row.scrollIntoView({ block: 'center' });
-        row.classList.add('bg-primary/10');
-      } else {
-        console.warn(`[OnDemand] no row for ${rowKey}`);
-      }
-    },
-  });
+        const row = paneEl.querySelector(
+          `[data-et-row="${CSS.escape(pendingRowKey)}"]`
+        );
+        const rowKey = pendingRowKey;
+        pendingRowKey = undefined;
+        if (row instanceof HTMLElement) {
+          row.scrollIntoView({ block: 'center' });
+          row.classList.add('bg-primary/10');
+        } else {
+          console.warn(`[OnDemand] no row for ${rowKey}`);
+        }
+      },
+    });
+  } finally {
+    tabs.dispose();
+  }
 
   uninstallEditableTableHandlers(INSTANCE_ID);
 }

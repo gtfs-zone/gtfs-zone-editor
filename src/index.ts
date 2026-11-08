@@ -619,7 +619,7 @@ export class GTFSEditor {
             { id: 'dock-browse' },
             {
               id: 'dock-files',
-              onSelect: () => void this.uiController.openFilesModal(),
+              onSelect: () => void openModal({ type: 'files' }),
             },
             { id: 'dock-changes', snap: null, onSelect: openHistoryModal },
           ])
@@ -991,6 +991,10 @@ export class GTFSEditor {
     );
 
     router.register('levels', () => this.levelsController.showLevelsModal());
+
+    router.register('files', (modal) =>
+      this.uiController.openFilesModal(modal.table)
+    );
 
     router.register('feed_issues', async (modal, _transient, cancelled) => {
       await refreshFeedIssuesIfStale();

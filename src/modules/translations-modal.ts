@@ -8,6 +8,7 @@
  */
 
 import { showSidebarModal } from 'gtfs-zone-web-common/ui/sidebar-modal';
+import { routeSidebarTabs } from './routed-sidebar-tabs';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import {
@@ -652,6 +653,10 @@ export async function showTranslationsModal(
   for (const [event, listener] of Object.entries(listeners)) {
     deps.patchManager.on(event as keyof typeof listeners, listener);
   }
+  const tabs = routeSidebarTabs(
+    'translations',
+    initialId ?? entries[0]?.id ?? ALL_ROWS_ID
+  );
 
   try {
     await showSidebarModal({
@@ -659,6 +664,8 @@ export async function showTranslationsModal(
       intro: INTRO,
       initialId,
       refreshRef,
+      onSelect: tabs.onSelect,
+      selectRef: tabs.selectRef,
       boxClassName: 'max-w-7xl w-11/12',
       entries: [
         ...entries.map((entry) => ({
@@ -705,6 +712,7 @@ export async function showTranslationsModal(
       },
     });
   } finally {
+    tabs.dispose();
     if (searchTimer !== null) {
       clearTimeout(searchTimer);
     }

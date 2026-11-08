@@ -2,9 +2,9 @@
  * Page State Manager
  *
  * The editor's hash codec and its subclass of `gtfs-zone-web-common`'s generic
- * `PageStateManager`. The shared class owns the current state, the history
- * and the hash; what is the editor's own is here: the codec for its eight
- * page variants and nine content modals, the inline-edit flush before every
+ * `PageStateManager`. The shared class owns the current state and the hash;
+ * what is the editor's own is here: the codec for its eight page variants
+ * and its routed content modals, the inline-edit flush before every
  * navigation, the same-page guard, breadcrumbs resolved against IndexedDB,
  * and the validated boot restore.
  */

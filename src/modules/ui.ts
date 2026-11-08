@@ -5,7 +5,10 @@ import { showFilesModal } from './files-modal';
 import type { ContinueOffer } from 'gtfs-zone-web-common/ui/load-modal';
 import type { FeedSelection } from 'gtfs-zone-web-common/gtfs/feed-selection';
 import { resolvedScheduledUrl } from 'gtfs-zone-web-common/gtfs/feed-selection';
-import { navigateToHome } from './navigation-actions';
+import { navigateToHome, openModal } from './navigation-actions';
+import { getPageStateManager } from './page-state-manager';
+import type { NavigationEvent } from 'gtfs-zone-web-common/ui/page-state-manager';
+import type { PageState } from '../types/page-state';
 import { GTFS_TABLES } from '../types/gtfs';
 import { MapMode, MapController } from './map-controller';
 import {
@@ -74,6 +77,8 @@ export class UIController {
   private cancelPendingMapUpdate: (() => void) | null = null;
   private patchManager: PatchManager | null = null;
   /** Overlay files the user added to the Files list, for one feed generation. */
+  /** The file the Files modal is showing, null on the list. */
+  private shownFile: string | null = null;
   private addedExtensionFiles: { gen: number; files: Set<string> } = {
     gen: -1,
     files: new Set(),
@@ -184,7 +189,7 @@ export class UIController {
 
     // Files modal button
     document.getElementById('files-btn')?.addEventListener('click', () => {
-      void this.openFilesModal();
+      void openModal({ type: 'files' });
     });
 
     // Drag and drop
@@ -495,32 +500,96 @@ export class UIController {
   }
 
   /**
-   * Open the Files modal on the list, optionally jumping straight to a file.
+   * The Files modal, opened by the modal router on `modal=files`. Shows the
+   * file `modal_table` names, or the list without one, and follows the hash
+   * while open so Back/Forward moves between a file and the list.
    *
    * The body is rebuilt on every open, so everything that hangs off it - the
    * list, the back button - is wired here rather than once at startup.
    */
   async openFilesModal(initialFile?: string): Promise<void> {
-    await showFilesModal({
-      onMount: () => {
-        this.updateFileList();
-        // Always open on the list, never a stale editor view from last time
-        this.showFileList();
+    const onNavigate = (event: NavigationEvent<PageState>) => {
+      const next = event.to.modal;
+      if (next?.type === 'files') {
+        void this.showFilesView(next.table);
+      }
+    };
+    getPageStateManager().addNavigationHandler(onNavigate);
 
-        document
-          .getElementById('back-to-files')
-          ?.addEventListener('click', () => {
-            this.showFileList();
-          });
+    try {
+      await showFilesModal({
+        onMount: () => {
+          this.updateFileList();
+          // Always open on the list, never a stale editor view from last time
+          this.showFileList();
 
-        if (initialFile) {
-          void this.openFile(initialFile);
-        }
-      },
-      // The DOM the editor points at is gone by now: flush pending row writes
-      // and drop the Clusterize instance.
-      onClose: () => this.editor!.closeEditor(),
-    });
+          document
+            .getElementById('back-to-files')
+            ?.addEventListener('click', () => {
+              void this.navigateFiles();
+            });
+
+          if (initialFile) {
+            void this.showFilesView(initialFile);
+          }
+        },
+        // The DOM the editor points at is gone by now: flush pending row writes
+        // and drop the Clusterize instance.
+        onClose: () => this.editor!.closeEditor(),
+      });
+    } finally {
+      getPageStateManager().removeNavigationHandler(onNavigate);
+    }
+  }
+
+  /** Point the Files modal at a file, or at the list without one. */
+  private async navigateFiles(fileName?: string): Promise<void> {
+    await openModal({ type: 'files', ...(fileName && { table: fileName }) });
+  }
+
+  /**
+   * Show what the hash names inside the open Files modal. A file that cannot
+   * be opened falls back to the list, and the hash is rewritten to match.
+   */
+  private async showFilesView(fileName: string | undefined): Promise<void> {
+    if (!fileName) {
+      this.showFileList();
+      return;
+    }
+    if (!this.isListedFile(fileName)) {
+      console.warn(
+        `[UI] Files: ${fileName} is not in the list, showing the list`
+      );
+      getPageStateManager().rewrite((state) =>
+        state.modal?.type === 'files'
+          ? { ...state, modal: { type: 'files' } }
+          : null
+      );
+      this.showFileList();
+      return;
+    }
+    if (this.shownFile === fileName) {
+      return;
+    }
+    await this.openFile(fileName);
+  }
+
+  /** Whether the Files list shows the file, so a hash may name it. */
+  private isListedFile(fileName: string): boolean {
+    if (this.gtfsParser!.getPassthroughContent(fileName) !== undefined) {
+      return true;
+    }
+    if (overlayFileNames().includes(fileName)) {
+      const gen = this.gtfsParser!.feedGeneration;
+      const added =
+        this.addedExtensionFiles.gen === gen &&
+        this.addedExtensionFiles.files.has(fileName);
+      return (
+        added ||
+        this.gtfsParser!.categorizeFiles().extensions.includes(fileName)
+      );
+    }
+    return this.gtfsParser!.getAllFileNames().includes(fileName);
   }
 
   updateFileList() {
@@ -630,7 +699,7 @@ export class UIController {
           added.add(fileName);
           console.log('[UI] extension file added to the Files list:', fileName);
           this.updateFileList();
-          void this.openFile(fileName);
+          void this.navigateFiles(fileName);
         });
         li.appendChild(link);
         addList.appendChild(li);
@@ -687,14 +756,14 @@ export class UIController {
 
     link.addEventListener('click', async (event) => {
       event.preventDefault();
-      await this.openFile(fileName, event.currentTarget as HTMLElement);
+      await this.navigateFiles(fileName);
     });
 
     listItem.appendChild(link);
     container.appendChild(listItem);
   }
 
-  async openFile(fileName: string, clickedElement: HTMLElement | null = null) {
+  private async openFile(fileName: string) {
     const isPassthrough =
       this.gtfsParser!.getPassthroughContent(fileName) !== undefined;
     if (
@@ -704,15 +773,8 @@ export class UIController {
       return;
     }
 
-    // Update active file styling
-    document.querySelectorAll('.menu a').forEach((item) => {
-      item.classList.remove('menu-active');
-    });
-    if (clickedElement) {
-      clickedElement.classList.add('menu-active');
-    }
-
     // Show file editor view
+    this.shownFile = fileName;
     await this.showFileEditor(fileName);
 
     // Update map if it's a spatial file
@@ -723,7 +785,7 @@ export class UIController {
 
   // Method expected by Objects Navigation interface
   showFileInEditor(filename: string, rowId?: string): void {
-    void this.openFilesModal(filename);
+    void openModal({ type: 'files', table: filename });
 
     console.log(
       `Opened ${filename} in editor${rowId ? ` for row ${rowId}` : ''}`
@@ -731,6 +793,7 @@ export class UIController {
   }
 
   showFileList() {
+    this.shownFile = null;
     const listView = document.getElementById('file-list-view');
     const editorView = document.getElementById('file-editor-view');
     if (listView && editorView) {

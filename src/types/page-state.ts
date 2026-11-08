@@ -25,8 +25,9 @@ export type PageLocation =
   | { type: 'location_group'; location_group_id: string };
 
 /**
- * The content modals that live in the URL hash.  Transient modals (guide,
- * load, option pickers, confirms, files, history) stay out of the hash.
+ * The content modals that live in the URL hash, with `table` naming the pane
+ * (Files: the open file). Transient modals (guide, load, option pickers,
+ * confirms, entity forms, history) stay out of the hash.
  */
 export const MODAL_TYPES = [
   'timetable',
@@ -40,6 +41,7 @@ export const MODAL_TYPES = [
   'attributions',
   'levels',
   'feed_issues',
+  'files',
 ] as const;
 
 export type ModalType = (typeof MODAL_TYPES)[number];

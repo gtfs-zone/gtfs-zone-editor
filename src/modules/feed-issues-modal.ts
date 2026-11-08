@@ -12,6 +12,7 @@
 
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { showSidebarModal } from 'gtfs-zone-web-common/ui/sidebar-modal';
+import { routeSidebarTabs } from './routed-sidebar-tabs';
 import type { IssueItem } from 'gtfs-zone-web-common/ui/issue-card';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
@@ -179,48 +180,62 @@ export async function showFeedIssuesModal(
     console.warn(`[FeedIssues] ${initialKey} is not an issue any more`);
   }
 
-  await showSidebarModal({
-    title: t('issues.title'),
-    initialId: initialKey,
-    entries: groups.map((group) => {
-      const key = groupKey(group);
-      const { label, note } = feedIssueGroupLabel(group);
-      return {
-        id: key,
-        label,
-        count: () => Promise.resolve(group.count),
-        paneTitle: label,
-        note: note ? escapeHtml(note) : undefined,
-        renderPane: () => Promise.resolve(renderPane(key, group)),
-      };
-    }),
-    onPaneRendered: (pane, close) => {
-      pane.addEventListener('click', (event) => {
-        const target = event.target as HTMLElement;
-        const button = target.closest<HTMLButtonElement>('[data-issue-action]');
-        if (button) {
-          const key = button.getAttribute('data-issue-key') ?? '';
-          const actionId = button.getAttribute('data-issue-action') ?? '';
-          if (!deps) {
-            notify.error(t('page.readOnly'));
+  const tabs = routeSidebarTabs(
+    'feed_issues',
+    groups.some((group) => groupKey(group) === initialKey)
+      ? initialKey
+      : groups[0] && groupKey(groups[0])
+  );
+  try {
+    await showSidebarModal({
+      title: t('issues.title'),
+      initialId: initialKey,
+      onSelect: tabs.onSelect,
+      selectRef: tabs.selectRef,
+      entries: groups.map((group) => {
+        const key = groupKey(group);
+        const { label, note } = feedIssueGroupLabel(group);
+        return {
+          id: key,
+          label,
+          count: () => Promise.resolve(group.count),
+          paneTitle: label,
+          note: note ? escapeHtml(note) : undefined,
+          renderPane: () => Promise.resolve(renderPane(key, group)),
+        };
+      }),
+      onPaneRendered: (pane, close) => {
+        pane.addEventListener('click', (event) => {
+          const target = event.target as HTMLElement;
+          const button = target.closest<HTMLButtonElement>(
+            '[data-issue-action]'
+          );
+          if (button) {
+            const key = button.getAttribute('data-issue-key') ?? '';
+            const actionId = button.getAttribute('data-issue-action') ?? '';
+            if (!deps) {
+              notify.error(t('page.readOnly'));
+              return;
+            }
+            button.disabled = true;
+            void runFeedIssueAction(key, actionId, deps).then((ran) => {
+              // The groups this modal lists are from before the run.
+              if (ran) {
+                close();
+              } else {
+                button.disabled = false;
+              }
+            });
             return;
           }
-          button.disabled = true;
-          void runFeedIssueAction(key, actionId, deps).then((ran) => {
-            // The groups this modal lists are from before the run.
-            if (ran) {
-              close();
-            } else {
-              button.disabled = false;
-            }
-          });
-          return;
-        }
-        const item = target.closest('[data-issue-nav]');
-        if (item) {
-          navigateToIssueItem(item);
-        }
-      });
-    },
-  });
+          const item = target.closest('[data-issue-nav]');
+          if (item) {
+            navigateToIssueItem(item);
+          }
+        });
+      },
+    });
+  } finally {
+    tabs.dispose();
+  }
 }
