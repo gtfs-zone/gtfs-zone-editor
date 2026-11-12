@@ -31,6 +31,14 @@ import {
   routeSpotlightOpacity,
   zoomWidth,
 } from 'gtfs-zone-web-common/map/layer-specs';
+import {
+  ROUTE_LABELS_LAYER,
+  clearRouteLabelImages,
+  installRouteLabelImages,
+  routeLabelFilter,
+  routeLabelLayerSpec,
+  routeLabelText,
+} from 'gtfs-zone-web-common/map/route-labels';
 
 /**
  * Thrown by an async feature build that a newer one has replaced.
@@ -103,6 +111,20 @@ export class RouteRenderer {
   constructor(map: MapLibreMap, gtfsParser: GTFSParser) {
     this.map = map;
     this.gtfsParser = gtfsParser;
+    installRouteLabelImages(map, (routeId) => {
+      const key = this.routeToFeatureKeys?.get(routeId)?.values().next().value;
+      const props = key ? this.routeFeatures.get(key)?.properties : undefined;
+      return props
+        ? {
+            text: routeLabelText({
+              id: routeId,
+              short_name: props.route_short_name,
+              long_name: props.route_long_name,
+            }),
+            color: props.color,
+          }
+        : null;
+    });
 
     this.initializationPromise = new Promise((resolve) => {
       if (this.map.isStyleLoaded() && this.map.loaded()) {
@@ -244,6 +266,11 @@ export class RouteRenderer {
       },
     });
 
+    // Every route's name until some are spotlighted; applySpotlight owns the
+    // filter.
+    this.map.addLayer(routeLabelLayerSpec(ROUTES_SOURCE));
+    this.map.setFilter(ROUTE_LABELS_LAYER, null);
+
     this.initialized = true;
     console.log('[RouteRenderer] Layers initialized');
   }
@@ -261,6 +288,9 @@ export class RouteRenderer {
     this.stopToGeomKeys = null;
     this.stopsLookupCache = null;
     this.routeFeatures = new Map();
+    if (this.map.style) {
+      clearRouteLabelImages(this.map);
+    }
   }
 
   /**
@@ -672,6 +702,12 @@ export class RouteRenderer {
           : NO_ROUTE_FILTER
       );
     }
+    if (this.map.getLayer(ROUTE_LABELS_LAYER)) {
+      this.map.setFilter(
+        ROUTE_LABELS_LAYER,
+        route_ids?.length ? routeLabelFilter(route_ids) : null
+      );
+    }
   }
 
   public highlightRoute(route_id: string): void {
@@ -961,6 +997,7 @@ export class RouteRenderer {
           feat.properties.route_long_name = route.route_long_name;
         }
       }
+      clearRouteLabelImages(this.map, [route_id]);
       // route_data now carries the new route_type; recompute paint order.
       this.refreshRouteSortKey(route_id);
       console.log(
