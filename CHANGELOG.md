@@ -1,3 +1,9 @@
+## v0.47.0 (2026-11-12)
+
+### Feat
+
+- **map**: label routes on the map
+
 ## v0.46.0 (2026-11-09)
 
 ### Feat
