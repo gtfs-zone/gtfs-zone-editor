@@ -43,6 +43,28 @@ export interface BatchGTFSPatch {
 /** A patch is either a single-record operation or a batch of them. */
 export type GTFSPatch = SingleGTFSPatch | BatchGTFSPatch;
 
+/**
+ * A non-table archive entry (e.g. `locations.geojson`) replaced as a whole.
+ * `null` means the entry is absent on that side.
+ */
+export interface FilePatch {
+  op: 'file';
+  name: string;
+  before: string | null;
+  after: string | null;
+  label?: string;
+}
+
+/** What the feed worker's patch log holds. */
+export type FeedPatch = GTFSPatch | FilePatch;
+
+/** One entry of the feed worker's patch log (IndexedDB key: `version`). */
+export interface FeedPatchRecord {
+  version: number;
+  patch: FeedPatch;
+  timestamp: number;
+}
+
 /** Persisted patch entry in IndexedDB (version is the autoIncrement key). */
 export interface PatchRecord {
   version?: number; // absent on write, assigned by autoIncrement on read

@@ -46,6 +46,32 @@ export function withTimeout<T>(
 }
 
 /**
+ * Resolve with the promise's value, or reject when it has not settled in
+ * `ms`. For writes, where a stall or a quota error must reach the caller.
+ */
+export function withDeadline<T>(
+  promise: Promise<T>,
+  what: string,
+  ms: number = CONFIG.DB_REQUEST_TIMEOUT_MS
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`[idb] ${what} did not finish within ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    );
+  });
+}
+
+/**
  * Delete a database, reporting what actually happened.
  *
  * `blocked` is not success: the request stays queued until every connection to

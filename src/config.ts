@@ -58,6 +58,13 @@ export const CONFIG = {
   // Patch system: how often to compress and store a full-state snapshot
   SNAPSHOT_INTERVAL: 50, // take a full snapshot every N patches
 
+  // Feed worker: IndexedDB holding the patch log and the pointer to the
+  // active OPFS base file.
+  FEED_DB_NAME: 'GTFSZoneFeed',
+  // Patches to replay at boot (both directions, bridge included) above which
+  // the patch log is folded into a new base file.
+  FEED_FOLD_PATCHES: 500,
+
   // Map navigation: zoom level used when focusing a single stop or station.
   // For stations with multiple child stops, this is the max zoom; fitBounds
   // will zoom out further if children don't fit at this level so subsidiaries
