@@ -48,6 +48,11 @@ aliasing bugs where a "before" snapshot is mutated by a later in-place write.
 Do not hold a long-lived reference to a query result and assume it will remain
 unchanged.
 
+`EditorFeed` mirror rows (`table`, `byKey`) get the same guarantee without a
+copy: each row is frozen when it reaches the mirror, and a change replaces
+the row object instead of mutating it. A row held across an edit keeps its
+old values; writing to one throws.
+
 ## Networks
 
 GTFS allows two mutually exclusive on-disk forms, `routes.network_id` or the

@@ -106,6 +106,10 @@ import threeLegSvg from './assets/gtfs-spec/3-leg.svg';
 import inliningSvg from './assets/gtfs-spec/inlining.svg';
 import './styles/main.css';
 import { t } from './i18n/messages';
+import { EditorFeed } from './feed/editor-feed';
+import { createEmptyFeed, loadFeed, restoreFeed } from './feed/feed-loader';
+import { batch, deleteOp, insertOp, updateOp } from './feed/patch-build';
+import { resetFeedStorage } from './feed/feed-boot';
 
 // Reference anchors resolve against the schedule reference, and the three
 // diagrams it embeds are bundled here.
@@ -123,6 +127,8 @@ applyZodLocale();
 declare global {
   interface Window {
     gtfsEditor: GTFSEditor;
+    /** Dev builds: the worker-backed feed, until it replaces GTFSParser. */
+    __feed?: unknown;
   }
   const __APP_VERSION__: string;
 }
@@ -138,6 +144,7 @@ type BootOutcome =
 
 export class GTFSEditor {
   public gtfsParser: GTFSParser;
+  public feed = new EditorFeed();
   public mapController: MapController;
   public editor: Editor;
   public uiController: UIController;
@@ -1192,6 +1199,21 @@ export class GTFSEditor {
 // Initialize the application
 function initializeApp(): void {
   window.gtfsEditor = new GTFSEditor();
+  if (import.meta.env.DEV) {
+    const feed = window.gtfsEditor.feed;
+    window.__feed = {
+      feed,
+      load: (input: { url: string } | { file: File }, label: string) =>
+        loadFeed(feed, input, label),
+      restore: () => restoreFeed(feed),
+      empty: (label: string) => createEmptyFeed(feed, label),
+      reset: () => {
+        feed.release();
+        return resetFeedStorage();
+      },
+      build: { insertOp, updateOp, deleteOp, batch },
+    };
+  }
 }
 
 if (document.readyState === 'loading') {

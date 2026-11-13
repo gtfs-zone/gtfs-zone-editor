@@ -22,6 +22,7 @@ import {
 import { CONFIG } from '../config';
 import type { FeedPatch, FeedPatchRecord, PatchRename } from '../types/patch';
 import { applyPatch, applyPatches } from './patch-apply';
+import { patchTargets } from './patch-build';
 import {
   IdbFeedLog,
   MemoryFeedLog,
@@ -43,6 +44,9 @@ export interface Versions {
 export interface Moved {
   versions: Versions;
   renames: PatchRename[];
+  /** Tables and non-table entries the moved patches write. */
+  tables: string[];
+  files: string[];
 }
 
 export interface Opened {
@@ -250,10 +254,22 @@ export function feedWorkerApi(ctx: StoreContext) {
     const renames = patches
       .map((p) => renameOf(p, dir))
       .filter((r): r is PatchRename => r !== null);
+    const tables = new Set<string>();
+    const files = new Set<string>();
+    for (const p of patches) {
+      const t = patchTargets(p);
+      t.tables.forEach((x) => tables.add(x));
+      t.files.forEach((x) => files.add(x));
+    }
     console.log(
       `[FeedWorker] moved ${dir} over ${patches.length} patch(es) to version ${next.currentVersion}`
     );
-    return { versions: versions(), renames };
+    return {
+      versions: versions(),
+      renames,
+      tables: [...tables],
+      files: [...files],
+    };
   };
 
   /** Point the log at `name`, deleting the file again if that fails. */

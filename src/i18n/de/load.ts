@@ -123,6 +123,13 @@ export const load: Translation<typeof en> = {
   'parse.downloading': 'Feed wird heruntergeladen...',
   'parse.readingFile': 'Datei wird gelesen...',
   'parse.saving': 'Feed wird gespeichert...',
+  'parse.readingProgress': '{name}: {done} von {total}',
+  'parse.readingProgressNoTotal': '{name}: {done}',
+  'parse.compacting': 'Bearbeitungsverlauf wird komprimiert...',
+  'parse.foldFailed':
+    'Der Bearbeitungsverlauf konnte nicht komprimiert werden: {message}. Der Feed ist unverändert geöffnet; das Komprimieren wird beim nächsten Start erneut versucht.',
+  'parse.sessionOnly':
+    'Dieser Browser erlaubt GTFS.zone hier nicht, Feeds zu speichern (zum Beispiel in einem privaten Fenster). Änderungen bleiben nur bis zum Schließen dieses Tabs erhalten: Exportieren Sie den Feed, um sie zu behalten.',
   'parse.networkConflict_one':
     'Dieser Feed definiert Netze in networks.txt oder route_networks.txt und setzt zugleich network_id bei {count} Linie in routes.txt. GTFS verbietet beides gleichzeitig, daher werden die Werte von routes.network_id ignoriert und nicht exportiert.',
   'parse.networkConflict_other':

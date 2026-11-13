@@ -119,6 +119,13 @@ export const load: Translation<typeof en> = {
   'parse.downloading': 'Téléchargement du flux...',
   'parse.readingFile': 'Lecture du fichier...',
   'parse.saving': 'Enregistrement du flux...',
+  'parse.readingProgress': '{name} : {done} sur {total}',
+  'parse.readingProgressNoTotal': '{name} : {done}',
+  'parse.compacting': "Compactage de l'historique des modifications...",
+  'parse.foldFailed':
+    "L'historique des modifications n'a pas pu être compacté : {message}. Le flux est ouvert tel quel ; le compactage sera relancé au prochain démarrage.",
+  'parse.sessionOnly':
+    "Ce navigateur ne permet pas à GTFS.zone d'enregistrer des flux ici (par exemple en navigation privée). Les modifications durent jusqu'à la fermeture de cet onglet : exportez le flux pour les conserver.",
   'parse.networkConflict_one':
     'Ce flux définit des réseaux dans networks.txt ou route_networks.txt et renseigne aussi network_id sur {count} ligne de routes.txt. GTFS interdit les deux : les valeurs de routes.network_id sont ignorées et ne seront pas exportées.',
   'parse.networkConflict_other':

@@ -11,15 +11,17 @@ import {
   FeedStoreClient,
   type LoadHooks,
   type LoadOptions,
+  type StoreApi,
 } from 'gtfs-zone-web-common/gtfs/store/store-client';
 import { clearBaseFiles } from 'gtfs-zone-web-common/gtfs/store/opfs-base';
+import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { CONFIG } from '../config';
 import { deleteDatabaseWithTimeout } from '../utils/idb-request';
 import { IdbFeedLog, type FeedState } from './feed-log';
 import type { FeedWorkerApi, Imported, Opened } from './feed-worker-api';
 
 /** Every table but these is mirrored to the main thread. */
-const NOT_MIRRORED = [
+export const WORKER_ONLY_TABLES: readonly string[] = [
   'trips',
   'stop_times',
   'shapes',
@@ -31,10 +33,10 @@ const NOT_MIRRORED = [
 const FEED_LOAD_OPTIONS: LoadOptions = {
   stopTimes: 'full',
   keepFiles: true,
-  mirror: { except: NOT_MIRRORED },
+  mirror: { except: [...WORKER_ONLY_TABLES] },
 };
 
-export type FeedClient = FeedStoreClient<FeedWorkerApi>;
+export type FeedClient = FeedStoreClient<FeedWorkerApi & StoreApi>;
 
 function createWorker(): Worker {
   return new Worker(new URL('../workers/feed.worker.ts', import.meta.url), {
@@ -65,7 +67,7 @@ export async function readStoredFeedState(): Promise<FeedState | null> {
 export async function importFeed(
   input: { url: string } | { file: File },
   label: string,
-  hooks: LoadHooks = {}
+  hooks: LoadHooks & { onSaving?: () => void } = {}
 ): Promise<{ client: FeedClient; imported: Imported }> {
   const client = await FeedStoreClient.load<FeedWorkerApi>(
     input,
@@ -73,6 +75,13 @@ export async function importFeed(
     hooks,
     createWorker
   );
+  // The signal stops reaching the worker once the load resolves; a cancel
+  // in between lands here. From the save on, the import runs to the end.
+  if (hooks.signal?.aborted) {
+    client.release();
+    throw new LoadCancelledError();
+  }
+  hooks.onSaving?.();
   try {
     const imported = await client.call('commitImport', label);
     return { client, imported };
@@ -105,7 +114,9 @@ async function restore(
  * none. A failed fold is not fatal: the replayed worker stays in use and
  * `foldError` says why the fold failed.
  */
-export async function openStoredFeed(hooks: LoadHooks = {}): Promise<{
+export async function openStoredFeed(
+  hooks: LoadHooks & { onFolding?: () => void } = {}
+): Promise<{
   client: FeedClient;
   opened: Opened;
   foldError?: string;
@@ -122,6 +133,11 @@ export async function openStoredFeed(hooks: LoadHooks = {}): Promise<{
   console.log(
     `[FeedBoot] ${first.opened.replayed} patches to replay (> ${CONFIG.FEED_FOLD_PATCHES}): folding`
   );
+  if (hooks.signal?.aborted) {
+    first.client.release();
+    throw new LoadCancelledError();
+  }
+  hooks.onFolding?.();
   let baseName: string;
   try {
     baseName = await first.client.call('compact');

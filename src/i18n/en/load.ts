@@ -111,6 +111,13 @@ export const load = {
   'parse.downloading': 'Downloading feed...',
   'parse.readingFile': 'Reading file...',
   'parse.saving': 'Saving feed...',
+  'parse.readingProgress': '{name}: {done} of {total}',
+  'parse.readingProgressNoTotal': '{name}: {done}',
+  'parse.compacting': 'Compacting edit history...',
+  'parse.foldFailed':
+    'The edit history could not be compacted: {message}. The feed is open as it was; compacting runs again on the next start.',
+  'parse.sessionOnly':
+    'This browser does not let GTFS.zone store feeds here (for example in a private window). Edits last until this tab closes: export the feed to keep them.',
   'parse.networkConflict_one':
     'This feed defines networks in networks.txt or route_networks.txt and also sets network_id on {count} route in routes.txt. GTFS forbids both, so the routes.network_id values are ignored and will not be exported.',
   'parse.networkConflict_other':
