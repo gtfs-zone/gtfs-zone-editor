@@ -100,10 +100,16 @@ async function restore(
   }
 }
 
-/** Restore the stored feed, folding first when its log is long. Null when none. */
-export async function openStoredFeed(
-  hooks: LoadHooks = {}
-): Promise<{ client: FeedClient; opened: Opened } | null> {
+/**
+ * Restore the stored feed, folding first when its log is long. Null when
+ * none. A failed fold is not fatal: the replayed worker stays in use and
+ * `foldError` says why the fold failed.
+ */
+export async function openStoredFeed(hooks: LoadHooks = {}): Promise<{
+  client: FeedClient;
+  opened: Opened;
+  foldError?: string;
+} | null> {
   const state = await readStoredFeedState();
   if (!state?.baseName) {
     console.log('[FeedBoot] no stored feed');
@@ -119,9 +125,12 @@ export async function openStoredFeed(
   let baseName: string;
   try {
     baseName = await first.client.call('compact');
-  } finally {
-    first.client.release();
+  } catch (err) {
+    const foldError = err instanceof Error ? err.message : String(err);
+    console.error('[FeedBoot] fold failed; keeping the replayed feed', err);
+    return { ...first, foldError };
   }
+  first.client.release();
   return restore(baseName, hooks);
 }
 
