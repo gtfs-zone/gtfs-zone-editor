@@ -8,7 +8,7 @@ import { BottomSheetController } from 'gtfs-zone-web-common/ui/bottom-sheet';
 import { BrowseNavigation } from './modules/browse-navigation';
 import { SearchController } from 'gtfs-zone-web-common/ui/search-controller';
 import {
-  buildSearchEntries,
+  buildSearchGroups,
   type SearchPayload,
 } from './modules/search-entries';
 import { searchPlaces } from 'gtfs-zone-web-common/map/place-search';
@@ -179,7 +179,7 @@ export class GTFSEditor {
       this.serviceDaysController
     );
     this.searchController = new SearchController<SearchPayload>({
-      getEntries: () => buildSearchEntries(this.feed),
+      getGroups: () => buildSearchGroups(this.feed),
       getRemoteEntries: (query, signal) =>
         searchPlaces(query, this.mapController.getCenter(), signal),
       onSelect: (payload) => {

@@ -68,4 +68,9 @@ export const map: Translation<typeof en> = {
     "La zone {id} est revenue avec la géométrie {type}, un Polygon ou un MultiPolygon était attendu. Tracez d'abord la zone dans geojson.io, puis Share et collez le lien.",
   'search.zoneTerms': 'zone à la demande',
   'search.groupTerms': "groupe d'emplacements",
+  'search.stops': 'Arrêts',
+  'search.routes': 'Lignes',
+  'search.agencies': 'Agences',
+  'search.zones': 'Zones',
+  'search.locationGroups': "Groupes d'emplacements",
 };

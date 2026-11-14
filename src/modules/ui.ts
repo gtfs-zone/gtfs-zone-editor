@@ -476,6 +476,9 @@ export class UIController {
       }
     );
 
+    if (result?.kind === 'offer') {
+      throw new Error(`[UIController] unexpected load offer ${result.id}`);
+    }
     if (result?.kind === 'stored') {
       if (result.id !== openId || openDeleted) {
         await this.switchToStoredFeed(result.id);
@@ -561,6 +564,9 @@ export class UIController {
       ],
     });
 
+    if (result?.kind === 'offer') {
+      throw new Error(`[UIController] unexpected load offer ${result.id}`);
+    }
     if (result?.kind === 'stored') {
       return { stored: result.id };
     }

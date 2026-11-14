@@ -59,4 +59,9 @@ export const map = {
     'Zone {id} came back with geometry {type}, expected a Polygon or MultiPolygon. Draw the zone in geojson.io first, then Share and paste the link.',
   'search.zoneTerms': 'zone on-demand',
   'search.groupTerms': 'location group',
+  'search.stops': 'Stops',
+  'search.routes': 'Routes',
+  'search.agencies': 'Agencies',
+  'search.zones': 'Zones',
+  'search.locationGroups': 'Location groups',
 } as const;
