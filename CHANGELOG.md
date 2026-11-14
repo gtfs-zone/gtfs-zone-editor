@@ -1,3 +1,9 @@
+## v0.47.1 (2026-11-14)
+
+### Fix
+
+- **deps**: web-common v5.21.1 for the cors.gtfs.zone proxy text
+
 ## v0.47.0 (2026-11-12)
 
 ### Feat
