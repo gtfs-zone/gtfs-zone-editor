@@ -185,7 +185,7 @@ export class GTFSEditor {
         }
       },
     });
-    this.validator = new GTFSValidator();
+    this.validator = new GTFSValidator(this.feed);
     this.shortcutCommands = editorShortcuts(this);
     this.keyboardShortcuts = new KeyboardShortcuts(this.shortcutCommands, () =>
       this.tabLock.isActive()

@@ -409,3 +409,14 @@ export function convertValueToGTFS(
   const formatter = getFormatterForFieldType(fieldType);
   return formatter.toGTFS(value);
 }
+
+/**
+ * Validate a value based on field type
+ */
+export function validateValue(
+  value: string | number,
+  fieldType: GTFSFieldType
+): { valid: boolean; error?: string } {
+  const formatter = getFormatterForFieldType(fieldType);
+  return formatter.validate(value);
+}

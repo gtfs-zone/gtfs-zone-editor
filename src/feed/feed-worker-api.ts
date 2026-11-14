@@ -26,6 +26,7 @@ import { CONFIG } from '../config';
 import type { FeedPatch, FeedPatchRecord, PatchRename } from '../types/patch';
 import { applyPatch, applyPatches, rowByKey } from './patch-apply';
 import { patchTargets } from './patch-build';
+import { FeedValidator, type ValidateStep } from './feed-validate';
 import {
   IdbFeedLog,
   MemoryFeedLog,
@@ -472,6 +473,9 @@ function renameOf(
 export function feedWorkerApi(ctx: StoreContext) {
   let logPromise: Promise<FeedLog> | null = null;
   let state: FeedState | null = null;
+  /** Bumped before every store change an edit or history move makes. */
+  let revision = 0;
+  const validator = new FeedValidator();
 
   const getLog = (): Promise<FeedLog> => (logPromise ??= createLog());
   const persistence = async (): Promise<Persistence> =>
@@ -533,6 +537,7 @@ export function feedWorkerApi(ctx: StoreContext) {
     let next = target;
     const log = await getLog();
     const store = ctx.store();
+    revision++;
     applyPatches(store, patches, dir);
     next = counted(next);
     try {
@@ -598,6 +603,7 @@ export function feedWorkerApi(ctx: StoreContext) {
     const s = requireState();
     const log = await getLog();
     const store = ctx.store();
+    revision++;
     applyPatch(store, patch, 'forward');
     try {
       state = await log.append(counted(s), patch);
@@ -876,6 +882,13 @@ export function feedWorkerApi(ctx: StoreContext) {
 
     /** A non-table entry as text, or null when the feed has none. */
     fileText: (name: string): string | null => decode(ctx.store().file(name)),
+
+    /**
+     * Run the feed validation for one short step. Call until `done`; other
+     * calls run between steps, and a store change restarts the sweep.
+     */
+    validateStep: (): ValidateStep =>
+      validator.step(ctx.store(), revision, requireState().extensionColumns),
 
     /** Replace (or with null remove) a non-table entry, as a patch. */
     editFile: async (name: string, text: string | null): Promise<Versions> => {

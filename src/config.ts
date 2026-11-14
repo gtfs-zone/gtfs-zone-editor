@@ -33,6 +33,10 @@ export const CONFIG = {
   // Patches to replay at boot (both directions, bridge included) above which
   // the patch log is folded into a new base file.
   FEED_FOLD_PATCHES: 500,
+  // Feed validation in the worker: work per `validateStep` call, and rows
+  // between checks of that budget.
+  VALIDATE_STEP_MS: 30,
+  VALIDATE_CHUNK_ROWS: 5_000,
 
   // Map navigation: zoom level used when focusing a single stop or station.
   // For stations with multiple child stops, this is the max zoom; fitBounds

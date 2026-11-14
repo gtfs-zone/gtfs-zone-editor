@@ -1,41 +1,15 @@
 /**
- * Feed validation. Returns no issues until the passes run in the feed worker
- * over the store columns.
+ * Feed validation, run in the feed worker one step per call so other worker
+ * calls are served between steps.
  */
 
-/** The offending row, so a message can be traced back to an editable object. */
-export interface ValidationEntity {
-  /** File the offending row lives in, e.g. "trips.txt". */
-  file: string;
-  /** Primary key of that row, as produced by generateCompositeKeyFromRecord. */
-  id: string;
-  /** Field carrying the problem. */
-  field: string;
-  /** Value of that field. */
-  value: string;
-}
+import type { EditorFeed } from '../feed/editor-feed';
+import type { ValidationResults } from '../feed/feed-validate';
 
-export interface ValidationMessage {
-  level: 'error' | 'warning' | 'info';
-  message: string;
-  code?: string;
-  file?: string;
-  line?: number;
-  field?: string;
-  entity?: ValidationEntity;
-}
-
-export interface ValidationResults {
-  errors: ValidationMessage[];
-  warnings: ValidationMessage[];
-  info: ValidationMessage[];
-  summary: {
-    isValid: boolean;
-    errorCount: number;
-    warningCount: number;
-    infoCount: number;
-  };
-}
+export type {
+  ValidationEntity,
+  ValidationResults,
+} from '../feed/feed-validate';
 
 function emptyResults(): ValidationResults {
   return {
@@ -47,8 +21,23 @@ function emptyResults(): ValidationResults {
 }
 
 export class GTFSValidator {
+  constructor(private feed: EditorFeed) {}
+
   async validateFeed(): Promise<ValidationResults> {
-    console.log('[GTFSValidator] validation is not available; no issues');
-    return emptyResults();
+    if (!this.feed.isOpen) {
+      return emptyResults();
+    }
+    const t0 = performance.now();
+    let steps = 0;
+    for (;;) {
+      const step = await this.feed.validateStep();
+      steps++;
+      if (step.done) {
+        console.log(
+          `[GTFSValidator] ${step.results.summary.errorCount} errors, ${step.results.summary.warningCount} warnings after ${steps} step(s) in ${Math.round(performance.now() - t0)}ms`
+        );
+        return step.results;
+      }
+    }
   }
 }

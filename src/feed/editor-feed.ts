@@ -39,6 +39,7 @@ import type {
   Versions,
 } from './feed-worker-api';
 import { batch, patchTargets } from './patch-build';
+import type { ValidateStep } from './feed-validate';
 
 /** Store methods that write: edits go through patches instead. */
 type StoreWrites =
@@ -361,6 +362,11 @@ export class EditorFeed {
   /** Point count and trip usage of every shape (built in the worker). */
   shapeUsage(): Promise<Record<string, ShapeUsageRow>> {
     return this.requireClient().call('shapeUsage');
+  }
+
+  /** One step of the feed validation in the worker (see `validateStep`). */
+  validateStep(): Promise<ValidateStep> {
+    return this.requireClient().call('validateStep');
   }
 
   /** Every route's stop_times references, by kind (built in the worker). */

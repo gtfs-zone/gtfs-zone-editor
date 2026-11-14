@@ -250,6 +250,7 @@ const LANGUAGE_TAGS_WITH_REGION = [
 let languageCache: OptionPickerItem[] | null = null;
 let timezoneCache: OptionPickerItem[] | null = null;
 let currencyCache: OptionPickerItem[] | null = null;
+let timezoneSet: Set<string> | null = null;
 
 /**
  * An `Intl` display-name lookup, or a pass-through when the browser lacks it.
@@ -357,4 +358,27 @@ export function isValidLanguageCode(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Whether a value names a timezone the browser's tz database carries. */
+export function isValidTimezone(value: string): boolean {
+  if (!timezoneSet) {
+    timezoneSet = new Set(supportedValues('timeZone'));
+  }
+  if (timezoneSet.has(value)) {
+    return true;
+  }
+  // supportedValuesOf lists canonical names only, so an alias such as
+  // Asia/Calcutta has to be resolved by asking the formatter directly.
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a value is a three-letter ISO 4217 currency code. */
+export function isValidCurrencyCode(value: string): boolean {
+  return /^[A-Z]{3}$/.test(value);
 }
