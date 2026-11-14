@@ -637,7 +637,9 @@ export class GTFSEditor {
       continueLabel: t('help.welcome.start'),
     });
     const choice = await this.uiController.openBootLoadModal(
-      state ? { name: state.label, ...state.counts, edits } : undefined,
+      state
+        ? { id: state.baseName, name: state.label, ...state.counts, edits }
+        : undefined,
       loadUrl ?? undefined
     );
     feedProgressIndicator.startLoading('boot', t('boot.openingFeed'));

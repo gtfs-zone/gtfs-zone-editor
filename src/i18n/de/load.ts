@@ -21,6 +21,8 @@ export const load: Translation<typeof en> = {
   'help.continueShapes': 'Weiter zu den Linienverläufen',
   'help.continueFares': 'Weiter zu den Tarifen',
   'help.continueOnDemand': 'Weiter zum Bedarfsverkehr',
+  'load.deleteBlocked':
+    'der Browser hat den Speicher nicht freigegeben ({outcome}); schließen Sie andere GTFS.zone-Tabs und versuchen Sie es erneut',
   'load.linkedFeed': 'Verlinkter Feed',
   'load.linkedOverEdits_one':
     'Dieser Link öffnet einen anderen Feed. Der in diesem Browser gespeicherte Feed hat {count} Änderung, die verloren ginge. Arbeiten Sie mit ihm weiter oder laden Sie den verlinkten Feed.',

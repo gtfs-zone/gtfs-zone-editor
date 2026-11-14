@@ -20,6 +20,8 @@ export const load: Translation<typeof en> = {
   'help.continueShapes': 'Continuer vers les tracés',
   'help.continueFares': 'Continuer vers les tarifs',
   'help.continueOnDemand': 'Continuer vers le transport à la demande',
+  'load.deleteBlocked':
+    "le navigateur n'a pas libéré le stockage ({outcome}) ; fermez les autres onglets GTFS.zone et réessayez",
   'load.linkedFeed': 'Flux lié',
   'load.linkedOverEdits_one':
     'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modification qui serait perdue. Continuez avec celui-ci, ou chargez le flux du lien.',

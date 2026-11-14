@@ -15,6 +15,8 @@ export const load = {
   'help.continueShapes': 'Continue to Shapes',
   'help.continueFares': 'Continue to Fares',
   'help.continueOnDemand': 'Continue to On-Demand',
+  'load.deleteBlocked':
+    'the browser did not release the storage ({outcome}); close other GTFS.zone tabs and try again',
   'load.linkedFeed': 'Linked feed',
   'load.linkedOverEdits_one':
     'This link opens a different feed. The feed stored in this browser has {count} edit that would be lost. Continue with it, or load the linked feed.',

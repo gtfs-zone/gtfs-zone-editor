@@ -2,7 +2,7 @@ import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { showLoadModal } from 'gtfs-zone-web-common/ui/load-modal';
 import { showFilesModal } from './files-modal';
-import type { ContinueOffer } from 'gtfs-zone-web-common/ui/load-modal';
+import type { StoredFeedOffer } from 'gtfs-zone-web-common/ui/load-modal';
 import type { FeedSelection } from 'gtfs-zone-web-common/gtfs/feed-selection';
 import { resolvedScheduledUrl } from 'gtfs-zone-web-common/gtfs/feed-selection';
 import { navigateToHome, openModal } from './navigation-actions';
@@ -17,6 +17,7 @@ import {
 } from 'gtfs-zone-web-common/map/auto-zoom';
 import type { EditorFeed } from '../feed/editor-feed';
 import { createEmptyFeed, loadFeed } from '../feed/feed-loader';
+import { resetFeedStorage } from '../feed/feed-boot';
 import { updateOp } from '../feed/patch-build';
 import { GTFS_FILES } from '../types/gtfs';
 import { ALL_GTFS_FILES } from './gtfs-file-registry';
@@ -447,13 +448,26 @@ export class UIController {
    * stored feed's edits: it is offered as a card next to the continue card.
    */
   async openBootLoadModal(
-    continueWith?: ContinueOffer,
+    stored?: StoredFeedOffer,
     linkedUrl?: string
   ): Promise<'continue' | 'empty' | 'loaded'> {
     let emptyChosen = false;
+    let deleted = false;
     const result = await showLoadModal(null, {
       realtime: false,
-      continueWith,
+      library: stored
+        ? {
+            feeds: [stored],
+            // One stored feed: deleting it is wiping the storage.
+            onDelete: async () => {
+              const outcome = await resetFeedStorage();
+              if (outcome !== 'deleted') {
+                throw new Error(t('load.deleteBlocked', { outcome }));
+              }
+              deleted = true;
+            },
+          }
+        : undefined,
       linkedWith: linkedUrl
         ? {
             label: t('load.linkedFeed'),
@@ -462,7 +476,7 @@ export class UIController {
           }
         : undefined,
       notice: linkedUrl
-        ? t('load.linkedOverEdits', { count: continueWith?.edits ?? 0 })
+        ? t('load.linkedOverEdits', { count: stored?.edits ?? 0 })
         : undefined,
       extraActions: [
         {
@@ -475,17 +489,17 @@ export class UIController {
       ],
     });
 
-    if (result?.kind === 'continue') {
+    if (result?.kind === 'stored') {
       return 'continue';
     }
     if (emptyChosen) {
       return 'empty';
     }
-    if (result?.kind === 'selection') {
+    if (result?.kind === 'selection' || result?.kind === 'update') {
       await this.loadSelection(result.selection, { navigateHome: false });
       return 'loaded';
     }
-    return continueWith ? 'continue' : 'empty';
+    return stored && !deleted ? 'continue' : 'empty';
   }
 
   /**
