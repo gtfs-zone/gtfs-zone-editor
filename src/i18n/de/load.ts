@@ -21,13 +21,10 @@ export const load: Translation<typeof en> = {
   'help.continueShapes': 'Weiter zu den Linienverläufen',
   'help.continueFares': 'Weiter zu den Tarifen',
   'help.continueOnDemand': 'Weiter zum Bedarfsverkehr',
-  'load.deleteBlocked':
-    'der Browser hat den Speicher nicht freigegeben ({outcome}); schließen Sie andere GTFS.zone-Tabs und versuchen Sie es erneut',
+  'load.openedStored': '{name} geöffnet',
+  'load.openStoredFailed':
+    'Der gespeicherte Feed konnte nicht geöffnet werden - {message}',
   'load.linkedFeed': 'Verlinkter Feed',
-  'load.linkedOverEdits_one':
-    'Dieser Link öffnet einen anderen Feed. Der in diesem Browser gespeicherte Feed hat {count} Änderung, die verloren ginge. Arbeiten Sie mit ihm weiter oder laden Sie den verlinkten Feed.',
-  'load.linkedOverEdits_other':
-    'Dieser Link öffnet einen anderen Feed. Der in diesem Browser gespeicherte Feed hat {count} Änderungen, die verloren gingen. Arbeiten Sie mit ihm weiter oder laden Sie den verlinkten Feed.',
   'load.replaceTitle': 'Aktuellen Feed ersetzen?',
   'load.replaceBody_one':
     'Der aktuelle Feed hat {count} Änderung. Wenn Sie einen anderen Feed laden, wird sie samt Verlauf zum Rückgängigmachen verworfen. Exportieren Sie zuerst, um eine Kopie zu behalten.',
@@ -138,6 +135,8 @@ export const load: Translation<typeof en> = {
   'parse.compacting': 'Bearbeitungsverlauf wird komprimiert...',
   'parse.foldFailed':
     'Der Bearbeitungsverlauf konnte nicht komprimiert werden: {message}. Der Feed ist unverändert geöffnet; das Komprimieren wird beim nächsten Start erneut versucht.',
+  'parse.quotaFull':
+    'Der Browser hat keinen Speicherplatz mehr, daher wurde die letzte Änderung nicht gespeichert. Löschen Sie nicht mehr benötigte Feeds im Lade-Dialog oder geben Sie Speicherplatz frei.',
   'parse.sessionOnly':
     'Dieser Browser erlaubt GTFS.zone hier nicht, Feeds zu speichern (zum Beispiel in einem privaten Fenster). Änderungen bleiben nur bis zum Schließen dieses Tabs erhalten: Exportieren Sie den Feed, um sie zu behalten.',
   'parse.networkConflict_one':

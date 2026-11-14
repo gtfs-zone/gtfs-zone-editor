@@ -7,9 +7,12 @@
  * takes the store change back.
  *
  * Lifecycle, driven by `feed-boot.ts`:
- * - import: `load({ url | file })`, then `commitImport(label)`.
- * - restore: `load({ base })`, then `open(baseName)`; `compact()` folds the
- *   log into a new base when `open` says it is due.
+ * - import: `load({ url | file })`, then `commitImport(label, source)`,
+ *   which stores it as a new feed and makes it active.
+ * - restore: `load({ base })`, then `open(feedId, baseName)`; `compact()`
+ *   folds the log into a new base when `open` says it is due.
+ *
+ * Making a feed active deletes every other unedited stored feed.
  */
 
 import type {
@@ -22,15 +25,19 @@ import {
   saveBaseFile,
   sweepBaseFiles,
 } from 'gtfs-zone-web-common/gtfs/store/opfs-base';
+import { isQuotaError } from 'gtfs-zone-web-common/util/storage';
 import { CONFIG } from '../config';
+import { QUOTA_MESSAGE } from './quota';
 import type { FeedPatch, FeedPatchRecord, PatchRename } from '../types/patch';
 import { applyPatch, applyPatches, rowByKey } from './patch-apply';
 import { patchTargets } from './patch-build';
 import { FeedValidator, type ValidateStep } from './feed-validate';
 import { FeedExporter, type ExportStep } from './feed-export';
 import {
+  FeedDb,
   IdbFeedLog,
   MemoryFeedLog,
+  newFeedId,
   type FeedLog,
   type FeedState,
   type NetworksMode,
@@ -353,18 +360,34 @@ export interface Imported {
   ignoredRouteNetworks: number;
 }
 
-/** The persistence the browser allows; OPFS missing means session only. */
-async function createLog(): Promise<FeedLog> {
+/** Where an import came from, for the library's newer-version check. */
+export interface ImportSource {
+  url: string | null;
+  /** YYYY-MM-DD. */
+  modified: string | null;
+}
+
+/** Whether the browser gives this worker OPFS; without it, session only. */
+async function hasOpfs(): Promise<boolean> {
   try {
     if (!navigator.storage?.getDirectory) {
       throw new Error('navigator.storage.getDirectory is missing');
     }
     await navigator.storage.getDirectory();
-    return new IdbFeedLog();
+    return true;
   } catch (err) {
     console.warn('[FeedWorker] no OPFS; this session saves nothing', err);
-    return new MemoryFeedLog();
+    return false;
   }
+}
+
+/** `err`, or a message the user can act on when it is a full disk. */
+function quotaAware(err: unknown): unknown {
+  if (isQuotaError(err)) {
+    console.error('[FeedWorker] storage quota exceeded', err);
+    return new Error(QUOTA_MESSAGE, { cause: err });
+  }
+  return err;
 }
 
 function newBaseName(): string {
@@ -372,22 +395,17 @@ function newBaseName(): string {
   return `base-${Date.now().toString(36)}-${rand}.bin`;
 }
 
-/** Save a base, turning a full disk into a message the user can act on. */
+/** Save a base and return its size, turning a full disk into a clear message. */
 async function saveBase(
   store: FeedStore,
   ctx: StoreContext,
   name: string
-): Promise<void> {
+): Promise<number> {
   try {
-    await saveBaseFile(store, ctx.stream(), name);
+    return await saveBaseFile(store, ctx.stream(), name);
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'QuotaExceededError') {
-      throw new Error(
-        'The browser has no room left to store this feed. Free up disk space or remove site data, then try again.',
-        { cause: err }
-      );
-    }
-    throw err;
+    // A partial file is left unreferenced; the next sweep removes it.
+    throw quotaAware(err);
   }
 }
 
@@ -481,16 +499,31 @@ function renameOf(
 }
 
 export function feedWorkerApi(ctx: StoreContext) {
-  let logPromise: Promise<FeedLog> | null = null;
+  const opfs = hasOpfs();
+  const db = new FeedDb();
+  /** The log of the feed this worker holds, once bound. */
+  let log: FeedLog | null = null;
   let state: FeedState | null = null;
   /** Bumped before every store change an edit or history move makes. */
   let revision = 0;
   const validator = new FeedValidator();
   const exporter = new FeedExporter();
 
-  const getLog = (): Promise<FeedLog> => (logPromise ??= createLog());
+  const bindLog = async (feedId: string): Promise<FeedLog> => {
+    if (log) {
+      throw new Error('[FeedWorker] a feed is already bound to this worker');
+    }
+    log = (await opfs) ? new IdbFeedLog(feedId, db) : new MemoryFeedLog(feedId);
+    return log;
+  };
+  const getLog = async (): Promise<FeedLog> => {
+    if (!log) {
+      throw new Error('[FeedWorker] no feed bound; call open or commitImport');
+    }
+    return log;
+  };
   const persistence = async (): Promise<Persistence> =>
-    (await getLog()).persistent ? 'opfs' : 'session';
+    (await opfs) ? 'opfs' : 'session';
 
   const requireState = (): FeedState => {
     if (!state) {
@@ -556,7 +589,7 @@ export function feedWorkerApi(ctx: StoreContext) {
     } catch (err) {
       const back = dir === 'forward' ? 'inverse' : 'forward';
       applyPatches(store, [...patches].reverse(), back);
-      throw err;
+      throw quotaAware(err);
     }
     state = next;
     const renames = patches
@@ -599,9 +632,10 @@ export function feedWorkerApi(ctx: StoreContext) {
     }
   };
 
-  const sweep = async (keep: string): Promise<void> => {
+  /** Remove base files no stored feed points at. */
+  const sweep = async (): Promise<void> => {
     try {
-      const gone = await sweepBaseFiles([keep]);
+      const gone = await sweepBaseFiles(await db.baseNames());
       if (gone.length) {
         console.log(`[FeedWorker] swept ${gone.length} unused base file(s)`);
       }
@@ -620,10 +654,32 @@ export function feedWorkerApi(ctx: StoreContext) {
       state = await log.append(counted(s), patch);
     } catch (err) {
       applyPatch(store, patch, 'inverse');
-      throw err;
+      throw quotaAware(err);
     }
     console.log(`[FeedWorker] recorded patch ${state.currentVersion}`);
     return versions();
+  };
+
+  /**
+   * Make the bound feed active and remove the unedited feeds that evicts.
+   * A failure here is logged, not thrown: the feed itself is stored.
+   */
+  const activate = async (): Promise<void> => {
+    const l = await getLog();
+    try {
+      const { state: next, evicted } = await l.activate(requireState());
+      state = next;
+      for (const name of evicted) {
+        await deleteBaseFile(name).catch((e: unknown) =>
+          console.warn(`[FeedWorker] could not remove ${name}`, e)
+        );
+      }
+    } catch (err) {
+      console.error('[FeedWorker] could not mark the feed active', err);
+    }
+    if (l.persistent) {
+      await sweep();
+    }
   };
 
   const decode = (bytes: Uint8Array | null): string | null =>
@@ -634,10 +690,12 @@ export function feedWorkerApi(ctx: StoreContext) {
 
     /**
      * After `load({ url | file })`: normalise, fold that into the base, save
-     * it and make it the stored feed, with an empty log. The previous
-     * feed's base is deleted only once the new one is committed.
+     * it as a new stored feed with an empty log, and make it active.
      */
-    commitImport: async (label: string): Promise<Imported> => {
+    commitImport: async (
+      label: string,
+      source: ImportSource
+    ): Promise<Imported> => {
       if (state) {
         throw new Error('[FeedWorker] a feed is already open in this worker');
       }
@@ -645,13 +703,14 @@ export function feedWorkerApi(ctx: StoreContext) {
       if (ctx.store().hasEdits()) {
         ctx.replaceStore(ctx.store().fold());
       }
-      const log = await getLog();
-      const previous = await log.state();
+      const log = await bindLog(newFeedId());
       const feedVersion = ctx.store().hasTable('feed_info')
         ? (ctx.store().rows('feed_info', 0, 1)[0]?.row.feed_version ?? null)
         : null;
       const next: FeedState = counted({
+        id: log.feedId,
         baseName: log.persistent ? newBaseName() : '',
+        baseBytes: 0,
         label,
         anchorVersion: 0,
         currentVersion: 0,
@@ -661,26 +720,26 @@ export function feedWorkerApi(ctx: StoreContext) {
         extensionColumns: {},
         importedAt: Date.now(),
         importFeedVersion: feedVersion,
+        lastOpened: Date.now(),
+        sourceUrl: source.url,
+        sourceModified: source.modified,
         counts: { routes: 0, stops: 0, trips: 0 },
       });
       if (next.baseName) {
-        await saveBase(ctx.store(), ctx, next.baseName);
+        next.baseBytes = await saveBase(ctx.store(), ctx, next.baseName);
       }
-      await commitBase(log, next, true);
+      try {
+        await commitBase(log, next, true);
+      } catch (err) {
+        throw quotaAware(err);
+      }
       state = next;
-      if (next.baseName) {
-        if (previous?.baseName) {
-          await deleteBaseFile(previous.baseName).catch((e: unknown) =>
-            console.warn('[FeedWorker] could not delete the old base', e)
-          );
-        }
-        await sweep(next.baseName);
-      }
+      await activate();
       console.log(
-        `[FeedWorker] imported ${label} as ${next.baseName || '(session)'}`
+        `[FeedWorker] imported ${label} as ${next.id} (${next.baseName || 'session'})`
       );
       return {
-        state: { ...next },
+        state: { ...requireState() },
         persistence: await persistence(),
         ignoredRouteNetworks: ignored,
       };
@@ -690,14 +749,14 @@ export function feedWorkerApi(ctx: StoreContext) {
      * After `load({ base })`: bring the store from the base to the current
      * version (bridge inverses, then the log forward or inverse).
      */
-    open: async (baseName: string): Promise<Opened> => {
+    open: async (feedId: string, baseName: string): Promise<Opened> => {
       if (state) {
         throw new Error('[FeedWorker] a feed is already open in this worker');
       }
-      const log = await getLog();
+      const log = await bindLog(feedId);
       const s = await log.state();
       if (!s) {
-        throw new Error('[FeedWorker] no stored feed');
+        throw new Error(`[FeedWorker] no stored feed ${feedId}`);
       }
       if (s.baseName !== baseName) {
         throw new Error(
@@ -722,11 +781,11 @@ export function feedWorkerApi(ctx: StoreContext) {
       state = s;
       const replayed = bridge.length + patches.length;
       console.log(
-        `[FeedWorker] opened ${baseName} at version ${s.currentVersion}: ${replayed} patch(es) replayed in ${Math.round(performance.now() - t0)}ms`
+        `[FeedWorker] opened ${feedId} (${baseName}) at version ${s.currentVersion}: ${replayed} patch(es) replayed in ${Math.round(performance.now() - t0)}ms`
       );
-      await sweep(baseName);
+      await activate();
       return {
-        state: { ...s },
+        state: { ...requireState() },
         persistence: await persistence(),
         replayed,
         foldDue: log.persistent && replayed > CONFIG.FEED_FOLD_PATCHES,
@@ -755,8 +814,12 @@ export function feedWorkerApi(ctx: StoreContext) {
         anchorVersion: s.currentVersion,
         bridgeLength: 0,
       });
-      await saveBase(folded, ctx, next.baseName);
-      await commitBase(log, next, false);
+      next.baseBytes = await saveBase(folded, ctx, next.baseName);
+      try {
+        await commitBase(log, next, false);
+      } catch (err) {
+        throw quotaAware(err);
+      }
       state = next;
       if (folded !== store) {
         ctx.replaceStore(folded);
@@ -776,11 +839,11 @@ export function feedWorkerApi(ctx: StoreContext) {
      * store is then as close to the stored version as the log allows, for a
      * recovery export.
      */
-    recover: async (baseName: string): Promise<Recovered> => {
+    recover: async (feedId: string, baseName: string): Promise<Recovered> => {
       if (state) {
         throw new Error('[FeedWorker] a feed is already open in this worker');
       }
-      const log = await getLog();
+      const log = await bindLog(feedId);
       const s = await log.state();
       if (!s || s.baseName !== baseName) {
         throw new Error(

@@ -19,6 +19,7 @@ import {
 } from 'gtfs-zone-web-common/gtfs/feed-download';
 import type { LoadProgress } from 'gtfs-zone-web-common/gtfs/store/store-client';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
+import { requestPersistentStorage } from 'gtfs-zone-web-common/util/storage';
 import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicator';
 import { t } from '../i18n/messages';
 import type { EditorFeed } from './editor-feed';
@@ -103,14 +104,15 @@ function announcePersistence(persistence: Persistence): void {
 }
 
 /**
- * Parse a feed and make it the open, stored feed. Throws
- * `LoadCancelledError` on a cancel; either way the stored feed is back
- * open afterwards when there is one.
+ * Parse a feed and make it the open, active stored feed. Throws
+ * `LoadCancelledError` on a cancel; either way the active feed is back
+ * open afterwards when there is one. `sourceUrl` is the unproxied URL.
  */
 export async function loadFeed(
   feed: EditorFeed,
   input: { url: string } | { file: File },
-  label: string
+  label: string,
+  sourceUrl: string | null = null
 ): Promise<void> {
   await withProgress(
     t('parse.preparing'),
@@ -118,7 +120,7 @@ export async function loadFeed(
       feed.release();
       let result: Awaited<ReturnType<typeof importFeed>>;
       try {
-        result = await importFeed(input, label, {
+        result = await importFeed(input, label, sourceUrl, {
           signal,
           onProgress,
           onSaving: () => lockCancel(t('parse.saving')),
@@ -133,6 +135,9 @@ export async function loadFeed(
       const { client, imported } = result;
       await feed.adopt(client, imported.state, imported.persistence);
       announcePersistence(imported.persistence);
+      if (imported.persistence === 'opfs') {
+        void requestPersistentStorage();
+      }
       if (imported.ignoredRouteNetworks > 0) {
         notify.warning(
           t('parse.networkConflict', { count: imported.ignoredRouteNetworks }),
@@ -161,15 +166,19 @@ async function reopenStored(feed: EditorFeed): Promise<void> {
 }
 
 /**
- * Open the stored feed (folding a long log first). False when none is
- * stored. Throws `LoadCancelledError` on a cancel, leaving no feed open.
+ * Open stored feed `id`, the active one when omitted (folding a long log
+ * first). False when there is no such feed. Throws `LoadCancelledError` on
+ * a cancel, leaving no feed open.
  */
-export async function restoreFeed(feed: EditorFeed): Promise<boolean> {
+export async function restoreFeed(
+  feed: EditorFeed,
+  id?: string
+): Promise<boolean> {
   return withProgress(
     t('parse.openingStored'),
     async ({ signal, onProgress, lockCancel }) => {
       feed.release();
-      const opened = await openStoredFeed({
+      const opened = await openStoredFeed(id, {
         signal,
         onProgress,
         onFolding: () => lockCancel(t('parse.compacting')),
@@ -213,13 +222,13 @@ export async function createEmptyFeed(
  * The stored feed as a zip when it cannot be opened, for the database error
  * modal. `note` says how much of the edit history it holds when not all.
  */
-export async function recoverStoredFeedExport(): Promise<{
+export async function recoverStoredFeedExport(id?: string): Promise<{
   zip: Blob;
   note: string | null;
 }> {
   feedProgressIndicator.startLoading('recover-export', t('export.preparing'));
   try {
-    const { zip, recovered } = await recoverStoredFeedZip({
+    const { zip, recovered } = await recoverStoredFeedZip(id, {
       onProgress: (p) =>
         feedProgressIndicator.updateProgress(
           'recover-export',

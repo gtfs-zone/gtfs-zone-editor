@@ -1,8 +1,9 @@
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
+import { t as commonT } from 'gtfs-zone-web-common/i18n/messages';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { showLoadModal } from 'gtfs-zone-web-common/ui/load-modal';
 import { showFilesModal } from './files-modal';
-import type { StoredFeedOffer } from 'gtfs-zone-web-common/ui/load-modal';
+import type { FeedLibrary } from 'gtfs-zone-web-common/ui/load-modal';
 import type { FeedSelection } from 'gtfs-zone-web-common/gtfs/feed-selection';
 import { resolvedScheduledUrl } from 'gtfs-zone-web-common/gtfs/feed-selection';
 import { navigateToHome, openModal } from './navigation-actions';
@@ -16,8 +17,12 @@ import {
   wireAutoZoomControl,
 } from 'gtfs-zone-web-common/map/auto-zoom';
 import type { EditorFeed } from '../feed/editor-feed';
-import { createEmptyFeed, loadFeed } from '../feed/feed-loader';
-import { resetFeedStorage } from '../feed/feed-boot';
+import { createEmptyFeed, loadFeed, restoreFeed } from '../feed/feed-loader';
+import {
+  deleteStoredFeed,
+  listStoredFeeds,
+  readActiveFeedState,
+} from '../feed/feed-boot';
 import { updateOp } from '../feed/patch-build';
 import { GTFS_FILES } from '../types/gtfs';
 import { ALL_GTFS_FILES } from './gtfs-file-registry';
@@ -398,86 +403,153 @@ export class UIController {
   }
 
   /**
-   * The single entry point into a feed.
-   *
-   * `initialUrl` seeds the scheduled field, which is how `#load=<url>` arrives:
-   * the URL is offered for review rather than fetched behind the user's back.
-   * Otherwise the modal opens on whatever is currently loaded, so reopening it
-   * is also how you edit a feed's URL.
+   * "Your feeds" for the load modal. `onDeleted` hears each delete; deleting
+   * the open feed releases it first, and the caller opens another after.
+   */
+  private async feedLibrary(
+    onDeleted: (id: string) => void
+  ): Promise<FeedLibrary | undefined> {
+    const feeds = await listStoredFeeds();
+    if (feeds.length === 0) {
+      return undefined;
+    }
+    const openId = this.feed?.feedId ?? null;
+    return {
+      feeds: feeds.map((s) => ({
+        id: s.id,
+        name: s.label,
+        ...s.counts,
+        edits: s.currentVersion,
+        bytes: s.baseBytes || undefined,
+        lastOpened: s.lastOpened,
+        active: s.id === openId,
+        sourceUrl: s.sourceUrl ?? undefined,
+        sourceModified: s.sourceModified ?? undefined,
+      })),
+      onDelete: async (id) => {
+        if (id === this.feed?.feedId) {
+          console.log(`[UIController] deleting the open feed ${id}`);
+          this.feed.release();
+        }
+        await deleteStoredFeed(id);
+        onDeleted(id);
+      },
+    };
+  }
+
+  private static linkedOffer(url: string) {
+    return {
+      label: t('load.linkedFeed'),
+      scheduledUrl: url,
+      canRetryWithCors: false,
+    };
+  }
+
+  /**
+   * The single entry point into a feed: "Your feeds", the catalog, a URL or
+   * an upload. `initialUrl` is a `#load=` link, offered as the top card.
+   * Otherwise the modal opens on whatever is currently loaded, so reopening
+   * it is also how you edit a feed's URL.
    */
   async openLoadModal(initialUrl?: string) {
-    const seed: FeedSelection | null = initialUrl
-      ? {
-          scheduled: {
-            kind: 'url',
-            url: initialUrl,
-            useCors: true,
-            label: t('load.linkedFeed'),
+    const openId = this.feed?.feedId ?? null;
+    let openDeleted = false;
+    const result = await showLoadModal(
+      initialUrl ? null : this.currentSelection,
+      {
+        realtime: false,
+        library: await this.feedLibrary((id) => {
+          openDeleted ||= id === openId;
+        }),
+        linkedWith: initialUrl
+          ? UIController.linkedOffer(initialUrl)
+          : undefined,
+        extraActions: [
+          {
+            label: t('load.newEmpty'),
+            className: 'btn-ghost',
+            onClick: () => {
+              void this.createNewFeed();
+            },
           },
-          realtime: null,
-        }
-      : this.currentSelection;
+        ],
+      }
+    );
 
-    const result = await showLoadModal(seed, {
-      realtime: false,
-      extraActions: [
-        {
-          label: t('load.newEmpty'),
-          className: 'btn-ghost',
-          onClick: () => {
-            void this.createNewFeed();
-          },
-        },
-      ],
-    });
-
-    if (result?.kind === 'selection' && (await this.confirmReplaceFeed())) {
+    if (result?.kind === 'stored') {
+      if (result.id !== openId || openDeleted) {
+        await this.switchToStoredFeed(result.id);
+      }
+    } else if (result && (await this.confirmReplaceFeed())) {
       await this.loadSelection(result.selection);
+    } else if (openDeleted && !this.feed?.isOpen) {
+      // The open feed is gone and nothing replaced it.
+      await this.openFallbackFeed();
     }
   }
 
   /**
-   * The boot screen: the same modal, led by the stored feed.
+   * Open stored feed `id` in place of the current one. On a failure or a
+   * cancel, the active feed is reopened, or an empty one started.
+   */
+  async switchToStoredFeed(id: string, { navigateHome = true } = {}) {
+    try {
+      await restoreFeed(this.feed!, id);
+      await this.refreshAfterFeedSwap({ navigateHome });
+      notify.success(t('load.openedStored', { name: this.feed!.label }));
+    } catch (error) {
+      if (error instanceof LoadCancelledError) {
+        notify.info(t('common.loadCancelled'));
+      } else {
+        console.error(`[UIController] could not open stored feed ${id}`, error);
+        notify.error(
+          t('load.openStoredFailed', {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+          { autoHide: false }
+        );
+      }
+      await this.openFallbackFeed();
+    }
+  }
+
+  /** Reopen the active feed, or start an empty one when that fails. */
+  private async openFallbackFeed() {
+    try {
+      if (await restoreFeed(this.feed!)) {
+        await this.refreshAfterFeedSwap({ navigateHome: true });
+        return;
+      }
+    } catch (error) {
+      console.error('[UIController] could not reopen the active feed', error);
+    }
+    console.log(
+      '[UIController] no feed to fall back to; starting an empty one'
+    );
+    await createEmptyFeed(this.feed!, t('load.newEmpty'));
+    await this.refreshAfterFeedSwap({ navigateHome: true });
+  }
+
+  /**
+   * The boot screen: the same modal, led by "Your feeds".
    *
    * Returns what the caller has to do next, because only boot knows how to
-   * hydrate the stored feed. Cancelling falls back to the stored feed when
+   * hydrate a stored feed. Cancelling falls back to the active feed when
    * there is one, and to a fresh empty feed when there is not: closing the
    * boot screen must never leave the app without a feed.
    *
-   * `linkedUrl` is a `#load=` link held back because loading it would drop the
-   * stored feed's edits: it is offered as a card next to the continue card.
+   * `linkedUrl` is a `#load=` link, offered as the top card.
    */
   async openBootLoadModal(
-    stored?: StoredFeedOffer,
     linkedUrl?: string
-  ): Promise<'continue' | 'empty' | 'loaded'> {
+  ): Promise<{ stored: string } | 'empty' | 'loaded'> {
+    const activeId = (await readActiveFeedState())?.id ?? null;
+    const deleted = new Set<string>();
     let emptyChosen = false;
-    let deleted = false;
     const result = await showLoadModal(null, {
       realtime: false,
-      library: stored
-        ? {
-            feeds: [stored],
-            // One stored feed: deleting it is wiping the storage.
-            onDelete: async () => {
-              const outcome = await resetFeedStorage();
-              if (outcome !== 'deleted') {
-                throw new Error(t('load.deleteBlocked', { outcome }));
-              }
-              deleted = true;
-            },
-          }
-        : undefined,
-      linkedWith: linkedUrl
-        ? {
-            label: t('load.linkedFeed'),
-            scheduledUrl: linkedUrl,
-            canRetryWithCors: false,
-          }
-        : undefined,
-      notice: linkedUrl
-        ? t('load.linkedOverEdits', { count: stored?.edits ?? 0 })
-        : undefined,
+      library: await this.feedLibrary((id) => deleted.add(id)),
+      linkedWith: linkedUrl ? UIController.linkedOffer(linkedUrl) : undefined,
       extraActions: [
         {
           label: t('load.newEmpty'),
@@ -490,16 +562,16 @@ export class UIController {
     });
 
     if (result?.kind === 'stored') {
-      return 'continue';
+      return { stored: result.id };
     }
     if (emptyChosen) {
       return 'empty';
     }
-    if (result?.kind === 'selection' || result?.kind === 'update') {
+    if (result) {
       await this.loadSelection(result.selection, { navigateHome: false });
       return 'loaded';
     }
-    return stored && !deleted ? 'continue' : 'empty';
+    return activeId && !deleted.has(activeId) ? { stored: activeId } : 'empty';
   }
 
   /**
@@ -518,15 +590,33 @@ export class UIController {
     if (src.kind === 'file') {
       await this.loadGTFSFile(src.file, options);
     } else {
-      await this.loadGTFSFromURL(resolvedScheduledUrl(src), options);
+      // A catalog row's label is the feed's name; the form's own labels
+      // ("Custom scheduled feed", "Linked feed") say nothing, so the URL
+      // names those.
+      const generic = [
+        commonT('load.customScheduledLabel'),
+        t('load.linkedFeed'),
+      ].includes(src.label);
+      await this.loadGTFSFromURL(resolvedScheduledUrl(src), {
+        ...options,
+        sourceUrl: src.url,
+        label: generic ? src.url : src.label,
+      });
     }
   }
 
-  async loadGTFSFromURL(url: string, { navigateHome = true } = {}) {
+  async loadGTFSFromURL(
+    url: string,
+    {
+      navigateHome = true,
+      sourceUrl = url,
+      label = url,
+    }: { navigateHome?: boolean; sourceUrl?: string; label?: string } = {}
+  ) {
     try {
       console.log('Loading GTFS from URL:', url);
 
-      await loadFeed(this.feed!, { url }, url);
+      await loadFeed(this.feed!, { url }, label, sourceUrl);
       const unknownFiles = (await categorizeFiles(this.feed!)).additional;
       if (unknownFiles.length > 0) {
         notify.warning(
@@ -1046,7 +1136,12 @@ export class UIController {
    * resolves false, so the load is started again once the copy is saved.
    */
   private async confirmReplaceFeed(): Promise<boolean> {
-    const count = this.feed?.isOpen ? this.feed.version : 0;
+    // A stored feed keeps its edits when another is loaded; only a session
+    // without storage loses them.
+    const count =
+      this.feed?.isOpen && this.feed.persistence === 'session'
+        ? this.feed.version
+        : 0;
     if (count === 0) {
       return true;
     }

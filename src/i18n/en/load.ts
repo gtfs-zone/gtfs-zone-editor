@@ -15,13 +15,9 @@ export const load = {
   'help.continueShapes': 'Continue to Shapes',
   'help.continueFares': 'Continue to Fares',
   'help.continueOnDemand': 'Continue to On-Demand',
-  'load.deleteBlocked':
-    'the browser did not release the storage ({outcome}); close other GTFS.zone tabs and try again',
+  'load.openedStored': 'Opened {name}',
+  'load.openStoredFailed': 'Could not open the stored feed - {message}',
   'load.linkedFeed': 'Linked feed',
-  'load.linkedOverEdits_one':
-    'This link opens a different feed. The feed stored in this browser has {count} edit that would be lost. Continue with it, or load the linked feed.',
-  'load.linkedOverEdits_other':
-    'This link opens a different feed. The feed stored in this browser has {count} edits that would be lost. Continue with it, or load the linked feed.',
   'load.replaceTitle': 'Replace the current feed?',
   'load.replaceBody_one':
     'The current feed has {count} edit. Loading another feed discards it, along with the undo history. Export first to keep a copy.',
@@ -125,6 +121,8 @@ export const load = {
   'parse.compacting': 'Compacting edit history...',
   'parse.foldFailed':
     'The edit history could not be compacted: {message}. The feed is open as it was; compacting runs again on the next start.',
+  'parse.quotaFull':
+    'The browser is out of storage, so the last change was not saved. Delete feeds you no longer need from the load dialog, or free up disk space.',
   'parse.sessionOnly':
     'This browser does not let GTFS.zone store feeds here (for example in a private window). Edits last until this tab closes: export the feed to keep them.',
   'parse.networkConflict_one':

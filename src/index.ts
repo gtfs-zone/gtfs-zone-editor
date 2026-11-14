@@ -105,7 +105,7 @@ import {
   restoreFeed,
 } from './feed/feed-loader';
 import { batch, deleteOp, insertOp, updateOp } from './feed/patch-build';
-import { readStoredFeedState, resetFeedStorage } from './feed/feed-boot';
+import { resetFeedStorage } from './feed/feed-boot';
 import { RouteRefsIndex } from './feed/route-refs';
 import { deleteDatabaseWithTimeout } from './utils/idb-request';
 
@@ -587,39 +587,18 @@ export class GTFSEditor {
   /**
    * Which feed this session opens with.
    *
-   * Boot no longer restores the stored feed unconditionally: parsing it is the
+   * Boot does not restore the active feed unconditionally: parsing it is the
    * expensive half of startup, and it is the wrong feed as often as it is the
-   * right one. The load modal comes first and the stored feed is one of its
-   * offers. A deep link into an object already states which feed is wanted,
-   * so it skips the modal. So does a `#load=` command, unless the stored feed
-   * has edits: loading over it would drop them, so the modal offers both.
+   * right one. The load modal comes first, led by "Your feeds". A deep link
+   * into an object already states which feed is wanted, so it skips the
+   * modal and opens the active feed. A `#load=` link always shows the modal,
+   * with the link as its top card.
    */
   private async bootFeed(): Promise<BootOutcome> {
     const loadUrl = takeLoadCommand();
 
-    // One state record: the stored feed is described without reading its base.
-    const state = await readStoredFeedState();
-    const edits = state?.currentVersion ?? 0;
-
-    if (loadUrl && edits === 0) {
-      console.log('[boot] skipped modal: #load', loadUrl);
-      await this.uiController.loadSelection(
-        {
-          scheduled: {
-            kind: 'url',
-            url: loadUrl,
-            useCors: true,
-            label: t('load.linkedFeed'),
-          },
-          realtime: null,
-        },
-        { navigateHome: false }
-      );
-      return 'loaded';
-    }
-
     if (loadUrl) {
-      console.log(`[boot] #load held: stored feed has ${edits} edits`);
+      console.log('[boot] #load offered in the modal:', loadUrl);
     } else {
       const deepLink = this.pageStateManager.pendingStateFromURL();
       if (deepLink.type !== 'home' || deepLink.modal) {
@@ -637,16 +616,13 @@ export class GTFSEditor {
       continueLabel: t('help.welcome.start'),
     });
     const choice = await this.uiController.openBootLoadModal(
-      state
-        ? { id: state.baseName, name: state.label, ...state.counts, edits }
-        : undefined,
       loadUrl ?? undefined
     );
     feedProgressIndicator.startLoading('boot', t('boot.openingFeed'));
-    console.log(`[boot] load modal: user chose ${choice}`);
+    console.log(`[boot] load modal: user chose ${JSON.stringify(choice)}`);
 
-    if (choice === 'continue') {
-      return this.restoreStoredFeed();
+    if (typeof choice === 'object') {
+      return this.restoreStoredFeed(choice.stored);
     }
     if (choice === 'empty') {
       await createEmptyFeed(this.feed, t('load.newEmpty'));
@@ -681,13 +657,16 @@ export class GTFSEditor {
     return changed;
   }
 
-  /** Open the stored feed: its base, then the patch log on top. */
-  private async restoreStoredFeed(): Promise<BootOutcome> {
+  /**
+   * Open stored feed `id` (the active one when omitted): its base, then the
+   * patch log on top.
+   */
+  private async restoreStoredFeed(id?: string): Promise<BootOutcome> {
     if (CONFIG.DEBUG_BOOT) {
       console.time('[boot] restore stored feed');
     }
     try {
-      if (!(await restoreFeed(this.feed))) {
+      if (!(await restoreFeed(this.feed, id))) {
         console.log('[boot] no stored feed to continue from');
         return 'nothing-stored';
       }
@@ -707,7 +686,7 @@ export class GTFSEditor {
       databaseFallbackManager.showDatabaseError(
         error,
         t('boot.restoreContext'),
-        recoverStoredFeedExport
+        () => recoverStoredFeedExport(id)
       );
       return 'failed';
     } finally {

@@ -35,6 +35,9 @@ import {
   type FeedClient,
 } from './feed-boot';
 import type { FeedState, NetworksMode } from './feed-log';
+import { QUOTA_MESSAGE } from './quota';
+import { notify } from 'gtfs-zone-web-common/ui/notification-system';
+import { t } from '../i18n/messages';
 import type {
   Cond,
   Moved,
@@ -90,6 +93,15 @@ const NO_VERSIONS: Versions = {
   canRedo: false,
 };
 
+/** Show a sticky error when `err` is the worker's storage-full error. */
+function reportIfQuota(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message.includes(QUOTA_MESSAGE)) {
+    console.error('[EditorFeed] storage full', err);
+    notify.error(t('parse.quotaFull'), { autoHide: false });
+  }
+}
+
 export class EditorFeed {
   private client: FeedClient | null = null;
   private generation = 0;
@@ -127,6 +139,11 @@ export class EditorFeed {
 
   get label(): string {
     return this.feedState?.label ?? '';
+  }
+
+  /** The open feed's stored id; null when none is open. */
+  get feedId(): string | null {
+    return this.feedState?.id ?? null;
   }
 
   get networksMode(): NetworksMode {
@@ -488,7 +505,10 @@ export class EditorFeed {
   /** Apply and log one patch (one undo step). */
   async edit(patch: FeedPatch): Promise<void> {
     const client = this.requireClient();
-    const versions = await client.call('edit', patch);
+    const versions = await client.call('edit', patch).catch((err: unknown) => {
+      reportIfQuota(err);
+      throw err;
+    });
     const targets = patchTargets(patch);
     await this.refreshFiles(client, targets.files);
     if (this.client !== client) {
@@ -523,7 +543,12 @@ export class EditorFeed {
   async editFile(name: string, text: string | null): Promise<void> {
     const client = this.requireClient();
     const before = this.currentVersions.current;
-    const versions = await client.call('editFile', name, text);
+    const versions = await client
+      .call('editFile', name, text)
+      .catch((err: unknown) => {
+        reportIfQuota(err);
+        throw err;
+      });
     if (this.client !== client || versions.current === before) {
       return;
     }

@@ -1,5 +1,6 @@
 /**
- * The feed's patch log and its pointer to the active base file.
+ * The stored feeds: one patch log per feed, its pointer to its base file,
+ * and which feed is active.
  *
  * Stored state: the base file (OPFS) holds the feed at `anchorVersion`
  * once the bridge is applied to it. The bridge holds patches whose inverse,
@@ -8,8 +9,10 @@
  * contains, so they move to the bridge instead of disappearing. From the
  * anchor, the log's patches lead to `currentVersion`, forward or inverse.
  *
- * `IdbFeedLog` persists to IndexedDB with every request under a deadline;
- * `MemoryFeedLog` keeps the same state for a session without storage.
+ * `FeedDb` is the IndexedDB connection and the library-wide operations
+ * (list, delete, the active pointer). `IdbFeedLog` is one feed's log in it,
+ * with every request under a deadline; `MemoryFeedLog` keeps the same state
+ * for a session without storage.
  */
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
@@ -20,8 +23,12 @@ import type { FeedPatch, FeedPatchRecord } from '../types/patch';
 export type NetworksMode = 'inline' | 'files';
 
 export interface FeedState {
+  /** Stable for the feed's life; keys its patches and bridge. */
+  id: string;
   /** OPFS base file name; '' in session mode. */
   baseName: string;
+  /** Size of the base file in bytes; 0 in session mode. */
+  baseBytes: number;
   label: string;
   /** The version the base plus the bridge represents. */
   anchorVersion: number;
@@ -34,13 +41,26 @@ export interface FeedState {
   importedAt: number;
   /** feed_info.feed_version as imported; null without feed_info. */
   importFeedVersion: string | null;
-  /** Row counts for the continue card, as of the last state write. */
+  /** Epoch ms of the last import or open. */
+  lastOpened: number;
+  /** The schedule URL it was imported from, unproxied; null for a file. */
+  sourceUrl: string | null;
+  /** The download's Last-Modified as YYYY-MM-DD; null when not sent. */
+  sourceModified: string | null;
+  /** Row counts for the library, as of the last state write. */
   counts: { routes: number; stops: number; trips: number };
 }
 
+/** True when the feed has edits, including ones since undone. */
+export function hasEdits(state: FeedState): boolean {
+  return state.headVersion > 0 || state.bridgeLength > 0;
+}
+
+/** One feed's log. */
 export interface FeedLog {
   readonly persistent: boolean;
-  /** The stored state, or null when no feed is stored. */
+  readonly feedId: string;
+  /** The feed's stored state, or null when it is not stored. */
   state(): Promise<FeedState | null>;
   /** Patches with from <= version <= to, ascending. */
   patches(from: number, to: number): Promise<FeedPatchRecord[]>;
@@ -59,17 +79,41 @@ export interface FeedLog {
    * the bridge is emptied, and with `clearPatches` the log too (an import).
    */
   commitBase(state: FeedState, clearPatches: boolean): Promise<void>;
+  /**
+   * Make this feed the active one, stamping `lastOpened`, and delete every
+   * other unedited feed. Returns the new state and the deleted feeds'
+   * base names, for the caller to remove.
+   */
+  activate(state: FeedState): Promise<{ state: FeedState; evicted: string[] }>;
 }
 
-const STATE_KEY = 'feed';
+const ACTIVE_KEY = 'active';
+
+interface StoredPatch extends FeedPatchRecord {
+  feedId: string;
+}
 
 interface FeedDB extends DBSchema {
-  meta: { key: string; value: FeedState & { key: string } };
-  patches: { key: number; value: FeedPatchRecord };
-  bridge: { key: number; value: { patch: FeedPatch } };
+  feeds: { key: string; value: FeedState };
+  meta: { key: string; value: { key: string; id: string } };
+  patches: { key: [string, number]; value: StoredPatch };
+  bridge: {
+    key: [string, number];
+    value: { feedId: string; seq: number; patch: FeedPatch };
+  };
 }
 
-const DB_VERSION = 1;
+const DB_VERSION = 2;
+
+/** Every key of one feed in `patches` or `bridge`. */
+function feedRange(id: string): IDBKeyRange {
+  return IDBKeyRange.bound([id, -Infinity], [id, Infinity]);
+}
+
+export function newFeedId(): string {
+  const rand = Math.floor(Math.random() * 1e9).toString(36);
+  return `feed-${Date.now().toString(36)}-${rand}`;
+}
 
 /**
  * Run a write transaction under a deadline. On timeout the transaction is
@@ -102,11 +146,11 @@ function appended(state: FeedState): FeedState {
   return { ...state, currentVersion: version, headVersion: version };
 }
 
-export class IdbFeedLog implements FeedLog {
-  readonly persistent = true;
+/** The feed database connection and the library-wide operations. */
+export class FeedDb {
   private db: IDBPDatabase<FeedDB> | null = null;
 
-  private async open(): Promise<IDBPDatabase<FeedDB>> {
+  async open(): Promise<IDBPDatabase<FeedDB>> {
     if (this.db) {
       return this.db;
     }
@@ -117,9 +161,10 @@ export class IdbFeedLog implements FeedLog {
           for (const name of Array.from(db.objectStoreNames)) {
             db.deleteObjectStore(name);
           }
+          db.createObjectStore('feeds', { keyPath: 'id' });
           db.createObjectStore('meta', { keyPath: 'key' });
-          db.createObjectStore('patches', { keyPath: 'version' });
-          db.createObjectStore('bridge', { autoIncrement: true });
+          db.createObjectStore('patches', { keyPath: ['feedId', 'version'] });
+          db.createObjectStore('bridge', { keyPath: ['feedId', 'seq'] });
         },
         blocked() {
           console.warn('[FeedLog] open blocked by an older connection');
@@ -145,18 +190,89 @@ export class IdbFeedLog implements FeedLog {
     this.db = null;
   }
 
-  async state(): Promise<FeedState | null> {
+  /** Every stored feed, most recently opened first. */
+  async list(): Promise<FeedState[]> {
+    const db = await this.open();
+    const all = await withDeadline(db.getAll('feeds'), 'listing stored feeds');
+    return all.sort((a, b) => b.lastOpened - a.lastOpened);
+  }
+
+  async get(id: string): Promise<FeedState | null> {
+    const db = await this.open();
+    return (
+      (await withDeadline(db.get('feeds', id), `reading feed ${id}`)) ?? null
+    );
+  }
+
+  /** The active feed's id, or null when none is set. */
+  async activeId(): Promise<string | null> {
     const db = await this.open();
     const rec = await withDeadline(
-      db.get('meta', STATE_KEY),
-      'reading feed state'
+      db.get('meta', ACTIVE_KEY),
+      'reading the active feed'
     );
-    if (!rec) {
-      return null;
-    }
-    const state: Partial<typeof rec> = { ...rec };
-    delete state.key;
-    return state as FeedState;
+    return rec?.id ?? null;
+  }
+
+  /** The active feed's state, or null when none is stored. */
+  async active(): Promise<FeedState | null> {
+    const id = await this.activeId();
+    return id ? this.get(id) : null;
+  }
+
+  /**
+   * Delete one feed's state, patches and bridge (not its base file), and
+   * clear the active pointer when it named the feed. Returns its base name.
+   */
+  async delete(id: string): Promise<string | null> {
+    const db = await this.open();
+    const tx = db.transaction(
+      ['feeds', 'meta', 'patches', 'bridge'],
+      'readwrite'
+    );
+    let baseName: string | null = null;
+    const work = (async () => {
+      const rec = await tx.objectStore('feeds').get(id);
+      baseName = rec?.baseName || null;
+      await tx.objectStore('feeds').delete(id);
+      await tx.objectStore('patches').delete(feedRange(id));
+      await tx.objectStore('bridge').delete(feedRange(id));
+      const active = await tx.objectStore('meta').get(ACTIVE_KEY);
+      if (active?.id === id) {
+        await tx.objectStore('meta').delete(ACTIVE_KEY);
+      }
+      await tx.done;
+    })();
+    await runTx(tx, work, `deleting feed ${id}`);
+    console.log(`[FeedLog] deleted feed ${id}`);
+    return baseName;
+  }
+
+  /** Base names any stored feed points at. */
+  async baseNames(): Promise<string[]> {
+    return (await this.list()).map((f) => f.baseName).filter(Boolean);
+  }
+}
+
+/** One feed's log in the feed database. */
+export class IdbFeedLog implements FeedLog {
+  readonly persistent = true;
+
+  constructor(
+    readonly feedId: string,
+    private readonly db: FeedDb = new FeedDb()
+  ) {}
+
+  close(): void {
+    this.db.close();
+  }
+
+  private open(): Promise<IDBPDatabase<FeedDB>> {
+    return this.db.open();
+  }
+
+  async state(): Promise<FeedState | null> {
+    return this.db.get(this.feedId);
   }
 
   async patches(from: number, to: number): Promise<FeedPatchRecord[]> {
@@ -164,27 +280,38 @@ export class IdbFeedLog implements FeedLog {
       return [];
     }
     const db = await this.open();
-    const out = await withDeadline(
-      db.getAll('patches', IDBKeyRange.bound(from, to)),
+    const recs = await withDeadline(
+      db.getAll(
+        'patches',
+        IDBKeyRange.bound([this.feedId, from], [this.feedId, to])
+      ),
       `reading patches ${from}-${to}`
     );
-    if (out.length !== to - from + 1) {
+    if (recs.length !== to - from + 1) {
       throw new Error(
-        `[FeedLog] patches ${from}-${to}: found ${out.length}, the log has gaps`
+        `[FeedLog] patches ${from}-${to}: found ${recs.length}, the log has gaps`
       );
     }
-    return out;
+    return recs.map(({ version, patch, timestamp }) => ({
+      version,
+      patch,
+      timestamp,
+    }));
   }
 
   async bridge(): Promise<FeedPatch[]> {
     const db = await this.open();
-    const out = await withDeadline(db.getAll('bridge'), 'reading the bridge');
+    const out = await withDeadline(
+      db.getAll('bridge', feedRange(this.feedId)),
+      'reading the bridge'
+    );
     return out.map((e) => e.patch);
   }
 
   async append(state: FeedState, patch: FeedPatch): Promise<FeedState> {
     const db = await this.open();
-    const tx = db.transaction(['meta', 'patches', 'bridge'], 'readwrite');
+    const id = this.feedId;
+    const tx = db.transaction(['feeds', 'patches', 'bridge'], 'readwrite');
     const next = appended(state);
     const work = (async () => {
       const patches = tx.objectStore('patches');
@@ -192,11 +319,12 @@ export class IdbFeedLog implements FeedLog {
       if (cur < state.headVersion) {
         if (cur < state.anchorVersion) {
           const lost = await patches.getAll(
-            IDBKeyRange.bound(cur + 1, state.anchorVersion)
+            IDBKeyRange.bound([id, cur + 1], [id, state.anchorVersion])
           );
           const bridge = tx.objectStore('bridge');
+          let seq = state.bridgeLength;
           for (const rec of lost.reverse()) {
-            await bridge.add({ patch: rec.patch });
+            await bridge.add({ feedId: id, seq: seq++, patch: rec.patch });
           }
           next.bridgeLength = state.bridgeLength + lost.length;
           next.anchorVersion = cur;
@@ -204,14 +332,17 @@ export class IdbFeedLog implements FeedLog {
             `[FeedLog] ${lost.length} patch(es) below the anchor moved to the bridge`
           );
         }
-        await patches.delete(IDBKeyRange.lowerBound(cur, true));
+        await patches.delete(
+          IDBKeyRange.bound([id, cur], [id, Infinity], true)
+        );
       }
       await patches.put({
+        feedId: id,
         version: next.currentVersion,
         patch,
         timestamp: Date.now(),
       });
-      await tx.objectStore('meta').put({ key: STATE_KEY, ...next });
+      await tx.objectStore('feeds').put(next);
       await tx.done;
     })();
     await runTx(tx, work, `appending patch ${next.currentVersion}`);
@@ -220,30 +351,64 @@ export class IdbFeedLog implements FeedLog {
 
   async saveState(state: FeedState): Promise<void> {
     const db = await this.open();
-    await withDeadline(
-      db.put('meta', { key: STATE_KEY, ...state }),
-      'saving feed state'
-    );
+    await withDeadline(db.put('feeds', state), 'saving feed state');
   }
 
   async commitBase(state: FeedState, clearPatches: boolean): Promise<void> {
     const db = await this.open();
-    const tx = db.transaction(['meta', 'patches', 'bridge'], 'readwrite');
+    const tx = db.transaction(['feeds', 'patches', 'bridge'], 'readwrite');
     const work = (async () => {
-      await tx.objectStore('bridge').clear();
+      await tx.objectStore('bridge').delete(feedRange(this.feedId));
       if (clearPatches) {
-        await tx.objectStore('patches').clear();
+        await tx.objectStore('patches').delete(feedRange(this.feedId));
       }
-      await tx.objectStore('meta').put({ key: STATE_KEY, ...state });
+      await tx.objectStore('feeds').put(state);
       await tx.done;
     })();
     await runTx(tx, work, `committing base ${state.baseName}`);
+  }
+
+  async activate(
+    state: FeedState
+  ): Promise<{ state: FeedState; evicted: string[] }> {
+    const db = await this.open();
+    const next = { ...state, lastOpened: Date.now() };
+    const tx = db.transaction(
+      ['feeds', 'meta', 'patches', 'bridge'],
+      'readwrite'
+    );
+    const evicted: string[] = [];
+    const work = (async () => {
+      const feeds = tx.objectStore('feeds');
+      for (const other of await feeds.getAll()) {
+        if (other.id === next.id || hasEdits(other)) {
+          continue;
+        }
+        await feeds.delete(other.id);
+        await tx.objectStore('patches').delete(feedRange(other.id));
+        await tx.objectStore('bridge').delete(feedRange(other.id));
+        if (other.baseName) {
+          evicted.push(other.baseName);
+        }
+        console.log(
+          `[FeedLog] evicted unedited feed ${other.id} (${other.label})`
+        );
+      }
+      await feeds.put(next);
+      await tx.objectStore('meta').put({ key: ACTIVE_KEY, id: next.id });
+      await tx.done;
+    })();
+    await runTx(tx, work, `activating feed ${next.id}`);
+    return { state: next, evicted };
   }
 }
 
 /** The same log for a session without storage. Nothing outlives the page. */
 export class MemoryFeedLog implements FeedLog {
   readonly persistent = false;
+
+  constructor(readonly feedId: string) {}
+
   private current: FeedState | null = null;
   private log = new Map<number, FeedPatchRecord>();
   private bridgeList: FeedPatch[] = [];
@@ -302,5 +467,13 @@ export class MemoryFeedLog implements FeedLog {
       this.log.clear();
     }
     this.current = { ...state };
+  }
+
+  async activate(
+    state: FeedState
+  ): Promise<{ state: FeedState; evicted: string[] }> {
+    const next = { ...state, lastOpened: Date.now() };
+    this.current = { ...next };
+    return { state: next, evicted: [] };
   }
 }

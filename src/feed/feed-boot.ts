@@ -1,6 +1,6 @@
 /**
- * Starting a feed worker (main thread): import a new feed, restore the
- * stored one, or wipe the storage.
+ * Starting a feed worker (main thread): import a new feed, restore a stored
+ * one, list or delete stored feeds, or wipe the storage.
  *
  * A restore whose replay is past the fold threshold runs in two workers:
  * the first replays, folds and saves a new base, and is terminated (which
@@ -13,11 +13,14 @@ import {
   type LoadOptions,
   type StoreApi,
 } from 'gtfs-zone-web-common/gtfs/store/store-client';
-import { clearBaseFiles } from 'gtfs-zone-web-common/gtfs/store/opfs-base';
+import {
+  clearBaseFiles,
+  deleteBaseFile,
+} from 'gtfs-zone-web-common/gtfs/store/opfs-base';
 import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { CONFIG } from '../config';
 import { deleteDatabaseWithTimeout } from '../utils/idb-request';
-import { IdbFeedLog, type FeedState } from './feed-log';
+import { FeedDb, type FeedState } from './feed-log';
 import type { ExportStep } from './feed-export';
 import type {
   FeedWorkerApi,
@@ -50,29 +53,75 @@ function createWorker(): Worker {
   });
 }
 
-/**
- * The stored feed's state, or null when none is stored or storage is
- * unavailable. Opens and closes its own connection.
- */
-export async function readStoredFeedState(): Promise<FeedState | null> {
-  const log = new IdbFeedLog();
+/** Run `fn` on a fresh connection, closed after. */
+async function withDb<T>(fn: (db: FeedDb) => Promise<T>): Promise<T> {
+  const db = new FeedDb();
   try {
-    return await log.state();
-  } catch (err) {
-    console.warn('[FeedBoot] could not read the stored feed', err);
-    return null;
+    return await fn(db);
   } finally {
-    log.close();
+    db.close();
   }
 }
 
 /**
- * Parse a feed and make it the stored feed. The caller releases the
+ * The active feed's state, or null when none is stored or storage is
+ * unavailable.
+ */
+export async function readActiveFeedState(): Promise<FeedState | null> {
+  try {
+    return await withDb((db) => db.active());
+  } catch (err) {
+    console.warn('[FeedBoot] could not read the active feed', err);
+    return null;
+  }
+}
+
+/**
+ * Every stored feed, most recently opened first; empty when storage is
+ * unavailable.
+ */
+export async function listStoredFeeds(): Promise<FeedState[]> {
+  try {
+    return await withDb((db) => db.list());
+  } catch (err) {
+    console.warn('[FeedBoot] could not list stored feeds', err);
+    return [];
+  }
+}
+
+/** Delete a stored feed and its base file. The caller releases it first. */
+export async function deleteStoredFeed(id: string): Promise<void> {
+  const baseName = await withDb((db) => db.delete(id));
+  if (baseName) {
+    await deleteBaseFile(baseName);
+  }
+  console.log(
+    `[FeedBoot] deleted stored feed ${id} (${baseName ?? 'no base'})`
+  );
+}
+
+/** An HTTP date as YYYY-MM-DD, or null when absent or unparseable. */
+function isoDay(httpDate: string | null | undefined): string | null {
+  if (!httpDate) {
+    return null;
+  }
+  const ms = Date.parse(httpDate);
+  if (Number.isNaN(ms)) {
+    console.warn(`[FeedBoot] unparseable Last-Modified: ${httpDate}`);
+    return null;
+  }
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/**
+ * Parse a feed and store it as a new, active feed. The caller releases the
  * previous feed's client first, so two feeds are never in memory together.
+ * `sourceUrl` is the unproxied schedule URL, for the newer-version check.
  */
 export async function importFeed(
   input: { url: string } | { file: File },
   label: string,
+  sourceUrl: string | null,
   hooks: LoadHooks & { onSaving?: () => void } = {}
 ): Promise<{ client: FeedClient; imported: Imported }> {
   const client = await FeedStoreClient.load<FeedWorkerApi>(
@@ -89,7 +138,10 @@ export async function importFeed(
   }
   hooks.onSaving?.();
   try {
-    const imported = await client.call('commitImport', label);
+    const imported = await client.call('commitImport', label, {
+      url: sourceUrl,
+      modified: isoDay(client.loaded.source?.lastModified),
+    });
     return { client, imported };
   } catch (err) {
     client.release();
@@ -98,6 +150,7 @@ export async function importFeed(
 }
 
 async function restore(
+  feedId: string,
   baseName: string,
   hooks: LoadHooks
 ): Promise<{ client: FeedClient; opened: Opened }> {
@@ -108,31 +161,38 @@ async function restore(
     createWorker
   );
   try {
-    return { client, opened: await client.call('open', baseName) };
+    return { client, opened: await client.call('open', feedId, baseName) };
   } catch (err) {
     client.release();
     throw err;
   }
 }
 
+/** Feed `id`'s state, or the active feed's when `id` is omitted. */
+async function storedState(id?: string): Promise<FeedState | null> {
+  return id ? withDb((db) => db.get(id)) : readActiveFeedState();
+}
+
 /**
- * Restore the stored feed, folding first when its log is long. Null when
- * none. A failed fold is not fatal: the replayed worker stays in use and
+ * Restore stored feed `id` (the active one when omitted) and make it
+ * active, folding first when its log is long. Null when there is no such
+ * feed. A failed fold is not fatal: the replayed worker stays in use and
  * `foldError` says why the fold failed.
  */
 export async function openStoredFeed(
+  id?: string,
   hooks: LoadHooks & { onFolding?: () => void } = {}
 ): Promise<{
   client: FeedClient;
   opened: Opened;
   foldError?: string;
 } | null> {
-  const state = await readStoredFeedState();
+  const state = await storedState(id);
   if (!state?.baseName) {
-    console.log('[FeedBoot] no stored feed');
+    console.log(`[FeedBoot] no stored feed ${id ?? '(active)'}`);
     return null;
   }
-  const first = await restore(state.baseName, hooks);
+  const first = await restore(state.id, state.baseName, hooks);
   if (!first.opened.foldDue) {
     return first;
   }
@@ -153,7 +213,7 @@ export async function openStoredFeed(
     return { ...first, foldError };
   }
   first.client.release();
-  return restore(baseName, hooks);
+  return restore(state.id, baseName, hooks);
 }
 
 export type ExportProgress = Extract<ExportStep, { done: false }>;
@@ -180,13 +240,15 @@ export async function exportZip(
 }
 
 /**
- * Export the stored feed when it cannot be opened: its base, plus as much
- * of the patch log as still applies. Runs in its own worker, released after.
+ * Export stored feed `id` (the active one when omitted) when it cannot be
+ * opened: its base, plus as much of the patch log as still applies. Runs in
+ * its own worker, released after.
  */
 export async function recoverStoredFeedZip(
+  id?: string,
   hooks: { onProgress?: (p: ExportProgress) => void } = {}
 ): Promise<{ zip: Blob; recovered: Recovered }> {
-  const state = await readStoredFeedState();
+  const state = await storedState(id);
   if (!state?.baseName) {
     throw new Error('[FeedBoot] no stored feed to recover');
   }
@@ -197,7 +259,7 @@ export async function recoverStoredFeedZip(
     createWorker
   );
   try {
-    const recovered = await client.call('recover', state.baseName);
+    const recovered = await client.call('recover', state.id, state.baseName);
     const zip = await exportZip(client, hooks);
     console.log(
       `[FeedBoot] recovery export: ${recovered.applied} of ${recovered.total} patch(es), ${zip.size} bytes`

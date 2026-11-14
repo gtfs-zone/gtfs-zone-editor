@@ -20,13 +20,9 @@ export const load: Translation<typeof en> = {
   'help.continueShapes': 'Continuer vers les tracés',
   'help.continueFares': 'Continuer vers les tarifs',
   'help.continueOnDemand': 'Continuer vers le transport à la demande',
-  'load.deleteBlocked':
-    "le navigateur n'a pas libéré le stockage ({outcome}) ; fermez les autres onglets GTFS.zone et réessayez",
+  'load.openedStored': '{name} ouvert',
+  'load.openStoredFailed': "Impossible d'ouvrir le flux enregistré - {message}",
   'load.linkedFeed': 'Flux lié',
-  'load.linkedOverEdits_one':
-    'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modification qui serait perdue. Continuez avec celui-ci, ou chargez le flux du lien.',
-  'load.linkedOverEdits_other':
-    'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modifications qui seraient perdues. Continuez avec celui-ci, ou chargez le flux du lien.',
   'load.replaceTitle': 'Remplacer le flux actuel ?',
   'load.replaceBody_one':
     "Le flux actuel contient {count} modification. Charger un autre flux l'efface, ainsi que l'historique d'annulation. Exportez d'abord pour en garder une copie.",
@@ -133,6 +129,8 @@ export const load: Translation<typeof en> = {
   'parse.compacting': "Compactage de l'historique des modifications...",
   'parse.foldFailed':
     "L'historique des modifications n'a pas pu être compacté : {message}. Le flux est ouvert tel quel ; le compactage sera relancé au prochain démarrage.",
+  'parse.quotaFull':
+    "Le navigateur n'a plus d'espace de stockage, la dernière modification n'a donc pas été enregistrée. Supprimez les flux inutiles depuis la fenêtre de chargement, ou libérez de l'espace disque.",
   'parse.sessionOnly':
     "Ce navigateur ne permet pas à GTFS.zone d'enregistrer des flux ici (par exemple en navigation privée). Les modifications durent jusqu'à la fermeture de cet onglet : exportez le flux pour les conserver.",
   'parse.networkConflict_one':
