@@ -18,7 +18,13 @@ import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { CONFIG } from '../config';
 import { deleteDatabaseWithTimeout } from '../utils/idb-request';
 import { IdbFeedLog, type FeedState } from './feed-log';
-import type { FeedWorkerApi, Imported, Opened } from './feed-worker-api';
+import type { ExportStep } from './feed-export';
+import type {
+  FeedWorkerApi,
+  Imported,
+  Opened,
+  Recovered,
+} from './feed-worker-api';
 
 /** Every table but these is mirrored to the main thread. */
 export const WORKER_ONLY_TABLES: readonly string[] = [
@@ -148,6 +154,58 @@ export async function openStoredFeed(
   }
   first.client.release();
   return restore(baseName, hooks);
+}
+
+export type ExportProgress = Extract<ExportStep, { done: false }>;
+
+/**
+ * Build the feed's zip in the worker, one step per call. An abort drops the
+ * export in the worker and throws `LoadCancelledError`.
+ */
+export async function exportZip(
+  client: FeedClient,
+  hooks: { onProgress?: (p: ExportProgress) => void; signal?: AbortSignal } = {}
+): Promise<Blob> {
+  for (;;) {
+    if (hooks.signal?.aborted) {
+      await client.call('exportCancel');
+      throw new LoadCancelledError();
+    }
+    const step = await client.call('exportStep');
+    if (step.done) {
+      return step.zip;
+    }
+    hooks.onProgress?.(step);
+  }
+}
+
+/**
+ * Export the stored feed when it cannot be opened: its base, plus as much
+ * of the patch log as still applies. Runs in its own worker, released after.
+ */
+export async function recoverStoredFeedZip(
+  hooks: { onProgress?: (p: ExportProgress) => void } = {}
+): Promise<{ zip: Blob; recovered: Recovered }> {
+  const state = await readStoredFeedState();
+  if (!state?.baseName) {
+    throw new Error('[FeedBoot] no stored feed to recover');
+  }
+  const client = await FeedStoreClient.load<FeedWorkerApi>(
+    { base: state.baseName },
+    FEED_LOAD_OPTIONS,
+    {},
+    createWorker
+  );
+  try {
+    const recovered = await client.call('recover', state.baseName);
+    const zip = await exportZip(client, hooks);
+    console.log(
+      `[FeedBoot] recovery export: ${recovered.applied} of ${recovered.total} patch(es), ${zip.size} bytes`
+    );
+    return { zip, recovered };
+  } finally {
+    client.release();
+  }
 }
 
 /**

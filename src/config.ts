@@ -37,6 +37,11 @@ export const CONFIG = {
   // between checks of that budget.
   VALIDATE_STEP_MS: 30,
   VALIDATE_CHUNK_ROWS: 5_000,
+  // Export in the worker: work per `exportStep` call, CSV rows encoded and
+  // zipped at a time, and zip output gathered per Blob part.
+  EXPORT_STEP_MS: 50,
+  EXPORT_CHUNK_ROWS: 5_000,
+  EXPORT_BLOB_PART_BYTES: 16 * 1024 * 1024,
 
   // Map navigation: zoom level used when focusing a single stop or station.
   // For stations with multiple child stops, this is the max zoom; fitBounds

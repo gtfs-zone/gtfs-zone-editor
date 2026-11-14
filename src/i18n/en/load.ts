@@ -62,7 +62,8 @@ export const load = {
   'export.noData': 'No GTFS data to export. Please add some data first.',
   'export.preparing': 'Preparing GTFS export...',
   'export.done': 'GTFS data exported successfully!',
-  'export.unavailable': 'Export is not available in this version yet.',
+  'export.writing': 'Writing {file}...',
+  'export.cancelled': 'Export cancelled.',
   'export.failed': 'Failed to export GTFS data: {message}',
   'db.contextInit': 'initialization',
   'db.unknownError': 'Unknown error',
@@ -70,6 +71,11 @@ export const load = {
   'db.stackTrace': 'Stack trace (for developers)',
   'db.exportClear': 'Export & Clear',
   'db.clearReload': 'Clear & Reload',
+  'db.recoveryFailed': 'The stored feed could not be exported: {message}',
+  'db.recoveryPartialTitle': 'Export is missing edits',
+  'db.recoveryPartial':
+    'The downloaded export holds {applied} of {total} edits: the edit after those no longer applies ({message}). Clearing deletes the stored feed and its full edit history.',
+  'db.keepStored': 'Keep stored feed',
   'db.errorTitle': 'Database Error',
   'db.resetTitle': 'Reset Database',
   'db.resetBody':

@@ -69,8 +69,8 @@ export const load: Translation<typeof en> = {
     "Aucune donnée GTFS à exporter. Ajoutez d'abord des données.",
   'export.preparing': "Préparation de l'export GTFS...",
   'export.done': 'Données GTFS exportées.',
-  'export.unavailable':
-    "L'export n'est pas encore disponible dans cette version.",
+  'export.writing': 'Écriture de {file}...',
+  'export.cancelled': 'Export annulé.',
   'export.failed': "Échec de l'export des données GTFS : {message}",
   'db.contextInit': "l'initialisation",
   'db.unknownError': 'Erreur inconnue',
@@ -79,6 +79,11 @@ export const load: Translation<typeof en> = {
   'db.stackTrace': 'Trace de pile (pour les développeurs)',
   'db.exportClear': 'Exporter et vider',
   'db.clearReload': 'Vider et recharger',
+  'db.recoveryFailed': "Le flux enregistré n'a pas pu être exporté : {message}",
+  'db.recoveryPartialTitle': "Il manque des modifications dans l'export",
+  'db.recoveryPartial':
+    "L'export téléchargé contient {applied} modifications sur {total} : la suivante ne s'applique plus ({message}). Vider supprime le flux enregistré et tout son historique de modifications.",
+  'db.keepStored': 'Garder le flux enregistré',
   'db.errorTitle': 'Erreur de base de données',
   'db.resetTitle': 'Réinitialiser la base de données',
   'db.resetBody':

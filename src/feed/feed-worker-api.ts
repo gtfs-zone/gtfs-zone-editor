@@ -27,6 +27,7 @@ import type { FeedPatch, FeedPatchRecord, PatchRename } from '../types/patch';
 import { applyPatch, applyPatches, rowByKey } from './patch-apply';
 import { patchTargets } from './patch-build';
 import { FeedValidator, type ValidateStep } from './feed-validate';
+import { FeedExporter, type ExportStep } from './feed-export';
 import {
   IdbFeedLog,
   MemoryFeedLog,
@@ -336,6 +337,15 @@ function shapeUsage(s: FeedStore): Record<string, ShapeUsageRow> {
   return out;
 }
 
+/** How far `recover` brought the store towards the stored version. */
+export interface Recovered {
+  /** Patches applied (bridge included) and patches the stored version needs. */
+  applied: number;
+  total: number;
+  /** Why the replay stopped early. */
+  error?: string;
+}
+
 export interface Imported {
   state: FeedState;
   persistence: Persistence;
@@ -476,6 +486,7 @@ export function feedWorkerApi(ctx: StoreContext) {
   /** Bumped before every store change an edit or history move makes. */
   let revision = 0;
   const validator = new FeedValidator();
+  const exporter = new FeedExporter();
 
   const getLog = (): Promise<FeedLog> => (logPromise ??= createLog());
   const persistence = async (): Promise<Persistence> =>
@@ -759,6 +770,53 @@ export function feedWorkerApi(ctx: StoreContext) {
       return next.baseName;
     },
 
+    /**
+     * After `load({ base })`, when `open` failed: replay as much of the log
+     * as applies, one patch at a time, and stop at the first that fails. The
+     * store is then as close to the stored version as the log allows, for a
+     * recovery export.
+     */
+    recover: async (baseName: string): Promise<Recovered> => {
+      if (state) {
+        throw new Error('[FeedWorker] a feed is already open in this worker');
+      }
+      const log = await getLog();
+      const s = await log.state();
+      if (!s || s.baseName !== baseName) {
+        throw new Error(
+          `[FeedWorker] loaded base ${baseName}, but the stored feed points at ${s?.baseName ?? 'nothing'}`
+        );
+      }
+      const store = ctx.store();
+      state = s;
+      let applied = 0;
+      const total =
+        s.bridgeLength + Math.abs(s.currentVersion - s.anchorVersion);
+      try {
+        const bridge = await log.bridge();
+        applyPatches(store, bridge, 'inverse');
+        applied += bridge.length;
+        const { patches, dir } = await path(
+          log,
+          s.anchorVersion,
+          s.currentVersion
+        );
+        for (const patch of patches) {
+          applyPatch(store, patch, dir);
+          applied++;
+        }
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[FeedWorker] recovery stopped after ${applied} of ${total} patch(es)`,
+          err
+        );
+        return { applied, total, error };
+      }
+      console.log(`[FeedWorker] recovered all ${applied} patch(es)`);
+      return { applied, total };
+    },
+
     state: (): FeedState => ({ ...requireState() }),
     versions,
     edit,
@@ -889,6 +947,16 @@ export function feedWorkerApi(ctx: StoreContext) {
      */
     validateStep: (): ValidateStep =>
       validator.step(ctx.store(), revision, requireState().extensionColumns),
+
+    /**
+     * Run the zip export for one short step. Call until `done`; other calls
+     * run between steps, and a store change restarts the export.
+     */
+    exportStep: (): ExportStep =>
+      exporter.step(ctx.store(), revision, requireState().networksMode),
+
+    /** Drop a running export. */
+    exportCancel: (): void => exporter.cancel(),
 
     /** Replace (or with null remove) a non-table entry, as a patch. */
     editFile: async (name: string, text: string | null): Promise<Versions> => {

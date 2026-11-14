@@ -22,7 +22,7 @@ import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicator';
 import { t } from '../i18n/messages';
 import type { EditorFeed } from './editor-feed';
-import { importFeed, openStoredFeed } from './feed-boot';
+import { importFeed, openStoredFeed, recoverStoredFeedZip } from './feed-boot';
 import type { Persistence } from './feed-worker-api';
 
 const OPERATION = 'feed-load';
@@ -207,4 +207,35 @@ export async function createEmptyFeed(
   const bytes = zipSync({});
   const file = new File([bytes], 'empty.zip', { type: 'application/zip' });
   await loadFeed(feed, { file }, label);
+}
+
+/**
+ * The stored feed as a zip when it cannot be opened, for the database error
+ * modal. `note` says how much of the edit history it holds when not all.
+ */
+export async function recoverStoredFeedExport(): Promise<{
+  zip: Blob;
+  note: string | null;
+}> {
+  feedProgressIndicator.startLoading('recover-export', t('export.preparing'));
+  try {
+    const { zip, recovered } = await recoverStoredFeedZip({
+      onProgress: (p) =>
+        feedProgressIndicator.updateProgress(
+          'recover-export',
+          p.totalRows > 0 ? Math.min(100, (100 * p.rows) / p.totalRows) : 0,
+          t('export.writing', { file: p.file })
+        ),
+    });
+    const note = recovered.error
+      ? t('db.recoveryPartial', {
+          applied: recovered.applied,
+          total: recovered.total,
+          message: recovered.error,
+        })
+      : null;
+    return { zip, note };
+  } finally {
+    feedProgressIndicator.finishLoading('recover-export');
+  }
 }

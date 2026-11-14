@@ -73,8 +73,8 @@ export const load: Translation<typeof en> = {
     'Keine GTFS-Daten zum Exportieren. Bitte fügen Sie zuerst Daten hinzu.',
   'export.preparing': 'GTFS-Export wird vorbereitet...',
   'export.done': 'GTFS-Daten erfolgreich exportiert!',
-  'export.unavailable':
-    'Der Export ist in dieser Version noch nicht verfügbar.',
+  'export.writing': '{file} wird geschrieben...',
+  'export.cancelled': 'Export abgebrochen.',
   'export.failed': 'Die GTFS-Daten konnten nicht exportiert werden: {message}',
   'db.contextInit': 'der Initialisierung',
   'db.unknownError': 'Unbekannter Fehler',
@@ -82,6 +82,12 @@ export const load: Translation<typeof en> = {
   'db.stackTrace': 'Stacktrace (für Entwickler)',
   'db.exportClear': 'Exportieren und leeren',
   'db.clearReload': 'Leeren und neu laden',
+  'db.recoveryFailed':
+    'Der gespeicherte Feed konnte nicht exportiert werden: {message}',
+  'db.recoveryPartialTitle': 'Dem Export fehlen Änderungen',
+  'db.recoveryPartial':
+    'Der heruntergeladene Export enthält {applied} von {total} Änderungen: die nächste lässt sich nicht mehr anwenden ({message}). Leeren löscht den gespeicherten Feed und seinen gesamten Änderungsverlauf.',
+  'db.keepStored': 'Gespeicherten Feed behalten',
   'db.errorTitle': 'Datenbankfehler',
   'db.resetTitle': 'Datenbank zurücksetzen',
   'db.resetBody':

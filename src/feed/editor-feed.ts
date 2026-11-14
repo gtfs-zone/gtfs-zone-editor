@@ -28,7 +28,12 @@ import type {
   SingleGTFSPatch,
 } from '../types/patch';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
-import { WORKER_ONLY_TABLES, type FeedClient } from './feed-boot';
+import {
+  WORKER_ONLY_TABLES,
+  exportZip,
+  type ExportProgress,
+  type FeedClient,
+} from './feed-boot';
 import type { FeedState, NetworksMode } from './feed-log';
 import type {
   Cond,
@@ -362,6 +367,16 @@ export class EditorFeed {
   /** Point count and trip usage of every shape (built in the worker). */
   shapeUsage(): Promise<Record<string, ShapeUsageRow>> {
     return this.requireClient().call('shapeUsage');
+  }
+
+  /** The whole feed as a GTFS zip, built in the worker (see `exportZip`). */
+  exportZip(
+    hooks: {
+      onProgress?: (p: ExportProgress) => void;
+      signal?: AbortSignal;
+    } = {}
+  ): Promise<Blob> {
+    return exportZip(this.requireClient(), hooks);
   }
 
   /** One step of the feed validation in the worker (see `validateStep`). */

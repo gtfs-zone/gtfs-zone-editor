@@ -98,7 +98,12 @@ import inliningSvg from './assets/gtfs-spec/inlining.svg';
 import './styles/main.css';
 import { t } from './i18n/messages';
 import { EditorFeed } from './feed/editor-feed';
-import { createEmptyFeed, loadFeed, restoreFeed } from './feed/feed-loader';
+import {
+  createEmptyFeed,
+  loadFeed,
+  recoverStoredFeedExport,
+  restoreFeed,
+} from './feed/feed-loader';
 import { batch, deleteOp, insertOp, updateOp } from './feed/patch-build';
 import { readStoredFeedState, resetFeedStorage } from './feed/feed-boot';
 import { RouteRefsIndex } from './feed/route-refs';
@@ -699,7 +704,8 @@ export class GTFSEditor {
       console.error('[boot] failed to restore the stored feed:', error);
       databaseFallbackManager.showDatabaseError(
         error,
-        t('boot.restoreContext')
+        t('boot.restoreContext'),
+        recoverStoredFeedExport
       );
       return 'failed';
     } finally {

@@ -25,6 +25,8 @@ import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { Editor } from './editor';
 import { BrowseNavigation } from './browse-navigation';
 import { buildExportFilename } from '../utils/export-filename';
+import { downloadBlob } from '../utils/download-blob';
+import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicator';
 import { runWhenIdle } from '../utils/run-when-idle';
 import { showHelpPageOnce } from 'gtfs-zone-web-common/ui/help-modal';
 import { GTFSSchemas } from '../types/gtfs';
@@ -1074,64 +1076,49 @@ export class UIController {
   }
 
   async exportGTFS() {
-    let loadingNotificationId = null;
+    if (
+      !this.feed?.isOpen ||
+      !Object.values(await this.feed.read('counts')).some((n) => n > 0)
+    ) {
+      notify.warning(t('export.noData'));
+      return;
+    }
 
+    // Save current file changes
+    this.editor!.saveCurrentFileChanges();
+
+    if (!(await this.confirmFeedVersion())) {
+      return;
+    }
+
+    console.log('[UIController] export started');
+    const controller = new AbortController();
+    feedProgressIndicator.startLoading('export', t('export.preparing'), {
+      onCancel: () => controller.abort(),
+    });
     try {
-      if (
-        !this.feed?.isOpen ||
-        !Object.values(await this.feed.read('counts')).some((n) => n > 0)
-      ) {
-        notify.warning(t('export.noData'));
-        return;
-      }
-
-      // Save current file changes
-      this.editor!.saveCurrentFileChanges();
-
-      if (!(await this.confirmFeedVersion())) {
-        return;
-      }
-
-      console.log('Exporting GTFS data...');
-
-      // Show loading notification
-      loadingNotificationId = notify.loading(t('export.preparing'));
-
-      // Generate ZIP blob
-      const blob = await this.buildExportZip();
-
-      // Download the file
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = buildExportFilename(this.getFeedName());
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      // Remove loading notification and show success
-      if (loadingNotificationId) {
-        notify.removeNotification(loadingNotificationId);
-      }
+      const blob = await this.feed.exportZip({
+        signal: controller.signal,
+        onProgress: (p) =>
+          feedProgressIndicator.updateProgress(
+            'export',
+            p.totalRows > 0 ? Math.min(100, (100 * p.rows) / p.totalRows) : 0,
+            t('export.writing', { file: p.file })
+          ),
+      });
+      downloadBlob(blob, buildExportFilename(this.getFeedName()));
       notify.success(t('export.done'));
-
       await showHelpPageOnce('publishing');
     } catch (error) {
-      console.error('Error exporting GTFS:', error);
-
-      // Remove loading notification
-      if (loadingNotificationId) {
-        notify.removeNotification(loadingNotificationId);
+      if (error instanceof LoadCancelledError) {
+        notify.info(t('export.cancelled'));
+        return;
       }
-
+      console.error('Error exporting GTFS:', error);
       notify.error(t('export.failed', { message: (error as Error).message }));
+    } finally {
+      feedProgressIndicator.finishLoading('export');
     }
-  }
-
-  /** The feed as a zip. Not built yet: export runs in the worker later. */
-  private async buildExportZip(): Promise<Blob> {
-    throw new Error(t('export.unavailable'));
   }
 
   /**
