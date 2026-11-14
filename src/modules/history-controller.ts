@@ -1,5 +1,5 @@
-import { PatchManager } from './patch-manager';
-import { GTFSPatch } from '../types/patch';
+import type { EditorFeed } from '../feed/editor-feed';
+import type { FeedPatch } from '../types/patch';
 import { humanLabel } from '../utils/patch-label';
 import { t } from '../i18n/messages';
 
@@ -28,20 +28,23 @@ function relativeTime(timestamp: number): string {
   return t('history.daysAgo', { n: Math.floor(diffHr / 24) });
 }
 
-function opBadgeClass(op: GTFSPatch['op']): string {
+function opBadgeClass(op: FeedPatch['op']): string {
   if (op === 'insert') {
     return 'badge-success';
   }
   if (op === 'update') {
     return 'badge-warning';
   }
-  if (op === 'batch') {
+  if (op === 'batch' || op === 'file') {
     return 'badge-info';
   }
   return 'badge-error';
 }
 
-function renderFieldDiffs(patch: GTFSPatch): string {
+function renderFieldDiffs(patch: FeedPatch): string {
+  if (patch.op === 'file') {
+    return '';
+  }
   if (patch.op === 'batch') {
     const opTypes = new Set(patch.ops.map((op) => op.op));
     let key:
@@ -112,10 +115,10 @@ function renderFieldDiffs(patch: GTFSPatch): string {
 }
 
 export class HistoryController {
-  private patchManager!: PatchManager;
+  private feed!: EditorFeed;
 
-  initialize(patchManager: PatchManager): void {
-    this.patchManager = patchManager;
+  initialize(feed: EditorFeed): void {
+    this.feed = feed;
 
     const rerender = () => {
       this.render().catch((e: unknown) =>
@@ -123,10 +126,8 @@ export class HistoryController {
       );
     };
 
-    patchManager.on('undo', rerender);
-    patchManager.on('redo', rerender);
-    patchManager.on('jump', rerender);
-    patchManager.on('change', rerender);
+    feed.onEdit(rerender);
+    feed.onFeedReplaced(rerender);
 
     // History modal triggers render via index.ts (history-btn click listener)
   }
@@ -137,8 +138,12 @@ export class HistoryController {
       return;
     }
 
-    const history = await this.patchManager.getHistory();
-    const currentVersion = this.patchManager.version;
+    if (!this.feed.isOpen) {
+      panel.innerHTML = '';
+      return;
+    }
+    const history = await this.feed.history();
+    const currentVersion = this.feed.version;
 
     panel.innerHTML = '';
 
@@ -181,11 +186,8 @@ export class HistoryController {
           </div>`;
 
         li.addEventListener('click', () => {
-          if (version === undefined || version === null) {
-            return;
-          }
-          this.patchManager
-            .jumpToVersion(version)
+          this.feed
+            .jumpTo(version)
             .catch((e: unknown) => console.error('jumpToVersion failed:', e));
         });
 
@@ -208,8 +210,8 @@ export class HistoryController {
         </div>
       </div>`;
     baselineLi.addEventListener('click', () => {
-      this.patchManager
-        .jumpToVersion(0)
+      this.feed
+        .jumpTo(0)
         .catch((e: unknown) => console.error('jumpToVersion(0) failed:', e));
     });
     ul.appendChild(baselineLi);

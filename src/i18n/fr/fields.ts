@@ -14,8 +14,6 @@ export const fields: Translation<typeof en> = {
   'field.selectTitle': 'Choisir {field}',
   'field.currentValue': 'valeur actuelle',
   'field.customValue': 'Saisir une valeur personnalisée...',
-  'field.historyNotReady':
-    "Enregistrement impossible : l'historique des modifications n'est pas encore prêt",
   'field.recordGone':
     "Enregistrement impossible : cet enregistrement n'existe plus",
   'field.extensionDescription':
@@ -31,6 +29,7 @@ export const fields: Translation<typeof en> = {
   'patch.created': 'Création : {type} « {name} »',
   'patch.deleted': 'Suppression : {type} « {name} »',
   'patch.updated': 'Modification : {type} « {name} » ({fields})',
+  'patch.fileEdited': 'Modification de {name}',
   'patch.type.agency': 'Agence',
   'patch.type.stops': 'Arrêt',
   'patch.type.routes': 'Ligne',
@@ -149,8 +148,6 @@ export const fields: Translation<typeof en> = {
     '{count} lignes au total, enregistrées comme une seule modification annulable.',
   'renameModal.heavy':
     'Ce renommage réécrit {count} lignes. Cela prendra un moment et la page ne répondra pas pendant ce temps.',
-  'renameModal.historyNotReady':
-    "Renommage impossible : l'historique des modifications n'est pas encore prêt",
   'renameModal.couldNotPlan': 'Impossible de préparer le renommage.',
   'renameModal.newLabel': 'Nouveau {field}',
   'renameModal.setTitle': 'Définir {field}',

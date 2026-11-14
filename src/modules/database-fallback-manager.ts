@@ -5,7 +5,7 @@
 import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicator';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
-import { deleteDatabaseWithTimeout } from '../utils/idb-request';
+import { resetFeedStorage } from '../feed/feed-boot';
 import { buildExportFilename } from '../utils/export-filename';
 import { t } from '../i18n/messages';
 
@@ -284,7 +284,7 @@ export class DatabaseFallbackManager {
     try {
       this.closeConnection?.();
 
-      const outcome = await deleteDatabaseWithTimeout('GTFSZoneDB');
+      const outcome = await resetFeedStorage();
 
       if (outcome === 'deleted') {
         notify.success(t('db.resetDone'));

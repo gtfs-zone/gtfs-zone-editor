@@ -7,12 +7,8 @@ import {
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { CONFIG } from '../config';
 import { parseGtfsDate, toGtfsDate, todayGtfsDate } from '../utils/gtfs-date';
-import {
-  feedBounds,
-  trimOrExtendServices,
-  type BatchMixedPatchManager,
-  type FeedBoundsWriteDatabase,
-} from '../utils/feed-bounds';
+import { feedBounds, trimOrExtendServices } from '../utils/feed-bounds';
+import type { EditorFeed } from '../feed/editor-feed';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import {
   attachServiceTimelineListeners,
@@ -21,13 +17,11 @@ import {
   loadTripCounts,
   renderServiceTimeline,
   type ServiceData,
-  type ServiceTimelineSource,
 } from './service-timeline';
 import { t } from '../i18n/messages';
 
 export interface CalendarModalDeps {
-  gtfsDatabase: ServiceTimelineSource & FeedBoundsWriteDatabase;
-  patchManager?: BatchMixedPatchManager | null;
+  feed: EditorFeed;
   onServiceClick: (service_id: string) => void;
 }
 
@@ -69,10 +63,10 @@ function renderFeedEdgeBadges(
 export async function showCalendarModal(
   deps: CalendarModalDeps
 ): Promise<void> {
-  const [data, bounds, tripCounts] = await Promise.all([
-    loadServiceData(deps.gtfsDatabase),
-    feedBounds(deps.gtfsDatabase),
-    loadTripCounts(deps.gtfsDatabase),
+  const bounds = feedBounds(deps.feed);
+  const [data, tripCounts] = await Promise.all([
+    loadServiceData(deps.feed),
+    loadTripCounts(deps.feed),
   ]);
 
   const feedStartDate = bounds.start ?? null;
@@ -120,7 +114,7 @@ export async function showCalendarModal(
 
   /** Reloads every service's calendar/exception rows after a batch write. */
   const refreshServiceData = async (): Promise<void> => {
-    const fresh = await loadServiceData(deps.gtfsDatabase);
+    const fresh = await loadServiceData(deps.feed);
     data.clear();
     for (const [sid, sd] of fresh) {
       data.set(sid, sd);
@@ -132,16 +126,11 @@ export async function showCalendarModal(
     value: string,
     redraw: () => void
   ): Promise<void> => {
-    if (!deps.patchManager) {
-      console.warn('[CalendarModal] No patchManager wired, cannot batch');
-      return;
-    }
     batchRunning = true;
     redraw();
     try {
       const { services, exceptions } = await trimOrExtendServices(
-        deps.gtfsDatabase,
-        deps.patchManager,
+        deps.feed,
         field,
         value
       );

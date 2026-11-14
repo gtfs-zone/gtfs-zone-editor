@@ -2,11 +2,8 @@
  * Suggested `<prefix>_<n>` IDs for new entities
  */
 
+import type { EditorFeed } from '../feed/editor-feed';
 import { getNaturalKeyField } from './gtfs-primary-keys';
-
-interface RowSource {
-  getAllRows: (tableName: string) => Promise<unknown[]>;
-}
 
 /** First `<prefix>_<n>` not in `taken`, counting from 1. */
 export function firstFreeId(prefix: string, taken: Iterable<string>): string {
@@ -23,7 +20,7 @@ export function firstFreeId(prefix: string, taken: Iterable<string>): string {
  * `alsoTaken` holds IDs in use outside the table's own rows.
  */
 export async function nextEntityId(
-  database: RowSource,
+  feed: EditorFeed,
   tableName: string,
   prefix: string,
   alsoTaken: Iterable<string> = []
@@ -33,12 +30,8 @@ export async function nextEntityId(
     throw new Error(`[nextEntityId] ${tableName} has no natural key`);
   }
 
-  const rows = (await database.getAllRows(tableName)) as Record<
-    string,
-    unknown
-  >[];
   return firstFreeId(prefix, [
-    ...rows.map((row) => String(row[keyField])),
+    ...(await feed.distinct(tableName, keyField)),
     ...alsoTaken,
   ]);
 }
@@ -46,15 +39,11 @@ export async function nextEntityId(
 /**
  * First free `service_<n>`, skipping IDs held only by `calendar_dates` rows.
  */
-export async function nextServiceId(database: RowSource): Promise<string> {
-  const exceptions = (await database.getAllRows('calendar_dates')) as Record<
-    string,
-    unknown
-  >[];
+export async function nextServiceId(feed: EditorFeed): Promise<string> {
   return nextEntityId(
-    database,
+    feed,
     'calendar',
     'service',
-    exceptions.map((row) => String(row.service_id ?? ''))
+    await feed.distinct('calendar_dates', 'service_id')
   );
 }

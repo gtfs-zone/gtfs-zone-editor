@@ -20,6 +20,7 @@ import { TimeFormatter } from './time-formatter';
 import type { OptionPickerItem } from '../modules/option-picker-modal';
 import type { GTFSEnumValue, GTFSFieldSpec } from '../gtfs-spec/types';
 import { originLabel } from './spec-origin';
+import type { EditorFeed } from '../feed/editor-feed';
 import type { InlineMenuOption } from './inline-edit';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';
@@ -224,17 +225,6 @@ export function formatSpecValue(
   return raw;
 }
 
-export interface ForeignKeySource {
-  getAllRows(tableName: string): Promise<Record<string, unknown>[]>;
-}
-
-export interface ForeignKeyRowSource extends ForeignKeySource {
-  getRow(
-    tableName: string,
-    key: string
-  ): Promise<Record<string, unknown> | undefined>;
-}
-
 /** Whether `target.field` is the whole primary key of the table it names. */
 function targetIsEntityKey(table: string, field: string): boolean {
   const pk = getGTFSPrimaryKey(table);
@@ -249,7 +239,7 @@ function targetIsEntityKey(table: string, field: string): boolean {
  * option sets are unioned rather than one target winning.
  */
 export async function buildForeignKeyOptions(
-  db: ForeignKeySource,
+  feed: EditorFeed,
   spec: GTFSFieldSpec
 ): Promise<OptionPickerItem[]> {
   const seen = new Map<string, OptionPickerItem>();
@@ -259,9 +249,18 @@ export async function buildForeignKeyOptions(
       continue;
     }
     const table = specStoreName(target.file);
+    if (!feed.isMirrored(table)) {
+      // Worker-only tables (trips, ...) can hold millions of rows: offer
+      // their ids without labels.
+      for (const key of await feed.distinct(table, target.field)) {
+        if (!seen.has(key)) {
+          seen.set(key, { value: key, primary: key, secondary: key });
+        }
+      }
+      continue;
+    }
     const isEntityKey = targetIsEntityKey(table, target.field);
-    const rows = await db.getAllRows(table);
-    for (const row of rows) {
+    for (const row of feed.table(table)) {
       const value = row[target.field];
       if (value === undefined || value === null || value === '') {
         continue;
@@ -290,7 +289,7 @@ export async function buildForeignKeyOptions(
  * out and shows raw.
  */
 export async function buildForeignKeyLabels(
-  db: ForeignKeyRowSource,
+  feed: EditorFeed,
   spec: GTFSFieldSpec,
   values: Iterable<string>
 ): Promise<Map<string, string>> {
@@ -303,22 +302,22 @@ export async function buildForeignKeyLabels(
     .filter((target) => targetIsEntityKey(target.table, target.field))
     .map((target) => target.table);
   const labels = new Map<string, string>();
-  for (const value of values) {
-    if (value === '' || labels.has(value)) {
-      continue;
+  let pending = [...new Set(values)].filter((v) => v !== '');
+  for (const table of tables) {
+    if (pending.length === 0) {
+      break;
     }
-    for (const table of tables) {
-      const row = await db.getRow(table, value);
+    const rows = await feed.byKeys(table, pending);
+    const missing: string[] = [];
+    pending.forEach((value, i) => {
+      const row = rows[i];
       if (row) {
-        labels.set(
-          value,
-          renderOptionLabel(
-            getEntityDisplay(table, row as Record<string, string>)
-          )
-        );
-        break;
+        labels.set(value, renderOptionLabel(getEntityDisplay(table, row)));
+      } else {
+        missing.push(value);
       }
-    }
+    });
+    pending = missing;
   }
   return labels;
 }
@@ -331,7 +330,7 @@ export async function buildForeignKeyLabels(
  * back to the value itself when the target is not keyed on the named field.
  */
 export async function resolveForeignLabel(
-  db: ForeignKeyRowSource,
+  feed: EditorFeed,
   spec: GTFSFieldSpec,
   value: string
 ): Promise<string> {
@@ -346,11 +345,9 @@ export async function resolveForeignLabel(
     if (!targetIsEntityKey(table, target.field)) {
       continue;
     }
-    const row = await db.getRow(table, value);
+    const [row] = await feed.byKeys(table, [value]);
     if (row) {
-      return renderOptionLabel(
-        getEntityDisplay(table, row as Record<string, string>)
-      );
+      return renderOptionLabel(getEntityDisplay(table, row));
     }
   }
   return value;

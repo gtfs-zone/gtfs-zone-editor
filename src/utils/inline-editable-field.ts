@@ -45,7 +45,6 @@ import {
   specFieldKind,
   specStoreName,
   validateFieldValue,
-  type ForeignKeyRowSource,
 } from './spec-field-edit';
 import { convertValueToGTFS, formatValueForDisplay } from './field-formatters';
 import { GTFSSchemas, GTFS_FIELD_SPECS } from '../types/gtfs';
@@ -64,6 +63,8 @@ import { renderTimeHtml } from './time-formatter';
 import type { GTFSFieldSpec } from '../gtfs-spec/types';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';
+import type { EditorFeed } from '../feed/editor-feed';
+import { insertOp, updateOp } from '../feed/patch-build';
 
 /** Marks a span this module's delegated listeners are responsible for. */
 const FIELD_CLASS = 'inline-editable-field';
@@ -73,31 +74,8 @@ const FIELD_BOX_CLASS =
   'w-full cursor-pointer rounded-field border border-base-300 px-3 py-1.5 text-sm hover:bg-base-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary';
 
 export interface InlineEditableFieldDeps {
-  /** Reads used to label and pick foreign-ID values, plus the first-row write. */
-  gtfsDatabase: ForeignKeyRowSource & {
-    insertRows(
-      tableName: string,
-      rows: Record<string, unknown>[]
-    ): Promise<void>;
-  };
-  /**
-   * Where committed edits go. `recordUpdate` applies the write itself, so
-   * there is no separate database write here. `recordInsert` does not, so the
-   * caller writes the row first.
-   */
-  patchManager: {
-    recordUpdate(
-      table: string,
-      id: string,
-      before: Record<string, unknown>,
-      after: Record<string, unknown>
-    ): Promise<void>;
-    recordInsert(
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ): Promise<void>;
-  } | null;
+  /** Reads used to label and pick foreign-ID values; edits go in as patches. */
+  feed: EditorFeed;
 }
 
 let deps: InlineEditableFieldDeps | null = null;
@@ -143,12 +121,12 @@ export function closeDraft(id: string): void {
   console.log(`[InlineField] draft ${id} closed`);
 }
 
-/** The database the fields read from, for checks made outside a commit. */
-export function inlineFieldDatabase(): InlineEditableFieldDeps['gtfsDatabase'] {
+/** The feed the fields read from, for checks made outside a commit. */
+export function inlineFieldFeed(): EditorFeed {
   if (!deps) {
     throw new Error('[InlineField] not installed');
   }
-  return deps.gtfsDatabase;
+  return deps.feed;
 }
 
 /**
@@ -309,7 +287,7 @@ export async function renderInlineEditableField(
   const kind = specFieldKind(spec);
   const foreignLabel =
     kind === 'foreign' && deps
-      ? await resolveForeignLabel(deps.gtfsDatabase, spec, raw)
+      ? await resolveForeignLabel(deps.feed, spec, raw)
       : raw;
   const text = displayText(config, spec, foreignLabel);
   const placeholder = config.placeholder ?? '-';
@@ -361,7 +339,7 @@ export async function renderInlineEditableField(
 /**
  * Render every field of one GTFS record as click-to-edit rows, in spec order.
  *
- * `recordId` is the record's primary key, as `patchManager` keys patches by it.
+ * `recordId` is the record's primary key, as patches key rows by it.
  * Single-row tables without a key (`feed_info`) use their table name, which is
  * how `generateCompositeKeyFromRecord` keys them too.
  *
@@ -604,7 +582,7 @@ async function foreignOptions(
   if (!deps) {
     return [];
   }
-  return buildForeignKeyOptions(deps.gtfsDatabase, spec);
+  return buildForeignKeyOptions(deps.feed, spec);
 }
 
 /** The open draft a span commits into, or undefined for a database field. */
@@ -674,8 +652,8 @@ async function commit(
     return;
   }
 
-  // Numeric fields are stored as numbers, so their before value is coerced to
-  // match. Everything else keeps the raw stored string: coercing it trims, and
+  // A numeric value is compared coerced, so "1.50" -> "1.5" is no change.
+  // Everything else compares the raw stored string: coercing it trims, and
   // an edit that only strips whitespace would then look like no change at all.
   const beforeRaw = span.dataset.value ?? '';
   const beforeCoerced = coerceFieldValue(spec, beforeRaw);
@@ -687,6 +665,7 @@ async function commit(
     clearError(span);
     return;
   }
+  const value = String(coerced.value);
 
   clearError(span);
   setDisplay(span, spec, coerced.value, label);
@@ -711,34 +690,26 @@ async function commit(
 
   const store = specStoreName(table);
   console.log(`[InlineField] update ${store} ${recordId}.${field}`);
-  if (!deps?.patchManager) {
-    notify.error(t('field.historyNotReady'));
-    console.warn('[InlineField] no patch manager, edit dropped');
-    return;
+  if (!deps) {
+    throw new Error('[InlineField] not installed');
   }
+  const feed = deps.feed;
 
   // A single-row table the feed never carried (feed_info) is rendered as a
-  // blank form with no row behind it, and an update patch against a row that
-  // does not exist is a no-op. Insert it on the first committed field instead.
-  if (!(await deps.gtfsDatabase.getRow(store, recordId))) {
+  // blank form with no row behind it. Insert it on the first committed field.
+  const [row] = await feed.byKeys(store, [recordId]);
+  if (!row) {
     if (getGTFSPrimaryKey(store)?.type !== 'none') {
       notify.error(t('field.recordGone'));
       console.error(`[InlineField] no row ${recordId} in ${store}`);
       return;
     }
-    const record = { [field]: coerced.value };
     console.log(`[InlineField] creating first ${store} row`);
-    await deps.gtfsDatabase.insertRows(store, [record]);
-    await deps.patchManager.recordInsert(store, recordId, record);
+    await feed.apply([insertOp(store, { [field]: value })]);
     return;
   }
 
-  await deps.patchManager.recordUpdate(
-    store,
-    recordId,
-    { [field]: before },
-    { [field]: coerced.value }
-  );
+  await feed.apply([updateOp(store, row, { [field]: value })]);
 }
 
 /** Reflect a committed value in the span, without waiting for a re-render. */

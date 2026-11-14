@@ -6,7 +6,8 @@
  * and related transit routes/trips.
  */
 
-import type { Agency, Routes, Trips } from '../types/gtfs';
+import type { Agency, Routes } from '../types/gtfs';
+import type { EditorFeed } from '../feed/editor-feed';
 import { normalizeAgencyId } from '../utils/agency-helpers';
 import { renderTrashIcon } from 'gtfs-zone-web-common/ui/modal-utils';
 import {
@@ -18,7 +19,6 @@ import { getRouteDisplay } from '../utils/entity-display';
 import {
   feedBounds,
   trimOrExtendServices,
-  type BatchMixedPatchManager,
   type FeedBounds,
 } from '../utils/feed-bounds';
 import {
@@ -33,27 +33,10 @@ const TRIM_TO_FEED_START_BTN = 'trim-to-feed-start-btn';
 const EXTEND_TO_FEED_END_BTN = 'extend-to-feed-end-btn';
 
 export interface ServiceViewDependencies {
-  gtfsDatabase?: {
-    queryRows: (
-      tableName: string,
-      filter?: Record<string, unknown>
-    ) => Promise<unknown[]>;
-    getAllRows: (tableName: string) => Promise<unknown[]>;
-    updateRow?: (
-      tableName: string,
-      key: string,
-      data: Record<string, unknown>
-    ) => Promise<void>;
-    deleteRow?: (tableName: string, key: string) => Promise<void>;
-  };
-  gtfsRelationships?: {
-    getRoutesForService?: (service_id: string) => Promise<unknown[]>;
-    getTripsForService?: (service_id: string) => Promise<unknown[]>;
-  };
+  feed: EditorFeed;
   serviceDaysController: {
     renderServiceEditor: (service_id: string) => Promise<string>;
   };
-  patchManager?: BatchMixedPatchManager | null;
   onAgencyClick?: (agency_id: string) => void;
   onRouteClick: (route_id: string) => void;
   onTimetableClick: (
@@ -83,18 +66,17 @@ export class ServiceViewController {
     );
 
     try {
-      const routes = await this.getRoutesForService(service_id);
-      const agencies = await this.getAgenciesForRoutes(routes);
+      const trips = await this.dependencies.feed.find(
+        'trips',
+        'service_id',
+        service_id
+      );
+      const routes = this.routesOfTrips(trips);
+      const agencies = this.getAgenciesForRoutes(routes);
 
-      const trips =
-        await (this.dependencies.gtfsRelationships?.getTripsForService?.(
-          service_id
-        ) ??
-          this.dependencies.gtfsDatabase?.queryRows('trips', { service_id }) ??
-          []);
       const tripCountByRoute = new Map<string, number>();
       for (const trip of trips) {
-        const rid = (trip as Record<string, unknown>).route_id as string;
+        const rid = trip.route_id;
         tripCountByRoute.set(rid, (tripCountByRoute.get(rid) ?? 0) + 1);
       }
 
@@ -108,9 +90,7 @@ export class ServiceViewController {
 
       const { calendar, calendarDates } =
         await this.getServiceCalendar(service_id);
-      const bounds = this.dependencies.gtfsDatabase
-        ? await feedBounds(this.dependencies.gtfsDatabase)
-        : {};
+      const bounds = feedBounds(this.dependencies.feed);
 
       const html = `
         <div class="p-4 space-y-4">
@@ -135,106 +115,37 @@ export class ServiceViewController {
     calendar: Record<string, unknown>;
     calendarDates: Array<{ date: string; exception_type: string | number }>;
   }> {
-    if (!this.dependencies.gtfsDatabase) {
-      return { calendar: { service_id }, calendarDates: [] };
-    }
-    const calendarRows = await this.dependencies.gtfsDatabase.queryRows(
-      'calendar',
-      { service_id }
-    );
-    const calendarDates = (await this.dependencies.gtfsDatabase.queryRows(
+    const feed = this.dependencies.feed;
+    const calendarDates = (await feed.find(
       'calendar_dates',
-      { service_id }
-    )) as Array<{ date: string; exception_type: string | number }>;
+      'service_id',
+      service_id
+    )) as Array<{ date: string; exception_type: string }>;
     return {
-      calendar:
-        calendarRows.length > 0
-          ? (calendarRows[0] as Record<string, unknown>)
-          : { service_id },
+      calendar: feed.byKey('calendar', service_id) ?? { service_id },
       calendarDates,
     };
   }
 
-  /**
-   * Get routes using this service
-   */
-  private async getRoutesForService(service_id: string): Promise<Routes[]> {
-    if (
-      this.dependencies.gtfsRelationships?.getRoutesForService &&
-      this.dependencies.gtfsDatabase
-    ) {
-      try {
-        const routes =
-          await this.dependencies.gtfsRelationships.getRoutesForService(
-            service_id
-          );
-        return routes as Routes[];
-      } catch (error) {
-        console.error('Error getting routes for service:', error);
-        return [];
-      }
-    }
-
-    // Fallback: query database directly
-    if (this.dependencies.gtfsDatabase) {
-      try {
-        // Get all trips for this service
-        const trips = await this.dependencies.gtfsDatabase.queryRows('trips', {
-          service_id,
-        });
-
-        // Get unique route_ids
-        const route_ids = [
-          ...new Set(trips.map((trip: unknown) => (trip as Trips).route_id)),
-        ];
-
-        // Get routes data
-        const allRoutes =
-          await this.dependencies.gtfsDatabase.queryRows('routes');
-        const routes = allRoutes.filter((route: unknown) =>
-          route_ids.includes((route as Routes).route_id)
-        );
-
-        return routes as Routes[];
-      } catch (error) {
-        console.error('Error getting routes for service (fallback):', error);
-        return [];
-      }
-    }
-
-    return [];
+  /** The routes `trips` run on, in routes.txt order. */
+  private routesOfTrips(trips: readonly Record<string, unknown>[]): Routes[] {
+    const route_ids = new Set(trips.map((trip) => String(trip.route_id)));
+    return this.dependencies.feed
+      .table('routes')
+      .filter((route) => route_ids.has(route.route_id));
   }
 
-  /**
-   * Get agencies for the given routes
-   */
-  private async getAgenciesForRoutes(routes: Routes[]): Promise<Agency[]> {
-    if (!this.dependencies.gtfsDatabase) {
+  /** Agencies of the given routes. */
+  private getAgenciesForRoutes(routes: Routes[]): Agency[] {
+    const agency_ids = new Set(
+      routes.map((route) => route.agency_id).filter((id) => id !== undefined)
+    );
+    if (agency_ids.size === 0) {
       return [];
     }
-
-    try {
-      const agency_ids = [
-        ...new Set(
-          routes
-            .map((route) => route.agency_id)
-            .filter((id) => id !== undefined)
-        ),
-      ];
-
-      if (agency_ids.length === 0) {
-        return [];
-      }
-
-      const allAgencies =
-        await this.dependencies.gtfsDatabase.queryRows('agency');
-      return allAgencies.filter((agency: unknown) =>
-        agency_ids.includes((agency as Agency).agency_id)
-      ) as Agency[];
-    } catch (error) {
-      console.error('Error getting agencies:', error);
-      return [];
-    }
+    return this.dependencies.feed
+      .table('agency')
+      .filter((agency) => agency_ids.has(agency.agency_id));
   }
 
   /**
@@ -389,15 +300,15 @@ export class ServiceViewController {
    * same navigation the Route page's service dropdown uses.
    */
   private async openCreateTimetablePicker(service_id: string): Promise<void> {
-    if (!this.dependencies.gtfsDatabase) {
-      return;
-    }
-    const existingRoutes = await this.getRoutesForService(service_id);
+    const feed = this.dependencies.feed;
+    const existingRoutes = this.routesOfTrips(
+      await feed.find('trips', 'service_id', service_id)
+    );
     const existingRouteIds = new Set(
       existingRoutes.map((route) => route.route_id)
     );
-    const allRoutes = await this.dependencies.gtfsDatabase.queryRows('routes');
-    const options: OptionPickerItem[] = (allRoutes as Routes[])
+    const options: OptionPickerItem[] = feed
+      .table('routes')
       .filter((route) => !existingRouteIds.has(route.route_id))
       .map((route) => {
         const display = getRouteDisplay(route as Record<string, string>);
@@ -428,20 +339,14 @@ export class ServiceViewController {
     service_id: string,
     field: 'start_date' | 'end_date'
   ): Promise<void> {
-    const db = this.dependencies.gtfsDatabase;
-    const patchManager = this.dependencies.patchManager;
-    if (!db?.updateRow || !db.deleteRow || !patchManager) {
-      console.warn('[ServiceView] No writable database, cannot trim/extend');
-      return;
-    }
-    const bounds = await feedBounds(db);
+    const feed = this.dependencies.feed;
+    const bounds = feedBounds(feed);
     const value = field === 'start_date' ? bounds.start : bounds.end;
     if (!value) {
       return;
     }
     const { services, exceptions } = await trimOrExtendServices(
-      db as Parameters<typeof trimOrExtendServices>[0],
-      patchManager,
+      feed,
       field,
       value,
       new Set([service_id])

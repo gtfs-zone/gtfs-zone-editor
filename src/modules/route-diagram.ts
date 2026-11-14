@@ -13,7 +13,7 @@
  * viewBox.
  */
 
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
 import { GTFSRouteSource } from './gtfs-route-source';
 import { routeGraph } from 'gtfs-zone-web-common/gtfs/route-graph';
 import type { RouteSequence } from 'gtfs-zone-web-common/gtfs/route-sequence';
@@ -34,7 +34,6 @@ import {
   STRIP_ROW_CLASS,
 } from 'gtfs-zone-web-common/gtfs/route-strip';
 import type { RowDot } from 'gtfs-zone-web-common/gtfs/route-strip';
-import { GTFS_TABLES } from '../types/gtfs';
 import type { Stops } from '../types/gtfs-entities';
 import { getStopDisplay, renderCardLabel } from '../utils/entity-display';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
@@ -162,22 +161,20 @@ function renderDirection(
  * Returns an empty string when the route has no trips with stop times, so the
  * caller can drop the section entirely rather than render an empty card.
  */
-export function renderRouteDiagram(
-  gtfsParser: GTFSParser,
+export async function renderRouteDiagram(
+  feed: EditorFeed,
   routeData: Record<string, string>
-): string {
+): Promise<string> {
   const route_id = routeData.route_id;
-  const source = new GTFSRouteSource(gtfsParser);
+  const source = await GTFSRouteSource.load(feed, route_id);
   const directions = directionsForRoute(source, route_id);
   if (directions.length === 0) {
     return '';
   }
 
   const stopsById = new Map<string, Stops>();
-  for (const stop of gtfsParser.getFileDataSyncTyped<Stops>(
-    GTFS_TABLES.STOPS
-  )) {
-    stopsById.set(String(stop.stop_id), stop);
+  for (const stop of feed.table('stops')) {
+    stopsById.set(stop.stop_id ?? '', stop as unknown as Stops);
   }
 
   const color = routeColor(route_id, routeData.route_color);

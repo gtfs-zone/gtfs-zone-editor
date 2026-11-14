@@ -5,8 +5,7 @@
  * Provides a single-column layout showing agency properties and related routes.
  */
 
-import type { Agency, Routes } from '../types/gtfs';
-import type { QueryOnlyDatabase } from '../utils/field-component';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 import { renderInlineEntityFields } from '../utils/inline-editable-field';
 import { GTFS_TABLES } from '../types/gtfs';
 import { normalizeAgencyId, agencyRouteFilter } from '../utils/agency-helpers';
@@ -19,7 +18,7 @@ import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { t } from '../i18n/messages';
 
 export interface AgencyViewDependencies {
-  gtfsDatabase?: QueryOnlyDatabase;
+  feed: EditorFeed;
   onRouteClick: (route_id: string) => void;
   onDeleteAgency?: (agency_id: string) => void;
 }
@@ -41,26 +40,25 @@ export class AgencyViewController {
 
     try {
       // Get agency data
-      const agency = await this.getAgencyData(agency_id);
+      const agency = this.dependencies.feed.byKey(
+        'agency',
+        normalizeAgencyId(agency_id)
+      );
       if (!agency) {
         return this.renderError(t('view.agencyNotFound'));
       }
 
       // Get related routes
-      const routes = await this.getRoutesForAgency(agency_id);
+      const routes = this.getRoutesForAgency(agency_id);
 
       // Build trip count per route
-      const allTrips = ((await this.dependencies.gtfsDatabase?.queryRows(
-        'trips'
-      )) ?? []) as Record<string, unknown>[];
-      const routeIdSet = new Set(routes.map((r) => r.route_id));
-      const tripCountByRoute = new Map<string, number>();
-      for (const trip of allTrips) {
-        const rid = trip.route_id as string;
-        if (routeIdSet.has(rid)) {
-          tripCountByRoute.set(rid, (tripCountByRoute.get(rid) ?? 0) + 1);
-        }
-      }
+      const tripsPerRoute = await this.dependencies.feed.countBy(
+        'trips',
+        'route_id'
+      );
+      const tripCountByRoute = new Map<string, number>(
+        routes.map((r) => [r.route_id, tripsPerRoute[r.route_id] ?? 0])
+      );
 
       // Render complete view
       const html = `
@@ -80,7 +78,7 @@ export class AgencyViewController {
   /**
    * Render editable agency properties section
    */
-  private async renderAgencyProperties(agency: Agency): Promise<string> {
+  private async renderAgencyProperties(agency: FeedRow): Promise<string> {
     const fieldsHtml = await renderInlineEntityFields(
       GTFS_TABLES.AGENCY,
       agency as Record<string, string | number | undefined>,
@@ -108,7 +106,7 @@ export class AgencyViewController {
    * Render routes list section
    */
   private renderRoutesList(
-    routes: Routes[],
+    routes: FeedRow[],
     agency_id: string,
     tripCountByRoute: Map<string, number>
   ): string {
@@ -150,58 +148,15 @@ export class AgencyViewController {
     `;
   }
 
-  /**
-   * Get agency data from database
-   */
-  private async getAgencyData(agency_id: string): Promise<Agency | null> {
-    if (!this.dependencies.gtfsDatabase) {
-      return {
-        agency_id,
-        agency_name: agency_id,
-        agency_url: '',
-        agency_timezone: '',
-      } as Agency;
-    }
-
-    try {
-      const agencies = await this.dependencies.gtfsDatabase.queryRows(
-        'agency',
-        { agency_id: normalizeAgencyId(agency_id) }
-      );
-      if (agencies.length === 0) {
-        return null;
-      }
-      return agencies[0] as Agency;
-    } catch (error) {
-      console.error('Error getting agency data:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Get routes for this agency
-   */
-  private async getRoutesForAgency(agency_id: string): Promise<Routes[]> {
-    if (!this.dependencies.gtfsDatabase) {
-      return [];
-    }
-
-    try {
-      const allAgencies =
-        await this.dependencies.gtfsDatabase.queryRows('agency');
-      const agencyCount = allAgencies.length;
-      const acceptedIds = agencyRouteFilter(agency_id, agencyCount);
-
-      const routeArrays = await Promise.all(
-        acceptedIds.map((id) =>
-          this.dependencies.gtfsDatabase!.queryRows('routes', { agency_id: id })
-        )
-      );
-      return routeArrays.flat() as Routes[];
-    } catch (error) {
-      console.error('Error getting routes for agency:', error);
-      return [];
-    }
+  /** Routes of this agency, unassigned ones included for a single agency. */
+  private getRoutesForAgency(agency_id: string): FeedRow[] {
+    const feed = this.dependencies.feed;
+    const accepted = new Set(
+      agencyRouteFilter(agency_id, feed.table('agency').length)
+    );
+    return feed
+      .table('routes')
+      .filter((r) => accepted.has(normalizeAgencyId(r.agency_id)));
   }
 
   /**

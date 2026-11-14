@@ -43,8 +43,8 @@ import {
   locationIdClash,
   readIdOwners,
   readNewLocationIdOwners,
-  readZoneFeatures,
 } from '../utils/location-id-owners';
+import { getZoneFeatures } from './zone-store';
 import { GTFS_TABLES } from '../types/gtfs';
 import { firstFreeId } from '../utils/inline-entity-creator';
 import { t } from '../i18n/messages';
@@ -53,8 +53,7 @@ export interface OnDemandModalDeps extends EditableTableDeps {
   /** Opens a zone's browse page. The modal closes first. */
   onZoneClick: (location_id: string) => void;
   /**
-   * Writes a new zone into locations.geojson as one patch. Lives outside this
-   * module because it needs the parser, not the database.
+   * Writes a new zone into locations.geojson as one patch.
    */
   onCreateZone: (zone: NewZone) => Promise<void>;
 }
@@ -123,9 +122,7 @@ interface OnDemandEntry {
 async function groupStopOptions(
   deps: OnDemandModalDeps
 ): Promise<OptionPickerItem[]> {
-  const rows = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.STOPS)
-  );
+  const rows = deps.feed.table(specStoreName(GTFS_TABLES.STOPS));
   return rows
     .filter((row) => stopLocationType(row) === 0)
     .map((row) => ({
@@ -145,7 +142,7 @@ async function groupStopOptions(
  * place and so a zone is reachable from here.
  */
 async function renderZonesPane(deps: OnDemandModalDeps): Promise<string> {
-  const features = await readZoneFeatures(deps.gtfsDatabase);
+  const features = getZoneFeatures(deps.feed);
   if (features.length === 0) {
     return emptyState(ZONES_ENTRY_ID, t('flex.zonesHint'));
   }
@@ -368,7 +365,7 @@ export async function showOnDemandModal(
       return entry.render(deps);
     }
     const context: OnDemandContext = {
-      idOwners: await readIdOwners(deps.gtfsDatabase),
+      idOwners: readIdOwners(deps.feed),
     };
     tableConfig.tableName = entry.table;
     tableConfig.emptyMessage = entry.emptyMessage;
@@ -377,24 +374,19 @@ export async function showOnDemandModal(
     tableConfig.joinColumns = entry.joinColumns
       ? await entry.joinColumns(deps)
       : undefined;
-    tableConfig.rows = await deps.gtfsDatabase.getAllRows(
-      specStoreName(entry.table)
-    );
+    tableConfig.rows = [...deps.feed.table(specStoreName(entry.table))];
     return renderEditableTable(tableConfig);
   };
 
   const countEntry = async (entry: OnDemandEntry): Promise<number> => {
     if (entry.table === ZONES_ENTRY_ID) {
-      return (await readZoneFeatures(deps.gtfsDatabase)).length;
+      return getZoneFeatures(deps.feed).length;
     }
-    return (await deps.gtfsDatabase.getAllRows(specStoreName(entry.table)))
-      .length;
+    return deps.feed.table(specStoreName(entry.table)).length;
   };
 
   const createZone = async (close: () => void): Promise<void> => {
-    const created = await promptNewZone(
-      await readNewLocationIdOwners(deps.gtfsDatabase)
-    );
+    const created = await promptNewZone(readNewLocationIdOwners(deps.feed));
     if (!created) {
       return;
     }

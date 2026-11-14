@@ -1,7 +1,7 @@
 import { Map as MapLibreMap, GeoJSONSource } from 'maplibre-gl';
 import type { FilterSpecification, ExpressionSpecification } from 'maplibre-gl';
 import { Stops, Pathways } from '../types/gtfs-entities';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 import { CONFIG } from '../config';
 import { buildStopCoordResolver, hasValidCoords } from '../utils/stop-coords';
 import { bufferedHull } from '../utils/station-hull';
@@ -149,7 +149,7 @@ const SPECIAL_STOP = specialStop(['focused', 'onRoute', 'kept']);
 
 export class LayerManager {
   private map: MapLibreMap;
-  private gtfsParser: GTFSParser;
+  private feed: EditorFeed;
   public onStopsDataUpdated:
     ((data: GeoJSON.FeatureCollection) => void) | null = null;
 
@@ -208,9 +208,14 @@ export class LayerManager {
     clickAreaRadius: 15,
   };
 
-  constructor(map: MapLibreMap, gtfsParser: GTFSParser) {
+  constructor(map: MapLibreMap, feed: EditorFeed) {
     this.map = map;
-    this.gtfsParser = gtfsParser;
+    this.feed = feed;
+  }
+
+  /** The open feed's rows of a mirrored table; empty with no feed open. */
+  private rows(table: 'stops' | 'pathways'): readonly FeedRow[] {
+    return this.feed.isOpen ? this.feed.table(table) : [];
   }
 
   /**
@@ -299,17 +304,17 @@ export class LayerManager {
    * focus highlight) has to survive a string id like "zone-north".
    */
   public updateZonesLayer(): void {
-    const features: GeoJSON.Feature[] = listZones(this.gtfsParser).map(
-      (feature) => ({
-        type: 'Feature',
-        geometry: feature.geometry,
-        properties: {
-          ...(feature.properties ?? {}),
-          location_id: String(feature.id),
-          zone_name: zoneName(feature),
-        },
-      })
-    );
+    const features: GeoJSON.Feature[] = (
+      this.feed.isOpen ? listZones(this.feed) : []
+    ).map((feature) => ({
+      type: 'Feature',
+      geometry: feature.geometry,
+      properties: {
+        ...(feature.properties ?? {}),
+        location_id: String(feature.id),
+        zone_name: zoneName(feature),
+      },
+    }));
     const data: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
       features,
@@ -543,7 +548,7 @@ export class LayerManager {
    * Add stops to map with enhanced styling and functionality
    */
   public addStopsLayer(options: Partial<StopLayerOptions> = {}): void {
-    const stops = this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt');
+    const stops = this.rows('stops');
     if (!stops) {
       console.warn('No stops data available for rendering');
       return;
@@ -615,7 +620,9 @@ export class LayerManager {
    * and no coord-having ancestor, or in pathway components disconnected from
    * any pinned sibling, are skipped with a warning.
    */
-  private createStopsGeoJSON(stops: Stops[]): GeoJSON.FeatureCollection {
+  private createStopsGeoJSON(
+    stops: readonly Stops[]
+  ): GeoJSON.FeatureCollection {
     const stopById = new Map<string, Stops>();
     stops.forEach((s) => stopById.set(String(s.stop_id), s));
 
@@ -649,8 +656,7 @@ export class LayerManager {
       return '';
     };
 
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
+    const pathways = this.rows('pathways');
     const resolveCoord = this.getCachedResolver(stops, pathways);
 
     const features: GeoJSON.Feature[] = [];
@@ -918,14 +924,14 @@ export class LayerManager {
    * of them is unreadable. Types 4 and 5 link two trips rather than two places,
    * so they have no geometry here and are left out.
    */
-  public showTransferEdges(stop_id: string): void {
+  public showTransferEdges(
+    stop_id: string,
+    transfers: readonly FeedRow[]
+  ): void {
     this.clearTransferEdges();
 
-    const stops =
-      this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
-    const transfers = this.gtfsParser.getFileDataSync('transfers.txt') || [];
+    const stops = this.rows('stops');
+    const pathways = this.rows('pathways');
     // Own coords where a stop has them, otherwise its laid-out position in the
     // pathway graph, so an edge lands on the dot that is actually drawn.
     const resolveCoord = this.getCachedResolver(stops, pathways);
@@ -1387,8 +1393,8 @@ export class LayerManager {
   }
 
   private getCachedResolver(
-    stops: Stops[],
-    pathways: Pathways[]
+    stops: readonly Stops[],
+    pathways: readonly Pathways[]
   ): (stop_id: string) => [number, number] | null {
     if (!this._resolverDirty && this._cachedResolver) {
       return this._cachedResolver;
@@ -1407,7 +1413,7 @@ export class LayerManager {
       return;
     }
 
-    const stops = this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt');
+    const stops = this.rows('stops');
     if (!stops) {
       return;
     }
@@ -1438,10 +1444,8 @@ export class LayerManager {
    * Only includes pathways where both endpoints are children of the station (or the station itself).
    */
   private buildPathwaysGeoJSON(stationId: string): GeoJSON.FeatureCollection {
-    const stops =
-      this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
+    const stops = this.rows('stops');
+    const pathways = this.rows('pathways');
 
     // Shared coord resolver: own coords if available, otherwise a Tutte-layout
     // position over the pathway graph (matches how stops are drawn so pathway
@@ -1536,10 +1540,8 @@ export class LayerManager {
   private buildStationGroundGeoJSON(
     stationId: string
   ): GeoJSON.FeatureCollection | null {
-    const stops =
-      this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
+    const stops = this.rows('stops');
+    const pathways = this.rows('pathways');
     const resolveCoord = this.getCachedResolver(stops, pathways);
 
     const coords: [number, number][] = [];

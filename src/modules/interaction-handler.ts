@@ -6,9 +6,9 @@ import {
   Point,
   MapGeoJSONFeature,
 } from 'maplibre-gl';
-import { Pathways, Stops } from '../types/gtfs-entities';
 import { MapMode } from './map-controller';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
+import { insertOp } from '../feed/patch-build';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { hasLiveEditor } from '../utils/inline-edit';
 import { promptNewEntity } from './entity-form-modal';
@@ -40,7 +40,7 @@ export interface InteractionCallbacks {
 
 export class InteractionHandler {
   private map: MapLibreMap;
-  private gtfsParser: GTFSParser;
+  private feed: EditorFeed;
   private callbacks: InteractionCallbacks = {};
   private currentMode: MapMode = MapMode.NAVIGATE;
 
@@ -66,9 +66,9 @@ export class InteractionHandler {
   // Id of the persistent "click two stops" / "From: ..." notification shown while in ADD_PATHWAY mode
   private addPathwayNotificationId: number | null = null;
 
-  constructor(map: MapLibreMap, gtfsParser: GTFSParser) {
+  constructor(map: MapLibreMap, feed: EditorFeed) {
     this.map = map;
-    this.gtfsParser = gtfsParser;
+    this.feed = feed;
     this.setupEventListeners();
   }
 
@@ -325,8 +325,8 @@ export class InteractionHandler {
    * Handle add stop mode clicks
    */
   private async handleAddStopClick(e: MapMouseEvent): Promise<void> {
-    if (!this.gtfsParser) {
-      console.error('Cannot add stop: GTFSParser not initialized');
+    if (!this.feed.isOpen) {
+      console.error('[InteractionHandler] cannot add a stop: no feed open');
       return;
     }
 
@@ -337,8 +337,7 @@ export class InteractionHandler {
     // while this one is still being written.
     this.setMapMode(MapMode.NAVIGATE);
 
-    const database = this.gtfsParser.gtfsDatabase;
-    const owners = await readNewLocationIdOwners(database);
+    const owners = readNewLocationIdOwners(this.feed);
     this.showPendingStopMarker(lng, lat);
     let stop_id: string | null = null;
     try {
@@ -352,13 +351,13 @@ export class InteractionHandler {
         fields: [],
         validate: () => null,
         onCreate: async (v) => {
-          const newStop: Stops = {
+          const newStop = {
             stop_id: v.stop_id,
             stop_name: '',
-            stop_lat: parseFloat(lat.toFixed(6)),
-            stop_lon: parseFloat(lng.toFixed(6)),
+            stop_lat: String(parseFloat(lat.toFixed(6))),
+            stop_lon: String(parseFloat(lng.toFixed(6))),
             parent_station: expandedStationId ?? '',
-            location_type: 0,
+            location_type: '0',
           };
           console.log('[InteractionHandler] creating stop:', newStop);
           await this.addStopToData(newStop);
@@ -433,13 +432,8 @@ export class InteractionHandler {
       return;
     }
 
-    const stops =
-      this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const clickedStop = stops.find((s) => s.stop_id === stop_id);
-    const locationType =
-      typeof clickedStop?.location_type === 'number'
-        ? clickedStop.location_type
-        : parseInt(clickedStop?.location_type ?? '0', 10) || 0;
+    const clickedStop = this.feed.byKey('stops', stop_id);
+    const locationType = parseInt(clickedStop?.location_type ?? '0', 10) || 0;
 
     if (locationType === 1) {
       showModal({
@@ -475,8 +469,7 @@ export class InteractionHandler {
       return;
     }
 
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
+    const pathways = this.feed.table('pathways');
     const endpoints = `
       <div>
         <div class="label">${renderSpecFieldLabelContent(GTFS_TABLES.PATHWAYS, 'from_stop_id', t('map.fromStop'))}</div>
@@ -521,13 +514,15 @@ export class InteractionHandler {
       },
       onCreate: async (v) => {
         const pathwayId = v.pathway_id;
-        await this.gtfsParser.createPathway({
-          pathway_id: pathwayId,
-          from_stop_id: fromStopId,
-          to_stop_id: toStopId,
-          pathway_mode: parseInt(v.pathway_mode, 10),
-          is_bidirectional: parseInt(v.is_bidirectional, 10),
-        });
+        await this.feed.apply([
+          insertOp('pathways', {
+            pathway_id: pathwayId,
+            from_stop_id: fromStopId,
+            to_stop_id: toStopId,
+            pathway_mode: String(parseInt(v.pathway_mode, 10)),
+            is_bidirectional: String(parseInt(v.is_bidirectional, 10)),
+          }),
+        ]);
         this.setMapMode(MapMode.NAVIGATE);
         this.callbacks.onPathwayCreated?.(pathwayId);
         console.log(`Created pathway ${pathwayId}`);
@@ -781,16 +776,10 @@ export class InteractionHandler {
     this.addPathwayNotificationId = null;
   }
 
-  /**
-   * Add stop to GTFS data (delegates to gtfsParser)
-   */
-  private async addStopToData(stop: Stops): Promise<void> {
-    if (!this.gtfsParser || !this.gtfsParser.createStop) {
-      throw new Error('GTFSParser or createStop method not available');
-    }
-
+  /** Insert a new stop as one patch. */
+  private async addStopToData(stop: Record<string, string>): Promise<void> {
     try {
-      await this.gtfsParser.createStop(stop);
+      await this.feed.apply([insertOp('stops', stop)]);
       console.log('Stop added successfully:', stop.stop_id);
 
       // Notify callback to refresh map layers properly

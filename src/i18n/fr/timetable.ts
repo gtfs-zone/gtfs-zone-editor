@@ -104,7 +104,6 @@ export const timetable: Translation<typeof en> = {
   'tt.stopMissing':
     'Arrêt {id} absent de stops.txt mais référencé dans stop_times.txt',
   'tt.invalidTime': 'Heure invalide {time} : {reason}',
-  'tt.dbLost': 'Connexion à la base de données perdue',
   'sched.offsetError':
     'Le décalage doit être en minutes signées, MM:SS ou HH:MM:SS, par ex. -5',
   'sched.offsetLabel': 'Décalage horaire',

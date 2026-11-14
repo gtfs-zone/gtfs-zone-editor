@@ -6,14 +6,13 @@ import {
   renderSimplifyIcon,
   renderRouteWaypointsIcon,
 } from 'gtfs-zone-web-common/ui/modal-utils';
-import JSZip from 'jszip';
+import { strFromU8, unzip, type Unzipped } from 'fflate';
 import Papa from 'papaparse';
 import { showOptionPickerModal } from './option-picker-modal';
-import type { GTFSParser } from './gtfs-parser';
-import type { PatchManager } from './patch-manager';
+import type { EditorFeed } from '../feed/editor-feed';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import type { Shapes } from '../types/gtfs-entities';
 import { parseGPX } from '../utils/gpx-parser';
-import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import {
   getRouteDisplay,
@@ -121,18 +120,15 @@ interface ZipShapeCandidate {
  * Read one CSV out of an uploaded feed. Matches on the base name so a feed
  * zipped with a wrapping folder still resolves.
  */
-async function readZipCsv(
-  zip: JSZip,
-  fileName: string
-): Promise<Record<string, string>[]> {
-  const entryName = Object.keys(zip.files).find((name) => {
+function readZipCsv(zip: Unzipped, fileName: string): Record<string, string>[] {
+  const entryName = Object.keys(zip).find((name) => {
     const base = name.split('/').pop() ?? name;
-    return base.toLowerCase() === fileName && !zip.files[name].dir;
+    return base.toLowerCase() === fileName && !name.endsWith('/');
   });
   if (!entryName) {
     return [];
   }
-  const text = await zip.files[entryName].async('string');
+  const text = strFromU8(zip[entryName]);
   const parsed = Papa.parse<Record<string, string>>(text, {
     header: true,
     skipEmptyLines: true,
@@ -153,13 +149,24 @@ function toNumber(value: unknown): number {
 /**
  * Parse shapes out of an uploaded GTFS zip without touching the current feed.
  *
- * `GTFSParser.parseFile` replaces the whole feed, so this reads the three files
- * it needs directly. `trips.txt` and `routes.txt` are only read to label the
+ * Loading a feed replaces the open one, so this reads the three files it
+ * needs directly. `trips.txt` and `routes.txt` are only read to label the
  * shapes; nothing from them is inserted.
  */
 async function parseShapesFromZip(file: File): Promise<ZipShapeCandidate[]> {
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
-  const shapeRows = await readZipCsv(zip, 'shapes.txt');
+  const wanted = new Set(['shapes.txt', 'routes.txt', 'trips.txt']);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const zip = await new Promise<Unzipped>((resolve, reject) =>
+    unzip(
+      bytes,
+      {
+        filter: (f) =>
+          wanted.has((f.name.split('/').pop() ?? f.name).toLowerCase()),
+      },
+      (err, data) => (err ? reject(err) : resolve(data))
+    )
+  );
+  const shapeRows = readZipCsv(zip, 'shapes.txt');
   if (shapeRows.length === 0) {
     throw new Error(t('shapes.noShapesTxt'));
   }
@@ -201,12 +208,12 @@ async function parseShapesFromZip(file: File): Promise<ZipShapeCandidate[]> {
   }
 
   const routeById = new Map<string, Record<string, string>>();
-  for (const route of await readZipCsv(zip, 'routes.txt')) {
+  for (const route of readZipCsv(zip, 'routes.txt')) {
     routeById.set(String(route.route_id ?? ''), route);
   }
 
   const usagesByShape = new Map<string, Set<string>>();
-  for (const trip of await readZipCsv(zip, 'trips.txt')) {
+  for (const trip of readZipCsv(zip, 'trips.txt')) {
     const shapeId = String(trip.shape_id ?? '');
     if (!byShape.has(shapeId)) {
       continue;
@@ -778,13 +785,7 @@ function renderBody(shapes: Map<string, ShapeUsage>): string {
 }
 
 export class ShapesManager {
-  private gtfsParser: GTFSParser;
-  private patchManager: PatchManager;
-
-  constructor(gtfsParser: GTFSParser, patchManager: PatchManager) {
-    this.gtfsParser = gtfsParser;
-    this.patchManager = patchManager;
-  }
+  constructor(private readonly feed: EditorFeed) {}
 
   /**
    * Point counts, trip counts, the distinct (route, service, direction)
@@ -794,92 +795,38 @@ export class ShapesManager {
    * column without reopening the modal.
    */
   private async getShapes(): Promise<Map<string, ShapeUsage>> {
-    const rows = (await this.gtfsParser.gtfsDatabase.getAllRows(
-      'shapes'
-    )) as Shapes[];
     const map = new Map<string, ShapeUsage>();
-    for (const row of rows) {
-      const id = String(row.shape_id);
-      const usage = map.get(id);
-      if (usage) {
-        usage.pointCount++;
-      } else {
-        map.set(id, { pointCount: 1, tripCount: 0, timetables: [] });
-      }
-    }
-
-    const routeById = new Map<string, Record<string, unknown>>();
-    for (const route of this.gtfsParser.getFileDataSync('routes.txt')) {
-      routeById.set(String(route.route_id), route as Record<string, unknown>);
-    }
-
-    const timetablesByShape = new Map<string, Map<string, TimetableUsage>>();
-    // One trip per shape is enough to name where the shape runs from and to.
-    const representativeTrip = new Map<string, string>();
-    for (const trip of this.gtfsParser.getFileDataSync('trips.txt')) {
-      const shapeId = String(trip.shape_id ?? '');
-      const usage = map.get(shapeId);
-      if (!usage) {
-        continue;
-      }
-      usage.tripCount++;
-      if (!representativeTrip.has(shapeId)) {
-        representativeTrip.set(shapeId, String(trip.trip_id ?? ''));
-      }
-
-      const route_id = String(trip.route_id ?? '');
-      const service_id = String(trip.service_id ?? '');
-      const direction_id = String(trip.direction_id ?? '');
-      let timetables = timetablesByShape.get(shapeId);
-      if (!timetables) {
-        timetables = new Map<string, TimetableUsage>();
-        timetablesByShape.set(shapeId, timetables);
-      }
-      const key = `${route_id}\u0000${service_id}\u0000${direction_id}`;
-      if (!timetables.has(key)) {
-        timetables.set(key, {
-          route: routeById.get(route_id) ?? { route_id },
-          service_id,
-          direction_id,
-        });
-      }
-    }
-
-    for (const [shapeId, timetables] of timetablesByShape) {
-      const usage = map.get(shapeId)!;
-      usage.timetables = [...timetables.values()];
-    }
-
-    const stopById = new Map<string, Record<string, string>>();
-    for (const stop of this.gtfsParser.getFileDataSync('stops.txt')) {
-      stopById.set(String(stop.stop_id), stop as Record<string, string>);
-    }
-    // One indexed stop_times lookup per distinct shape, not per trip.
-    for (const [shapeId, tripId] of representativeTrip) {
-      const stopTimes = [...this.gtfsParser.getStopTimesByTripId(tripId)].sort(
-        (a, b) => Number(a.stop_sequence) - Number(b.stop_sequence)
-      );
-      if (stopTimes.length < 2) {
+    for (const [shapeId, usage] of Object.entries(
+      await this.feed.shapeUsage()
+    )) {
+      const first = usage.origin
+        ? this.feed.byKey('stops', usage.origin)
+        : null;
+      const last = usage.destination
+        ? this.feed.byKey('stops', usage.destination)
+        : null;
+      if (usage.trips > 0 && (!first || !last)) {
         console.warn(
-          `[ShapesManager] shape ${shapeId}: trip ${tripId} has ${stopTimes.length} stop_times, cannot name an origin and destination`
+          `[ShapesManager] shape ${shapeId}: no origin and destination stop to name it by`
         );
-        continue;
       }
-      const first = stopById.get(String(stopTimes[0].stop_id ?? ''));
-      const last = stopById.get(
-        String(stopTimes[stopTimes.length - 1].stop_id ?? '')
-      );
-      if (!first || !last) {
-        console.warn(
-          `[ShapesManager] shape ${shapeId}: trip ${tripId} references a stop that is not in stops.txt`
-        );
-        continue;
-      }
-      const usage = map.get(shapeId)!;
-      usage.origin = renderOptionLabel(getStopDisplay(first));
-      usage.destination = renderOptionLabel(getStopDisplay(last));
+      map.set(shapeId, {
+        pointCount: usage.points,
+        tripCount: usage.trips,
+        timetables: usage.timetables.map(
+          ([route_id, service_id, direction_id]) => ({
+            route: this.feed.byKey('routes', route_id) ?? { route_id },
+            service_id,
+            direction_id,
+          })
+        ),
+        ...(first &&
+          last && {
+            origin: renderOptionLabel(getStopDisplay(first)),
+            destination: renderOptionLabel(getStopDisplay(last)),
+          }),
+      });
     }
-
     return map;
   }
 
@@ -971,42 +918,32 @@ export class ShapesManager {
       return;
     }
 
-    const rows = (await this.gtfsParser.gtfsDatabase.getAllRows(
-      'shapes'
-    )) as Shapes[];
-    const toDelete = rows.filter((r) => String(r.shape_id) === shapeId);
-    const keys = toDelete.map((r) =>
-      generateCompositeKeyFromRecord('shapes', r)
-    );
-
-    await this.gtfsParser.deleteShapeRows(keys);
-    await this.patchManager.recordBatchDelete(
-      toDelete.map((r, i) => ({ table: 'shapes', id: keys[i], record: r })),
+    const toDelete = await this.getShapeRows(shapeId);
+    await this.feed.apply(
+      toDelete.map((r) => deleteOp('shapes', r)),
       t('shapes.labelDelete', { id: shapeId })
     );
     console.log(
-      `[ShapesManager] Deleted shape ${shapeId} (${keys.length} points)`
+      `[ShapesManager] Deleted shape ${shapeId} (${toDelete.length} points)`
     );
   }
 
   /** One shape's rows, in shape_pt_sequence order. */
   private async getShapeRows(shapeId: string): Promise<Shapes[]> {
-    const allRows = (await this.gtfsParser.gtfsDatabase.getAllRows(
-      'shapes'
-    )) as Shapes[];
-    return allRows
-      .filter((r) => String(r.shape_id) === shapeId)
-      .sort(
-        (a, b) => Number(a.shape_pt_sequence) - Number(b.shape_pt_sequence)
-      );
+    const rows = (await this.feed.read(
+      'shapeRows',
+      shapeId
+    )) as unknown as Shapes[];
+    return rows.sort(
+      (a, b) => Number(a.shape_pt_sequence) - Number(b.shape_pt_sequence)
+    );
   }
 
   /**
    * Swap every row of `shapeId` for `newRows`, as one undo step.
    *
-   * Recorded as a single mixed batch with the deletes ordered first: the
-   * renumbered points reuse the old composite keys, so neither replay
-   * direction may hold two rows on one key.
+   * One batch with the deletes ordered first: the renumbered points reuse
+   * the old composite keys, so no step may hold two rows on one key.
    */
   private async replaceShapeRows(
     shapeId: string,
@@ -1014,37 +951,15 @@ export class ShapesManager {
     label: string
   ): Promise<void> {
     const toDelete = await this.getShapeRows(shapeId);
-    const deleteKeys = toDelete.map((r) =>
-      generateCompositeKeyFromRecord('shapes', r)
-    );
-    const insertKeys = newRows.map((r) =>
-      generateCompositeKeyFromRecord('shapes', r)
-    );
-
-    if (deleteKeys.length > 0) {
-      await this.gtfsParser.deleteShapeRows(deleteKeys);
-    }
-    await this.gtfsParser.insertShapeRows(newRows);
-
-    await this.patchManager.recordBatchMixed(
+    await this.feed.apply(
       [
-        ...toDelete.map((r, i) => ({
-          op: 'delete' as const,
-          table: 'shapes',
-          id: deleteKeys[i],
-          record: r,
-        })),
-        ...newRows.map((r, i) => ({
-          op: 'insert' as const,
-          table: 'shapes',
-          id: insertKeys[i],
-          record: r,
-        })),
+        ...toDelete.map((r) => deleteOp('shapes', r)),
+        ...newRows.map((r) => insertOp('shapes', r)),
       ],
       label
     );
     console.log(
-      `[ShapesManager] Replaced shape ${shapeId}: ${deleteKeys.length} -> ${newRows.length} points`
+      `[ShapesManager] Replaced shape ${shapeId}: ${toDelete.length} -> ${newRows.length} points`
     );
   }
 
@@ -1143,14 +1058,7 @@ export class ShapesManager {
    * one mixed batch (deletes first) so a single undo restores the shape.
    */
   private async simplifyShape(shapeId: string): Promise<void> {
-    const allRows = (await this.gtfsParser.gtfsDatabase.getAllRows(
-      'shapes'
-    )) as Shapes[];
-    const rows = allRows
-      .filter((r) => String(r.shape_id) === shapeId)
-      .sort(
-        (a, b) => Number(a.shape_pt_sequence) - Number(b.shape_pt_sequence)
-      );
+    const rows = await this.getShapeRows(shapeId);
 
     if (rows.length <= 2) {
       await showModal({
@@ -1206,32 +1114,10 @@ export class ShapesManager {
       return;
     }
 
-    const deleteKeys = rows.map((r) =>
-      generateCompositeKeyFromRecord('shapes', r)
-    );
-    const insertKeys = newRows.map((r) =>
-      generateCompositeKeyFromRecord('shapes', r)
-    );
-
-    await this.gtfsParser.deleteShapeRows(deleteKeys);
-    await this.gtfsParser.insertShapeRows(newRows);
-
-    // Deletes first: the renumbered points reuse the old keys, so neither
-    // replay direction may hold two rows on one key.
-    await this.patchManager.recordBatchMixed(
+    await this.feed.apply(
       [
-        ...rows.map((r, i) => ({
-          op: 'delete' as const,
-          table: 'shapes',
-          id: deleteKeys[i],
-          record: r,
-        })),
-        ...newRows.map((r, i) => ({
-          op: 'insert' as const,
-          table: 'shapes',
-          id: insertKeys[i],
-          record: r,
-        })),
+        ...rows.map((r) => deleteOp('shapes', r)),
+        ...newRows.map((r) => insertOp('shapes', r)),
       ],
       t('shapes.labelSimplify', {
         id: shapeId,
@@ -1252,9 +1138,10 @@ export class ShapesManager {
    * skipped rather than rewritten.
    */
   private async simplifyAllShapes(): Promise<void> {
-    const allRows = (await this.gtfsParser.gtfsDatabase.getAllRows(
-      'shapes'
-    )) as Shapes[];
+    const allRows = (await this.feed.where(
+      'shapes',
+      []
+    )) as unknown as Shapes[];
 
     const byShape = new Map<string, Shapes[]>();
     for (const row of allRows) {
@@ -1319,20 +1206,8 @@ export class ShapesManager {
       return;
     }
 
-    const deleteOps: {
-      op: 'delete';
-      table: string;
-      id: string;
-      record: Shapes;
-    }[] = [];
-    const insertOps: {
-      op: 'insert';
-      table: string;
-      id: string;
-      record: Shapes;
-    }[] = [];
-    const deleteKeys: string[] = [];
-    const insertRows: Shapes[] = [];
+    const deletes: Shapes[] = [];
+    const inserts: Shapes[] = [];
     let changedShapes = 0;
 
     targets.forEach((target, i) => {
@@ -1341,16 +1216,8 @@ export class ShapesManager {
         return;
       }
       changedShapes++;
-      for (const row of target.rows) {
-        const id = generateCompositeKeyFromRecord('shapes', row);
-        deleteKeys.push(id);
-        deleteOps.push({ op: 'delete', table: 'shapes', id, record: row });
-      }
-      for (const row of newRows) {
-        const id = generateCompositeKeyFromRecord('shapes', row);
-        insertRows.push(row);
-        insertOps.push({ op: 'insert', table: 'shapes', id, record: row });
-      }
+      deletes.push(...target.rows);
+      inserts.push(...newRows);
     });
 
     if (changedShapes === 0) {
@@ -1359,21 +1226,20 @@ export class ShapesManager {
       return;
     }
 
-    await this.gtfsParser.deleteShapeRows(deleteKeys);
-    await this.gtfsParser.insertShapeRows(insertRows);
-
-    // Deletes first: the renumbered points reuse the old keys, so neither
-    // replay direction may hold two rows on one key.
-    await this.patchManager.recordBatchMixed(
-      [...deleteOps, ...insertOps],
+    // Deletes first: the renumbered points reuse the old keys.
+    await this.feed.apply(
+      [
+        ...deletes.map((r) => deleteOp('shapes', r)),
+        ...inserts.map((r) => insertOp('shapes', r)),
+      ],
       t('shapes.labelSimplifyAll', {
         shapes: t('shapes.count', { count: changedShapes }),
-        from: deleteKeys.length,
-        to: insertRows.length,
+        from: deletes.length,
+        to: inserts.length,
       })
     );
     console.log(
-      `[ShapesManager] Simplified ${changedShapes} shapes from ${deleteKeys.length} to ${insertRows.length} points at ${SIMPLIFY_LEVELS[levelIndex]}m`
+      `[ShapesManager] Simplified ${changedShapes} shapes from ${deletes.length} to ${inserts.length} points at ${SIMPLIFY_LEVELS[levelIndex]}m`
     );
   }
 
@@ -1390,16 +1256,8 @@ export class ShapesManager {
       source,
       existing: existingShapes,
       commit: async (shapeId, newRows) => {
-        const insertKeys = newRows.map((r) =>
-          generateCompositeKeyFromRecord('shapes', r)
-        );
-        await this.gtfsParser.insertShapeRows(newRows);
-        await this.patchManager.recordBatchInsert(
-          newRows.map((r, i) => ({
-            table: 'shapes',
-            id: insertKeys[i],
-            record: r,
-          })),
+        await this.feed.apply(
+          newRows.map((r) => insertOp('shapes', r)),
           t('shapes.labelNew', { id: shapeId, count: newRows.length })
         );
         console.log(
@@ -1414,8 +1272,8 @@ export class ShapesManager {
    * name a new shape, and assign it to one trip in the same step.
    *
    * Mirrors `newShape()` but also points the trip's `shape_id` at the result,
-   * so the shape insert and the trip update are recorded together as one
-   * `recordBatchMixed` - one click, one undo step.
+   * so the shape insert and the trip update go in one patch - one click,
+   * one undo step.
    *
    * @returns the new shape_id, or null if the user cancelled at any point.
    */
@@ -1468,43 +1326,17 @@ export class ShapesManager {
       source,
       existing,
       commit: async (shapeId, newRows) => {
-        const insertKeys = newRows.map((r) =>
-          generateCompositeKeyFromRecord('shapes', r)
-        );
-        await this.gtfsParser.insertShapeRows(newRows);
-
-        const trips = this.gtfsParser.getFileDataSync(
-          'trips.txt'
-        ) as unknown as Record<string, unknown>[];
-        const tripRow = trips.find((t) => t.trip_id === tripId);
-
-        const ops: Parameters<PatchManager['recordBatchMixed']>[0] =
-          newRows.map((r, i) => ({
-            op: 'insert' as const,
-            table: 'shapes',
-            id: insertKeys[i],
-            record: r,
-          }));
-
-        if (tripRow) {
-          await this.gtfsParser.gtfsDatabase.updateRow('trips', tripId, {
-            shape_id: shapeId,
-          });
-          ops.push({
-            op: 'update' as const,
-            table: 'trips',
-            id: tripId,
-            before: { shape_id: tripRow.shape_id ?? currentShapeId },
-            after: { shape_id: shapeId },
-          });
-        } else {
+        const [tripRow] = await this.feed.byKeys('trips', [tripId]);
+        if (!tripRow) {
           console.warn(
             `[ShapesManager] trip ${tripId} not found; inserted shape ${shapeId} without assigning it`
           );
         }
-
-        await this.patchManager.recordBatchMixed(
-          ops,
+        await this.feed.apply(
+          [
+            ...newRows.map((r) => insertOp('shapes', r)),
+            tripRow ? updateOp('trips', tripRow, { shape_id: shapeId }) : null,
+          ],
           t('shapes.labelUpload', {
             id: shapeId,
             trip: tripId,

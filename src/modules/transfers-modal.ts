@@ -16,16 +16,14 @@ import {
   type EditableTableConfig,
   type EditableTableDeps,
 } from './editable-table';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
 import { getEntityDisplay } from '../utils/entity-display';
 import { specStoreName } from '../utils/spec-field-edit';
 import { validateTransferRow } from '../utils/fares-rules';
 import { GTFS_FIELD_SPECS, GTFS_TABLES } from '../types/gtfs';
 import { t } from '../i18n/messages';
 
-export interface TransfersModalDeps extends EditableTableDeps {
-  gtfsParser: Pick<GTFSParser, 'getFileDataSync'>;
-}
+export type TransfersModalDeps = EditableTableDeps;
 
 /** Which station's group to open on, and which row to draw attention to. */
 export interface TransfersModalTarget {
@@ -34,6 +32,7 @@ export interface TransfersModalTarget {
 }
 
 const STORE = specStoreName(GTFS_TABLES.TRANSFERS);
+const STOPS_STORE = specStoreName(GTFS_TABLES.STOPS);
 const NEW_INSTANCE_ID = 'transfers-new';
 const SEARCH_DEBOUNCE_MS = 200;
 
@@ -71,35 +70,32 @@ function groupKeyFor(fromStopId: string, stops: Map<string, StopInfo>): string {
   return stops.get(fromStopId)?.parent || fromStopId;
 }
 
-/** Stop names and parents, copied out of the live stops table. */
-function readStops(
-  parser: TransfersModalDeps['gtfsParser']
-): Map<string, StopInfo> {
+/** Stop names and parents, from the stops mirror. */
+function readStops(feed: EditorFeed): Map<string, StopInfo> {
   const stops = new Map<string, StopInfo>();
-  for (const row of parser.getFileDataSync(GTFS_TABLES.STOPS)) {
-    stops.set(String(row.stop_id ?? ''), {
-      name: String(row.stop_name ?? ''),
-      parent: String(row.parent_station ?? ''),
+  for (const row of feed.table(STOPS_STORE)) {
+    stops.set(row.stop_id ?? '', {
+      name: row.stop_name ?? '',
+      parent: row.parent_station ?? '',
     });
   }
   return stops;
 }
 
 /**
- * One read-only pass over the live transfers table. Only strings and counts
- * are kept, never the rows themselves.
+ * The groups, from the row count per from_stop_id and transfer_type (counted
+ * in the worker). Only strings and counts are kept, never the rows.
  */
-function buildGroups(
-  parser: TransfersModalDeps['gtfsParser'],
+async function buildGroups(
+  feed: EditorFeed,
   stops: Map<string, StopInfo>
-): TransferGroup[] {
+): Promise<TransferGroup[]> {
   const started = performance.now();
   const byKey = new Map<string, TransferGroup>();
   const fromIdsByKey = new Map<string, Set<string>>();
+  const counts = await feed.countBy2(STORE, 'from_stop_id', 'transfer_type');
 
-  for (const row of parser.getFileDataSync(GTFS_TABLES.TRANSFERS)) {
-    const fromStopId = String(row.from_stop_id ?? '');
-    const type = String(row.transfer_type ?? '') || '0';
+  for (const [fromStopId, perType] of Object.entries(counts)) {
     const key = groupKeyFor(fromStopId, stops);
 
     let group = byKey.get(key);
@@ -122,8 +118,11 @@ function buildGroups(
       byKey.set(key, group);
       fromIdsByKey.set(key, new Set());
     }
-    group.count++;
-    group.countByType.set(type, (group.countByType.get(type) ?? 0) + 1);
+    for (const [rawType, n] of Object.entries(perType)) {
+      const type = rawType || '0';
+      group.count += n;
+      group.countByType.set(type, (group.countByType.get(type) ?? 0) + n);
+    }
     fromIdsByKey.get(key)!.add(fromStopId);
   }
 
@@ -182,8 +181,8 @@ export async function showTransfersModal(
   deps: TransfersModalDeps,
   target: TransfersModalTarget = {}
 ): Promise<void> {
-  let stops = readStops(deps.gtfsParser);
-  let groups = buildGroups(deps.gtfsParser, stops);
+  let stops = readStops(deps.feed);
+  let groups = await buildGroups(deps.feed, stops);
   let search = '';
   const expanded = new Set<string>();
   // Group instances currently holding handlers, by group key.
@@ -222,9 +221,11 @@ export async function showTransfersModal(
 
   /** Rebuild the groups after a write and redraw the list. */
   const onRowsWritten = (): void => {
-    stops = readStops(deps.gtfsParser);
-    groups = buildGroups(deps.gtfsParser, stops);
-    void renderGroups();
+    stops = readStops(deps.feed);
+    void buildGroups(deps.feed, stops).then((next) => {
+      groups = next;
+      return renderGroups();
+    });
   };
 
   const renderGroupBody = async (group: TransferGroup): Promise<void> => {
@@ -234,14 +235,9 @@ export async function showTransfersModal(
     }
     body.dataset.rendered = '1';
 
-    const rows: Record<string, unknown>[] = [];
-    for (const fromStopId of group.fromStopIds) {
-      rows.push(
-        ...(await deps.gtfsDatabase.queryRows(STORE, {
-          from_stop_id: fromStopId,
-        }))
-      );
-    }
+    const rows: Record<string, unknown>[] = await deps.feed.where(STORE, [
+      { col: 'from_stop_id', in: group.fromStopIds },
+    ]);
     const config: EditableTableConfig = {
       instanceId: instanceIdFor(group.key),
       tableName: GTFS_TABLES.TRANSFERS,
@@ -346,7 +342,7 @@ export async function showTransfersModal(
     },
     validateRow: validateTransferRow,
     onInsert: (key, record) => {
-      stops = readStops(deps.gtfsParser);
+      stops = readStops(deps.feed);
       const group = groupKeyFor(String(record.from_stop_id ?? ''), stops);
       console.log(`[Transfers] inserted ${key} into group "${group}"`);
       expanded.add(group);

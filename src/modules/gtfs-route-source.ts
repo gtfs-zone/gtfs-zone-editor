@@ -1,13 +1,13 @@
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 import type {
   RouteSource,
   RouteSourceTrip,
   RouteSourceStopTime,
 } from 'gtfs-zone-web-common/gtfs/route-source';
-import { GTFS_TABLES } from '../types/gtfs';
-import type { LocationGroups, Stops } from '../types/gtfs-entities';
 import type { StopTimeRef } from 'gtfs-zone-web-common/gtfs/types';
 import { stopTimeRef } from '../utils/stop-time-ref';
+import type { StopTimes } from '../types/gtfs-entities';
+import { getZoneFeatures, zoneName } from './zone-store';
 
 interface StopIndexEntry {
   parent?: string;
@@ -15,50 +15,78 @@ interface StopIndexEntry {
 }
 
 /**
- * RouteSource over GTFSParser's virtual tables.
+ * RouteSource over one route of the editor feed, read once from the worker.
  *
- * The stop index and per-trip stop_time sort are memoized for the lifetime of
- * the instance, not the feed: gtfs-zone-editor's data is mutable, so callers are
- * expected to build a fresh instance whenever the underlying tables might have
- * changed (the same cadence schedule-controller already rebuilds TimetableData at).
+ * `load` fetches the route's trips and one stop_times list per stop pattern
+ * (trips sharing a pattern share every reference), so the sync RouteSource
+ * calls need no worker round trip. Names come from the mirrors. The data is a
+ * snapshot: build a fresh instance after an edit.
  */
 export class GTFSRouteSource implements RouteSource {
   private stopIndex: Map<string, StopIndexEntry> | null = null;
   private locationGroupIndex: Map<string, string> | null = null;
   private zoneIndex: Map<string, string> | null = null;
-  private sortedStopTimes = new Map<string, RouteSourceStopTime[]>();
 
-  constructor(private readonly gtfsParser: GTFSParser) {}
+  private constructor(
+    private readonly feed: EditorFeed,
+    private readonly route_id: string,
+    private readonly trips: readonly FeedRow[],
+    private readonly stopTimes: Map<string, RouteSourceStopTime[]>
+  ) {}
+
+  static async load(
+    feed: EditorFeed,
+    route_id: string
+  ): Promise<GTFSRouteSource> {
+    const { trips, stopLists, tripList } = await feed.read(
+      'routeTrips',
+      route_id
+    );
+    // One trip per stop pattern stands for all trips with that pattern.
+    const firstTrip: string[] = [];
+    tripList.forEach((list, i) => {
+      if (list >= 0 && firstTrip[list] === undefined) {
+        firstTrip[list] = trips[i].trip_id ?? '';
+      }
+    });
+    const patterns = await Promise.all(
+      stopLists.map(async (_stops, list) =>
+        (await feed.read('stopTimesForTrip', firstTrip[list]))
+          .map((st) => ({
+            ref: stopTimeRef(st as StopTimes),
+            stop_sequence: Number(st.stop_sequence),
+          }))
+          .sort((a, b) => a.stop_sequence - b.stop_sequence)
+      )
+    );
+    const stopTimes = new Map<string, RouteSourceStopTime[]>();
+    tripList.forEach((list, i) => {
+      stopTimes.set(trips[i].trip_id ?? '', list >= 0 ? patterns[list] : []);
+    });
+    return new GTFSRouteSource(feed, route_id, trips, stopTimes);
+  }
 
   tripsForRoute(route_id: string, service_id?: string): RouteSourceTrip[] {
-    const trips = this.gtfsParser.getTripsByRouteId(route_id);
+    if (route_id !== this.route_id) {
+      throw new Error(
+        `[GTFSRouteSource] loaded for route ${this.route_id}, asked for ${route_id}`
+      );
+    }
     const scoped = service_id
-      ? trips.filter((t) => String(t.service_id ?? '') === service_id)
-      : trips;
+      ? this.trips.filter((t) => (t.service_id ?? '') === service_id)
+      : this.trips;
     return scoped.map((t) => ({
-      trip_id: String(t.trip_id ?? ''),
+      trip_id: t.trip_id ?? '',
       direction_id:
         t.direction_id !== undefined && t.direction_id !== ''
-          ? String(t.direction_id)
+          ? t.direction_id
           : undefined,
-      headsign: t.trip_headsign ? String(t.trip_headsign) : undefined,
+      headsign: t.trip_headsign ? t.trip_headsign : undefined,
     }));
   }
 
   stopTimesForTrip(trip_id: string): RouteSourceStopTime[] {
-    const cached = this.sortedStopTimes.get(trip_id);
-    if (cached) {
-      return cached;
-    }
-    const sorted = this.gtfsParser
-      .getStopTimesByTripId(trip_id)
-      .map((st) => ({
-        ref: stopTimeRef(st),
-        stop_sequence: Number(st.stop_sequence),
-      }))
-      .sort((a, b) => a.stop_sequence - b.stop_sequence);
-    this.sortedStopTimes.set(trip_id, sorted);
-    return sorted;
+    return this.stopTimes.get(trip_id) ?? [];
   }
 
   /** Walk parent_station to the topmost ancestor, guarding against cycles. */
@@ -109,12 +137,10 @@ export class GTFSRouteSource implements RouteSource {
       return this.stopIndex;
     }
     const index = new Map<string, StopIndexEntry>();
-    for (const stop of this.gtfsParser.getFileDataSyncTyped<Stops>(
-      GTFS_TABLES.STOPS
-    )) {
-      index.set(String(stop.stop_id), {
-        parent: stop.parent_station ? String(stop.parent_station) : undefined,
-        name: stop.stop_name ? String(stop.stop_name) : undefined,
+    for (const stop of this.feed.table('stops')) {
+      index.set(stop.stop_id ?? '', {
+        parent: stop.parent_station || undefined,
+        name: stop.stop_name || undefined,
       });
     }
     this.stopIndex = index;
@@ -126,41 +152,25 @@ export class GTFSRouteSource implements RouteSource {
       return this.locationGroupIndex;
     }
     const index = new Map<string, string>();
-    for (const group of this.gtfsParser.getFileDataSyncTyped<LocationGroups>(
-      GTFS_TABLES.LOCATION_GROUPS
-    )) {
-      const id = String(group.location_group_id ?? '');
-      if (!id) {
-        continue;
-      }
-      if (group.location_group_name) {
-        index.set(id, String(group.location_group_name));
+    for (const group of this.feed.table('location_groups')) {
+      const id = group.location_group_id ?? '';
+      if (id && group.location_group_name) {
+        index.set(id, group.location_group_name);
       }
     }
     this.locationGroupIndex = index;
     return index;
   }
 
-  /**
-   * Zone names off locations.geojson, which is stored as a single row holding
-   * the whole FeatureCollection rather than one row per feature.
-   */
   private getZoneIndex(): Map<string, string> {
     if (this.zoneIndex) {
       return this.zoneIndex;
     }
     const index = new Map<string, string>();
-    const rows = this.gtfsParser.getFileDataSync(GTFS_TABLES.LOCATIONS_GEOJSON);
-    const collection = rows[0] as
-      { features?: Array<Record<string, unknown>> } | undefined;
-    for (const feature of collection?.features ?? []) {
-      const id = feature.id !== undefined ? String(feature.id) : '';
-      if (!id) {
-        continue;
-      }
-      const properties = (feature.properties ?? {}) as Record<string, unknown>;
-      if (properties.stop_name) {
-        index.set(id, String(properties.stop_name));
+    for (const feature of getZoneFeatures(this.feed)) {
+      const name = zoneName(feature);
+      if (feature.id !== undefined && name) {
+        index.set(String(feature.id), name);
       }
     }
     this.zoneIndex = index;

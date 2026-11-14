@@ -4,7 +4,6 @@ export const pages = {
   'page.loadFailed': 'Failed to load content. Please try again.',
   'page.cleanFeed': 'Everything look good? Export your feed and publish.',
   'page.publishingGuide': 'Publishing guide',
-  'page.noPatchManager': 'No patch manager available',
   'page.trimAllTitle':
     "Set every service's start_date to {date}, and remove every exception before it",
   'page.extendAllTitle':

@@ -4,28 +4,19 @@
  * Follows "FAIL HARD" error policy - no fallbacks, expose real errors
  */
 
-import { StopTimes, GTFSTableMap } from '../types/gtfs-entities';
+import type { StopTimes } from '../types/gtfs-entities';
+import type { EditorFeed } from '../feed/editor-feed';
 import type { StopTimeRef } from 'gtfs-zone-web-common/gtfs/types';
 import { StopTimesSchema } from '../types/gtfs';
 import type { CoupledTimes } from '../utils/stop-time-coupling';
 import { TimeFormatter } from '../utils/time-formatter';
 import { chronologicalOrder } from '../utils/stop-time-order';
 import { mirrorTripTimes, shiftRowTimes } from '../utils/stop-time-shift';
-import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { t } from '../i18n/messages';
 
 /** The two ends of a stop_time's pickup/drop-off window. */
 export type FlexWindowField =
   'start_pickup_drop_off_window' | 'end_pickup_drop_off_window';
-
-interface GTFSParserInterface {
-  gtfsDatabase: {
-    queryRows<T extends keyof GTFSTableMap>(
-      tableName: T,
-      filter?: { [key: string]: string | number | boolean }
-    ): Promise<GTFSTableMap[T][]>;
-  };
-}
 
 /**
  * The full before/after row set for one trip, produced by planStopTimeEdit.
@@ -116,16 +107,7 @@ export function assertValidTime(time: string): void {
 }
 
 export class TimetableDatabase {
-  private gtfsParser: GTFSParserInterface;
-
-  /**
-   * Initialize TimetableDatabase with GTFS parser dependency
-   *
-   * @param gtfsParser - GTFS parser interface with database access
-   */
-  constructor(gtfsParser: GTFSParserInterface) {
-    this.gtfsParser = gtfsParser;
-  }
+  constructor(private readonly feed: EditorFeed) {}
 
   /**
    * Plan the effect of a single arrival/departure edit on a trip, without writing.
@@ -178,13 +160,7 @@ export class TimetableDatabase {
           departure_time: coupled.departure_time,
         }
       : { [field]: newTime };
-    const beforeRows = await this.gtfsParser.gtfsDatabase.queryRows(
-      'stop_times',
-      { trip_id }
-    );
-    beforeRows.sort(
-      (a, b) => Number(a.stop_sequence) - Number(b.stop_sequence)
-    );
+    const beforeRows = await this.readTripRows(trip_id);
 
     const targetIndex =
       forceInsert || !stopSequence
@@ -240,9 +216,6 @@ export class TimetableDatabase {
       })}`
     );
 
-    // Numbers, not strings: the parser coerces every *_sequence field to a
-    // number, and queryRows filters compare with ===, so a stringified
-    // stop_sequence makes the row unfindable by its own primary key.
     const afterRows = edited.map((st, index) => ({
       ...st,
       stop_sequence: index,
@@ -295,13 +268,7 @@ export class TimetableDatabase {
       );
     }
 
-    const beforeRows = await this.gtfsParser.gtfsDatabase.queryRows(
-      'stop_times',
-      { trip_id }
-    );
-    beforeRows.sort(
-      (a, b) => Number(a.stop_sequence) - Number(b.stop_sequence)
-    );
+    const beforeRows = await this.readTripRows(trip_id);
 
     const refField =
       ref.kind === 'location_group' ? 'location_group_id' : 'location_id';
@@ -374,13 +341,7 @@ export class TimetableDatabase {
     trip_id: string,
     stopSequence: string
   ): Promise<StopTimeEditPlan | null> {
-    const beforeRows = await this.gtfsParser.gtfsDatabase.queryRows(
-      'stop_times',
-      { trip_id }
-    );
-    beforeRows.sort(
-      (a, b) => Number(a.stop_sequence) - Number(b.stop_sequence)
-    );
+    const beforeRows = await this.readTripRows(trip_id);
 
     const targetIndex = beforeRows.findIndex(
       (st) => String(st.stop_sequence) === stopSequence
@@ -524,9 +485,10 @@ export class TimetableDatabase {
 
   /** One trip's stop_times, sorted by stop_sequence. */
   private async readTripRows(trip_id: string): Promise<StopTimes[]> {
-    const rows = await this.gtfsParser.gtfsDatabase.queryRows('stop_times', {
-      trip_id,
-    });
+    const rows = (await this.feed.read(
+      'stopTimesForTrip',
+      trip_id
+    )) as unknown as StopTimes[];
     rows.sort((a, b) => Number(a.stop_sequence) - Number(b.stop_sequence));
     return rows;
   }
@@ -546,29 +508,18 @@ export class TimetableDatabase {
    * @param trip_id - GTFS trip identifier
    * @param stop_sequence - stop_sequence of the row, when the caller knows it
    * @returns Promise resolving to StopTimes record or null if not found
-   * @throws {Error} When database connection unavailable
    */
   async getStopTime(
     trip_id: string,
     stop_sequence?: string
   ): Promise<StopTimes | null> {
-    const database = this.gtfsParser.gtfsDatabase;
-    if (!database) {
-      const error = 'Database connection not available';
-      console.error(error);
-      notify.error(t('tt.dbLost'));
-      throw new Error(error);
-    }
-
     if (!stop_sequence) {
       return null;
     }
-
-    const results = await database.queryRows('stop_times', {
-      trip_id,
-      stop_sequence: Number(stop_sequence),
-    });
-    return results[0] ?? null;
+    const rows = await this.readTripRows(trip_id);
+    return (
+      rows.find((st) => String(st.stop_sequence) === stop_sequence) ?? null
+    );
   }
 
   /**

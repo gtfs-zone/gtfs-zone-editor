@@ -20,13 +20,11 @@ import {
 } from '../utils/whitespace-fix';
 import { deleteTrips, describeTripDelete } from '../utils/trip-delete';
 import { getEntityDisplay, renderOptionLabel } from '../utils/entity-display';
-import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
+import type { EditorFeed } from '../feed/editor-feed';
 import { t } from '../i18n/messages';
 
-/** Rows for the entity labels. Just the parser's sync read, narrowed. */
-export interface FeedIssueRowSource {
-  getFileDataSync(fileName: string): Record<string, unknown>[];
-}
+/** Rows for the entity labels: the feed's mirrors. */
+export type FeedIssueRowSource = EditorFeed;
 
 /**
  * What `refreshFeedIssuesIfStale` needs to re-run a pass on its own: the
@@ -150,7 +148,7 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
           describeTripDelete(
             await deleteTrips(
               entities.map((entity) => entity.id),
-              deps
+              deps.feed
             )
           ),
       },
@@ -190,7 +188,7 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
             values: t('issues.values', { count: entities.length }),
           }),
         run: async (entities, deps) =>
-          describeWhitespaceFix(await applyWhitespaceFix(entities, deps)),
+          describeWhitespaceFix(await applyWhitespaceFix(entities, deps.feed)),
       },
     ],
   },
@@ -438,33 +436,25 @@ export function formatIssueValue(value: string): string {
   return value;
 }
 
-/** Lazily indexes a file's rows by primary key, one file at a time. */
+/**
+ * Rows by file and primary key, from the mirrors. A worker-only table gives
+ * no row, so its issues are labelled by id.
+ */
 class RowIndex {
-  private source?: FeedIssueRowSource;
-  private byFile = new Map<string, Map<string, Record<string, unknown>>>();
-
-  constructor(source?: FeedIssueRowSource) {
-    this.source = source;
-  }
+  constructor(private readonly source?: FeedIssueRowSource) {}
 
   get(file: string, id: string): Record<string, unknown> | undefined {
     if (!this.source || id === '') {
       return undefined;
     }
-    let rows = this.byFile.get(file);
-    if (!rows) {
-      rows = new Map();
-      const tableName = file.replace(/\.txt$/, '');
-      for (const row of this.source.getFileDataSync(file)) {
-        try {
-          rows.set(generateCompositeKeyFromRecord(tableName, row), row);
-        } catch {
-          // Rows missing their primary key are unreachable by id anyway.
-        }
-      }
-      this.byFile.set(file, rows);
+    if (!file.endsWith('.txt')) {
+      return undefined;
     }
-    return rows.get(id);
+    const table = file.slice(0, -'.txt'.length);
+    if (!this.source.isMirrored(table)) {
+      return undefined;
+    }
+    return this.source.byKey(table, id) ?? undefined;
   }
 }
 

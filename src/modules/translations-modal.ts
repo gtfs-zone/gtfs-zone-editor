@@ -20,8 +20,7 @@ import {
 } from './editable-table';
 import { emptyState } from './fares-modal';
 import { showOptionPickerModal } from './option-picker-modal';
-import type { GTFSParser } from './gtfs-parser';
-import type { PatchManager } from './patch-manager';
+import type { EditorFeed, FeedEditEvent } from '../feed/editor-feed';
 import {
   MATRIX_ROW_LIMIT,
   allTranslatableFieldNames,
@@ -54,13 +53,26 @@ import {
   languageOptions,
 } from '../utils/constrained-values';
 import { GTFS_TABLES } from '../types/gtfs';
-import type { PatchRecord } from '../types/patch';
 import { t } from '../i18n/messages';
 
-export interface TranslationsModalDeps extends EditableTableDeps {
-  patchManager: EditableTableDeps['patchManager'] &
-    Pick<PatchManager, 'on' | 'off'>;
-  gtfsParser: Pick<GTFSParser, 'getFileDataSync' | 'feedGeneration'>;
+export type TranslationsModalDeps = EditableTableDeps;
+
+/**
+ * A table's rows for the matrix: the mirror, or a copy from the worker.
+ * stop_times is not read whole; its translations show in the raw pane only.
+ */
+async function readRows(
+  feed: EditorFeed,
+  file: string
+): Promise<Record<string, unknown>[]> {
+  const store = specStoreName(file);
+  if (store === 'stop_times') {
+    console.warn('[Translations] stop_times is not indexed for the matrix');
+    return [];
+  }
+  return feed.isMirrored(store)
+    ? [...feed.table(store)]
+    : await feed.where(store, []);
 }
 
 /** Which pane to open on, and which raw row to draw attention to. */
@@ -86,13 +98,11 @@ interface PaneFilter {
 }
 
 /** One entry per translatable field of each table that has rows. */
-function buildEntries(
-  parser: TranslationsModalDeps['gtfsParser']
-): TranslationEntry[] {
+async function buildEntries(feed: EditorFeed): Promise<TranslationEntry[]> {
   const entries: TranslationEntry[] = [];
   for (const table of translatableTables()) {
     const file = `${table}.txt`;
-    const rows = parser.getFileDataSync(file);
+    const rows = await readRows(feed, file);
     if (rows.length === 0) {
       continue;
     }
@@ -116,22 +126,22 @@ function docLink(anchor: string): string {
     target="_blank" rel="noopener noreferrer" class="link">${t('fares.reference')}</a>.`;
 }
 
-function patchTables(record: PatchRecord | undefined): string[] {
-  if (!record) {
-    return [];
-  }
-  const { patch } = record;
-  return patch.op === 'batch'
-    ? patch.ops.map((op) => op.source.table)
-    : [patch.source.table];
-}
-
 export async function showTranslationsModal(
   deps: TranslationsModalDeps,
   target: TranslationsModalTarget = {}
 ): Promise<void> {
-  const parser = deps.gtfsParser;
-  const entries = buildEntries(parser);
+  const feed = deps.feed;
+  const entries = await buildEntries(feed);
+  // Rows per file, dropped when an edit writes that table.
+  const rowCache = new Map<string, Promise<Record<string, unknown>[]>>();
+  const rowsOf = (file: string): Promise<Record<string, unknown>[]> => {
+    let rows = rowCache.get(file);
+    if (!rows) {
+      rows = readRows(feed, file);
+      rowCache.set(file, rows);
+    }
+    return rows;
+  };
 
   // Consumed by the first raw render only: a later refresh must not re-scroll.
   let pendingRowKey = target.rowKey;
@@ -171,13 +181,13 @@ export async function showTranslationsModal(
   };
 
   /** Counts per entry and the languages in use, one pass per patch. */
-  const scanTranslations = (): NonNullable<typeof scan> => {
+  const scanTranslations = async (): Promise<NonNullable<typeof scan>> => {
     if (scan && scan.version === version) {
       return scan;
     }
     const counts = new Map<string, number>();
     const languages = new Set<string>();
-    for (const row of parser.getFileDataSync(GTFS_TABLES.TRANSLATIONS)) {
+    for (const row of await rowsOf(GTFS_TABLES.TRANSLATIONS)) {
       const table = String(row.table_name ?? '');
       const id =
         table === 'feed_info'
@@ -193,24 +203,18 @@ export async function showTranslationsModal(
     return scan;
   };
 
-  const onPatch =
-    (event: 'change' | 'undo' | 'redo' | 'jump') =>
-    (record?: PatchRecord): void => {
-      version++;
-      const tables = patchTables(record);
-      if (tables.length === 0 || tables.some((table) => table !== STORE)) {
-        sourceIndexes.clear();
-      }
-      if (event !== 'change') {
-        console.log(`[Translations] ${event}, refreshing`);
-        void refreshRef.refresh();
-      }
-    };
-  const listeners = {
-    change: onPatch('change'),
-    undo: onPatch('undo'),
-    redo: onPatch('redo'),
-    jump: onPatch('jump'),
+  const onEdit = (e: FeedEditEvent): void => {
+    version++;
+    for (const table of e.tables) {
+      rowCache.delete(`${table}.txt`);
+    }
+    if (e.tables.length === 0 || e.tables.some((table) => table !== STORE)) {
+      sourceIndexes.clear();
+    }
+    if (e.kind !== 'change') {
+      console.log(`[Translations] ${e.kind}, refreshing`);
+      void refreshRef.refresh();
+    }
   };
 
   // ─── Matrix pane ───────────────────────────────────────────────────────────
@@ -222,13 +226,13 @@ export async function showTranslationsModal(
       return null;
     }
     const cached = sourceIndexes.get(entry.id);
-    if (cached && cached.feedGeneration === parser.feedGeneration) {
+    if (cached && cached.feedGeneration === feed.feedGeneration) {
       return cached;
     }
     const index = await buildSourceIndex(
       entry,
-      parser.getFileDataSync(entry.file),
-      parser.feedGeneration
+      await rowsOf(entry.file),
+      feed.feedGeneration
     );
     sourceIndexes.set(entry.id, index);
     return index;
@@ -242,15 +246,15 @@ export async function showTranslationsModal(
       modes.set(entry.id, mode);
     }
     const translations = readEntryTranslations(
-      parser.getFileDataSync(GTFS_TABLES.TRANSLATIONS),
+      await rowsOf(GTFS_TABLES.TRANSLATIONS),
       entry
     );
     if (index && (mode === 'record' || hasRecordTranslations(translations))) {
-      await ensureRecords(entry, index, parser.getFileDataSync(entry.file));
+      await ensureRecords(entry, index, await rowsOf(entry.file));
     }
-    const feedInfo = parser.getFileDataSync(GTFS_TABLES.FEED_INFO)[0];
+    const feedInfo = feed.table(specStoreName(GTFS_TABLES.FEED_INFO))[0];
 
-    const languages = scanTranslations().languages;
+    const languages = (await scanTranslations()).languages;
     for (const lang of [...pendingLanguages]) {
       if (languages.includes(lang)) {
         pendingLanguages.delete(lang);
@@ -600,7 +604,7 @@ export async function showTranslationsModal(
   };
 
   const renderRawPane = async (): Promise<string> => {
-    rawRows = await deps.gtfsDatabase.getAllRows(STORE);
+    rawRows = [...(await rowsOf(GTFS_TABLES.TRANSLATIONS))];
     const filter = filterFor(ALL_ROWS_ID);
     return `
       <div class="flex items-center gap-3 mb-2">
@@ -650,9 +654,7 @@ export async function showTranslationsModal(
   let activeEntry: TranslationEntry | null = null;
 
   installEditableTableHandlers(rawConfig);
-  for (const [event, listener] of Object.entries(listeners)) {
-    deps.patchManager.on(event as keyof typeof listeners, listener);
-  }
+  const offEdit = feed.onEdit(onEdit);
   const tabs = routeSidebarTabs(
     'translations',
     initialId ?? entries[0]?.id ?? ALL_ROWS_ID
@@ -680,8 +682,8 @@ export async function showTranslationsModal(
               ? entry.file
               : `${entry.file}: ${entry.fields[0]}`,
           note: `${escapeHtml(MATRIX_NOTE)} ${docLink('translationstxt')}`,
-          count: () =>
-            Promise.resolve(scanTranslations().counts.get(entry.id) ?? 0),
+          count: async () =>
+            (await scanTranslations()).counts.get(entry.id) ?? 0,
           renderPane: () => {
             activeEntry = entry;
             return renderMatrixPane(entry);
@@ -692,10 +694,7 @@ export async function showTranslationsModal(
           group: 'translations.txt',
           label: t('translations.allRows'),
           note: `${escapeHtml(RAW_NOTE)} ${docLink('translationstxt')}`,
-          count: () =>
-            Promise.resolve(
-              parser.getFileDataSync(GTFS_TABLES.TRANSLATIONS).length
-            ),
+          count: async () => (await rowsOf(GTFS_TABLES.TRANSLATIONS)).length,
           renderPane: () => {
             activeEntry = null;
             currentView = null;
@@ -716,9 +715,7 @@ export async function showTranslationsModal(
     if (searchTimer !== null) {
       clearTimeout(searchTimer);
     }
-    for (const [event, listener] of Object.entries(listeners)) {
-      deps.patchManager.off(event as keyof typeof listeners, listener);
-    }
+    offEdit();
     uninstallEditableTableHandlers(RAW_INSTANCE_ID);
     if (pendingLanguages.size > 0) {
       console.log(

@@ -65,8 +65,8 @@ export function hasValidCoords(stop: Stops): boolean {
  * sibling (caller should skip these and surface a warning).
  */
 export function buildStopCoordResolver(
-  stops: Stops[],
-  pathways: Pathways[] = []
+  stops: readonly Stops[],
+  pathways: readonly Pathways[] = []
 ): (stop_id: string) => [number, number] | null {
   const byId = new Map<string, Stops>();
   for (const s of stops) {

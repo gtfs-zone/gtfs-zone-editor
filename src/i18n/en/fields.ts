@@ -11,7 +11,6 @@ export const fields = {
   'field.selectTitle': 'Select {field}',
   'field.currentValue': 'current value',
   'field.customValue': 'Enter a custom value...',
-  'field.historyNotReady': 'Cannot save: the edit history is not ready yet',
   'field.recordGone': 'Cannot save: this record no longer exists',
   'field.extensionDescription':
     'This field is not part of the GTFS specification. It is preserved as-is on export.',
@@ -26,6 +25,7 @@ export const fields = {
   'patch.created': '{type} "{name}" created',
   'patch.deleted': '{type} "{name}" deleted',
   'patch.updated': '{type} "{name}" updated ({fields})',
+  'patch.fileEdited': '{name} edited',
   'patch.type.agency': 'Agency',
   'patch.type.stops': 'Stop',
   'patch.type.routes': 'Route',
@@ -142,8 +142,6 @@ export const fields = {
     '{count} rows in total, recorded as one undoable change.',
   'renameModal.heavy':
     'This rename rewrites {count} rows. It will take a moment and the page will not respond while it runs.',
-  'renameModal.historyNotReady':
-    'Cannot rename: the edit history is not ready yet',
   'renameModal.couldNotPlan': 'Could not plan the rename.',
   'renameModal.newLabel': 'New {field}',
   'renameModal.setTitle': 'Set {field}',

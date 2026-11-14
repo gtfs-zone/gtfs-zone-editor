@@ -131,7 +131,7 @@ export async function loadFeed(
         throw err;
       }
       const { client, imported } = result;
-      feed.adopt(client, imported.state, imported.persistence);
+      await feed.adopt(client, imported.state, imported.persistence);
       announcePersistence(imported.persistence);
       if (imported.ignoredRouteNetworks > 0) {
         notify.warning(
@@ -149,7 +149,11 @@ async function reopenStored(feed: EditorFeed): Promise<void> {
   try {
     const opened = await openStoredFeed();
     if (opened) {
-      feed.adopt(opened.client, opened.opened.state, opened.opened.persistence);
+      await feed.adopt(
+        opened.client,
+        opened.opened.state,
+        opened.opened.persistence
+      );
     }
   } catch (err) {
     console.error('[FeedLoader] could not reopen the stored feed', err);
@@ -178,7 +182,11 @@ export async function restoreFeed(feed: EditorFeed): Promise<boolean> {
         opened.client.release();
         throw new LoadCancelledError();
       }
-      feed.adopt(opened.client, opened.opened.state, opened.opened.persistence);
+      await feed.adopt(
+        opened.client,
+        opened.opened.state,
+        opened.opened.persistence
+      );
       announcePersistence(opened.opened.persistence);
       if (opened.foldError) {
         notify.warning(t('parse.foldFailed', { message: opened.foldError }), {

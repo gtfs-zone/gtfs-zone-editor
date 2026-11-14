@@ -27,7 +27,7 @@ import {
 } from '../utils/entity-display';
 import { formatDateRange, formatDaysOfWeek } from '../utils/entity-references';
 import { stopLocationType } from '../utils/area-hierarchy';
-import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
+import { deleteOp, insertOp } from '../feed/patch-build';
 import {
   validateFareLegJoinRuleRow,
   validateFareTransferRuleRow,
@@ -92,10 +92,8 @@ export async function memberJoinColumn(
   spec: MemberJoinSpec
 ): Promise<EditableTableJoinColumn> {
   const joinStore = specStoreName(spec.joinTable);
-  const joins = await deps.gtfsDatabase.getAllRows(joinStore);
-  const members = await deps.gtfsDatabase.getAllRows(
-    specStoreName(spec.memberTable)
-  );
+  const joins = deps.feed.table(joinStore);
+  const members = deps.feed.table(specStoreName(spec.memberTable));
   const memberById = new Map(
     members.map((m) => [String(m[spec.memberField] ?? ''), m])
   );
@@ -139,39 +137,14 @@ export async function memberJoinColumn(
         [spec.groupField]: group_id,
         [spec.memberField]: member_id,
       });
-      const deletes = removed.map((member_id) => {
-        const row = record(member_id);
-        return {
-          op: 'delete' as const,
-          table: joinStore,
-          id: generateCompositeKeyFromRecord(joinStore, row),
-          record: row,
-        };
-      });
-      const inserts = added.map((member_id) => {
-        const row = record(member_id);
-        return {
-          op: 'insert' as const,
-          table: joinStore,
-          id: generateCompositeKeyFromRecord(joinStore, row),
-          record: row,
-        };
-      });
-
       console.log(
-        `[JoinColumn] ${joinStore} for ${group_id} (-${deletes.length} +${inserts.length})`
+        `[JoinColumn] ${joinStore} for ${group_id} (-${removed.length} +${added.length})`
       );
-      for (const entry of deletes) {
-        await deps.gtfsDatabase.deleteRow(joinStore, entry.id);
-      }
-      if (inserts.length > 0) {
-        await deps.gtfsDatabase.insertRows(
-          joinStore,
-          inserts.map((entry) => entry.record)
-        );
-      }
-      await deps.patchManager.recordBatchMixed(
-        [...deletes, ...inserts],
+      await deps.feed.apply(
+        [
+          ...removed.map((member_id) => deleteOp(joinStore, record(member_id))),
+          ...added.map((member_id) => insertOp(joinStore, record(member_id))),
+        ],
         t('fares.editMembers', {
           label: spec.label.toLowerCase(),
           table: spec.joinTable,
@@ -227,9 +200,7 @@ function formatCurrencyAmount(value: unknown, currency: unknown): string {
 async function networkOptions(
   deps: FaresModalDeps
 ): Promise<OptionPickerItem[]> {
-  const rows = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.NETWORKS)
-  );
+  const rows = deps.feed.table(specStoreName(GTFS_TABLES.NETWORKS));
   return rows
     .filter((row) => String(row.network_id ?? '') !== '')
     .map((row) => ({
@@ -243,9 +214,7 @@ async function networkOptions(
 
 /** Every route, for the Networks pane's membership column. */
 async function routeOptions(deps: FaresModalDeps): Promise<OptionPickerItem[]> {
-  const rows = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.ROUTES)
-  );
+  const rows = deps.feed.table(specStoreName(GTFS_TABLES.ROUTES));
   return rows
     .filter((row) => String(row.route_id ?? '') !== '')
     .map((row) => ({
@@ -261,9 +230,7 @@ async function routeOptions(deps: FaresModalDeps): Promise<OptionPickerItem[]> {
 async function fareStopOptions(
   deps: FaresModalDeps
 ): Promise<OptionPickerItem[]> {
-  const rows = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.STOPS)
-  );
+  const rows = deps.feed.table(specStoreName(GTFS_TABLES.STOPS));
   return rows
     .filter((row) => {
       const type = stopLocationType(row);
@@ -286,9 +253,7 @@ async function fareStopOptions(
 async function fareProductOptions(
   deps: FaresModalDeps
 ): Promise<OptionPickerItem[]> {
-  const rows = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.FARE_PRODUCTS)
-  );
+  const rows = deps.feed.table(specStoreName(GTFS_TABLES.FARE_PRODUCTS));
   const seen = new Map<string, OptionPickerItem>();
   for (const row of rows) {
     const id = String(row.fare_product_id ?? '');
@@ -305,9 +270,7 @@ async function fareProductOptions(
 async function timeframeGroupOptions(
   deps: FaresModalDeps
 ): Promise<OptionPickerItem[]> {
-  const rows = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.TIMEFRAMES)
-  );
+  const rows = deps.feed.table(specStoreName(GTFS_TABLES.TIMEFRAMES));
   const counts = new Map<string, number>();
   for (const row of rows) {
     const id = String(row.timeframe_group_id ?? '');
@@ -327,9 +290,7 @@ export async function serviceOptions(
   deps: FaresModalDeps
 ): Promise<OptionPickerItem[]> {
   const options = new Map<string, OptionPickerItem>();
-  const calendar = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.CALENDAR)
-  );
+  const calendar = deps.feed.table(specStoreName(GTFS_TABLES.CALENDAR));
   for (const row of calendar) {
     const id = String(row.service_id ?? '');
     if (id === '' || options.has(id)) {
@@ -342,12 +303,11 @@ export async function serviceOptions(
       secondary: [formatDaysOfWeek(row), range].filter(Boolean).join(', '),
     });
   }
-  const dates = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.CALENDAR_DATES)
-  );
-  for (const row of dates) {
-    const id = String(row.service_id ?? '');
-    if (id === '' || options.has(id)) {
+  for (const id of await deps.feed.distinct(
+    specStoreName(GTFS_TABLES.CALENDAR_DATES),
+    'service_id'
+  )) {
+    if (options.has(id)) {
       continue;
     }
     options.set(id, {
@@ -361,9 +321,7 @@ export async function serviceOptions(
 
 /** The leg group ids already in use, offered as autocomplete on a free ID. */
 async function legGroupSuggestions(deps: FaresModalDeps): Promise<string[]> {
-  const rows = await deps.gtfsDatabase.getAllRows(
-    specStoreName(GTFS_TABLES.FARE_LEG_RULES)
-  );
+  const rows = deps.feed.table(specStoreName(GTFS_TABLES.FARE_LEG_RULES));
   const ids = new Set<string>();
   for (const row of rows) {
     const id = String(row.leg_group_id ?? '');
@@ -555,9 +513,7 @@ export async function showFaresModal(deps: FaresModalDeps): Promise<void> {
     tableConfig.joinColumns = entry.joinColumns
       ? await entry.joinColumns(deps)
       : undefined;
-    tableConfig.rows = await deps.gtfsDatabase.getAllRows(
-      specStoreName(entry.table)
-    );
+    tableConfig.rows = [...deps.feed.table(specStoreName(entry.table))];
     return renderEditableTable(tableConfig);
   };
 
@@ -575,8 +531,7 @@ export async function showFaresModal(deps: FaresModalDeps): Promise<void> {
       group: entry.group,
       guidePage: 'fares',
       note: entry.note ? escapeHtml(entry.note) : undefined,
-      count: async () =>
-        (await deps.gtfsDatabase.getAllRows(specStoreName(entry.table))).length,
+      count: async () => deps.feed.table(specStoreName(entry.table)).length,
       renderPane: () => renderPane(entry),
     })),
   });

@@ -62,6 +62,7 @@ export const load = {
   'export.noData': 'No GTFS data to export. Please add some data first.',
   'export.preparing': 'Preparing GTFS export...',
   'export.done': 'GTFS data exported successfully!',
+  'export.unavailable': 'Export is not available in this version yet.',
   'export.failed': 'Failed to export GTFS data: {message}',
   'db.contextInit': 'initialization',
   'db.unknownError': 'Unknown error',

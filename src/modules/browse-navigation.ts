@@ -26,48 +26,11 @@ import {
   PageContentRenderer,
   ContentRendererDependencies,
 } from './page-content-renderer';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
 import { followRenameInState } from '../utils/follow-rename';
 import { t } from '../i18n/messages';
 
 export class BrowseNavigation {
-  private relationships: {
-    getAgenciesAsync: () => Promise<Record<string, unknown>[]>;
-    getRoutesForAgencyAsync: (
-      agency_id: string
-    ) => Promise<Record<string, unknown>[]>;
-    getTripsForRouteAsync: (
-      route_id: string
-    ) => Promise<Record<string, unknown>[]>;
-    getStopTimesForTripAsync: (
-      trip_id: string
-    ) => Promise<Record<string, unknown>[]>;
-    getStopByIdAsync: (
-      stop_id: string
-    ) => Promise<Record<string, unknown> | null>;
-    getServicesForRouteByDirectionAsync: (
-      route_id: string
-    ) => Promise<Record<string, unknown>[]>;
-    getRouteByIdAsync: (
-      route_id: string
-    ) => Promise<Record<string, unknown> | null>;
-    getTripByIdAsync: (
-      trip_id: string
-    ) => Promise<Record<string, unknown> | null>;
-    getCalendarForServiceAsync: (
-      service_id: string
-    ) => Promise<Record<string, unknown> | null>;
-    getAgencyByIdAsync?: (
-      agency_id: string
-    ) => Promise<Record<string, unknown> | null>;
-    getRoutesForServiceAsync?: (
-      service_id: string
-    ) => Promise<Record<string, unknown>[]>;
-    getTripsForServiceAsync?: (
-      service_id: string
-    ) => Promise<Record<string, unknown>[]>;
-  };
-  private gtfsRelationshipsInstance: import('./gtfs-relationships').GTFSRelationships; // The actual GTFSRelationships instance for database access
   private mapController: {
     highlightStop: (stop_id: string) => void;
     highlightPathway: (pathway_id: string) => void;
@@ -101,46 +64,9 @@ export class BrowseNavigation {
   private isLoading: boolean = false;
   private lastRenderedPageState: PageState | null = null;
   private contentRenderer: PageContentRenderer | null = null;
-  private gtfsParser: GTFSParser | null = null;
-  // The same shape the content renderer takes, which is what it is handed to.
-  private patchManager: ContentRendererDependencies['patchManager'] | null =
-    null;
-
-  setPatchManager(pm: ContentRendererDependencies['patchManager']): void {
-    this.patchManager = pm;
-  }
 
   constructor(
-    gtfsRelationships: {
-      getAgenciesAsync: () => Promise<Record<string, unknown>[]>;
-      getRoutesForAgencyAsync: (
-        agency_id: string
-      ) => Promise<Record<string, unknown>[]>;
-      getTripsForRouteAsync: (
-        route_id: string
-      ) => Promise<Record<string, unknown>[]>;
-      getStopTimesForTripAsync: (
-        trip_id: string
-      ) => Promise<Record<string, unknown>[]>;
-      getStopByIdAsync: (
-        stop_id: string
-      ) => Promise<Record<string, unknown> | null>;
-      getServicesForRouteByDirectionAsync: (
-        route_id: string
-      ) => Promise<Record<string, unknown>[]>;
-      getRouteByIdAsync: (
-        route_id: string
-      ) => Promise<Record<string, unknown> | null>;
-      getTripByIdAsync: (
-        trip_id: string
-      ) => Promise<Record<string, unknown> | null>;
-      getCalendarForServiceAsync: (
-        service_id: string
-      ) => Promise<Record<string, unknown> | null>;
-      getAgencyByIdAsync?: (
-        agency_id: string
-      ) => Promise<Record<string, unknown> | null>;
-    },
+    private readonly feed: EditorFeed,
     mapController: {
       highlightStop: (stop_id: string) => void;
       highlightPathway: (pathway_id: string) => void;
@@ -165,15 +91,8 @@ export class BrowseNavigation {
     },
     serviceDaysController?: {
       renderServiceEditor: (service_id: string) => Promise<string>;
-    },
-    // The route page's diagram reads the parser's virtual tables directly,
-    // through GTFSRouteSource, which the relationships layer does not expose.
-    gtfsParser?: GTFSParser
+    }
   ) {
-    this.relationships = gtfsRelationships;
-    this.gtfsParser = gtfsParser ?? null;
-    this.gtfsRelationshipsInstance =
-      gtfsRelationships as unknown as import('./gtfs-relationships').GTFSRelationships;
     this.mapController = mapController;
     this.serviceDaysController = serviceDaysController ?? null;
   }
@@ -220,65 +139,7 @@ export class BrowseNavigation {
 
   private initializeContentRenderer(): void {
     const dependencies: ContentRendererDependencies = {
-      relationships: {
-        getAgenciesAsync: () => this.relationships.getAgenciesAsync(),
-        getRoutesForAgencyAsync: (agency_id: string) =>
-          this.relationships.getRoutesForAgencyAsync(agency_id),
-        getTripsForRouteAsync: (route_id: string) =>
-          this.relationships.getTripsForRouteAsync(route_id),
-        getStopTimesForTripAsync: (trip_id: string) =>
-          this.relationships.getStopTimesForTripAsync(trip_id),
-        getStopAsync: (stop_id: string) =>
-          this.relationships.getStopByIdAsync(stop_id),
-        getAgencyAsync: (agency_id: string) =>
-          this.relationships.getAgencyByIdAsync?.(agency_id) ||
-          Promise.resolve(null),
-        getRouteAsync: (route_id: string) =>
-          this.relationships.getRouteByIdAsync(route_id),
-        getTripsForZone: (location_id: string) =>
-          this.gtfsRelationshipsInstance.getTripsForZone(location_id),
-        getTripsForLocationGroup: (location_group_id: string) =>
-          this.gtfsRelationshipsInstance.getTripsForLocationGroup(
-            location_group_id
-          ),
-      },
-      // Provide access to the actual database for StopViewController
-      gtfsDatabase: {
-        queryRows: (tableName: string, filter?: Record<string, unknown>) =>
-          this.gtfsRelationshipsInstance.gtfsDatabase.queryRows(
-            tableName,
-            filter as { [key: string]: string | number | boolean } | undefined
-          ),
-        updateRow: (
-          tableName: string,
-          key: string,
-          data: Record<string, unknown>
-        ) =>
-          this.gtfsRelationshipsInstance.gtfsDatabase.updateRow(
-            tableName,
-            key,
-            data as Partial<import('./gtfs-database').GTFSDatabaseRecord>
-          ),
-        getRow: (tableName: string, key: string) =>
-          this.gtfsRelationshipsInstance.gtfsDatabase.getRow(tableName, key),
-        getAllRows: (tableName: string) =>
-          this.gtfsRelationshipsInstance.gtfsDatabase.getAllRows(tableName),
-        insertRows: (tableName: string, rows: unknown[]) =>
-          this.gtfsRelationshipsInstance.gtfsDatabase.insertRows(
-            tableName,
-            rows as import('./gtfs-database').GTFSDatabaseRecord[]
-          ),
-        deleteRow: (tableName: string, key: string) =>
-          this.gtfsRelationshipsInstance.gtfsDatabase.deleteRow(tableName, key),
-      },
-      gtfsRelationships: {
-        getRoutesForService: (service_id: string) =>
-          this.relationships.getRoutesForServiceAsync?.(service_id) ||
-          Promise.resolve([]),
-        getTripsForService: (service_id: string) =>
-          this.relationships.getTripsForServiceAsync?.(service_id) ||
-          Promise.resolve([]),
-      },
+      feed: this.feed,
       serviceDaysController: this.serviceDaysController || {
         renderServiceEditor: () =>
           Promise.resolve(`<div>${t('browse.serviceEditorMissing')}</div>`),
@@ -317,8 +178,6 @@ export class BrowseNavigation {
         direction_id?: string
       ) => openTimetable(route_id, service_id, direction_id),
       onEntityCreated: () => this.render(),
-      patchManager: this.patchManager ?? undefined,
-      gtfsParser: this.gtfsParser ?? undefined,
     };
 
     this.contentRenderer = new PageContentRenderer(dependencies);

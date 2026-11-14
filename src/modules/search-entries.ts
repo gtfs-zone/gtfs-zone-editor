@@ -13,7 +13,7 @@ import {
   getRouteDisplay,
   getStopDisplay,
 } from '../utils/entity-display';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 import { normalizeAgencyId } from '../utils/agency-helpers';
 import { listZones, zoneName } from './zone-store';
 import {
@@ -29,24 +29,46 @@ function haystack(...parts: (string | undefined)[]): string {
   return parts.filter(Boolean).join(' ');
 }
 
-type Row = Record<string, string>;
-
 /** A search pick: an entity page, or a place from the remote search. */
 export type SearchPayload = { kind: 'entity'; state: PageState } | PlacePayload;
 
-export async function buildSearchEntries(
-  parser: GTFSParser
-): Promise<SearchEntry<SearchPayload>[]> {
-  const [stops, routes, agencies, locationGroups] = (await Promise.all([
-    parser.getFileData(GTFS_TABLES.STOPS),
-    parser.getFileData(GTFS_TABLES.ROUTES),
-    parser.getFileData(GTFS_TABLES.AGENCY),
-    parser.getFileData(GTFS_TABLES.LOCATION_GROUPS),
-  ])) as [Row[] | null, Row[] | null, Row[] | null, Row[] | null];
+let memo: {
+  generation: number;
+  version: number;
+  entries: SearchEntry<SearchPayload>[];
+} | null = null;
+
+/** The feed's search entries, built once per feed generation and version. */
+export function buildSearchEntries(
+  feed: EditorFeed
+): SearchEntry<SearchPayload>[] {
+  if (!feed.isOpen) {
+    return [];
+  }
+  if (
+    memo?.generation !== feed.feedGeneration ||
+    memo.version !== feed.version
+  ) {
+    memo = {
+      generation: feed.feedGeneration,
+      version: feed.version,
+      entries: buildEntries(feed),
+    };
+  }
+  return memo.entries;
+}
+
+function buildEntries(feed: EditorFeed): SearchEntry<SearchPayload>[] {
+  const table = (name: string): readonly FeedRow[] =>
+    feed.table(name.replace(/\.txt$/, ''));
+  const stops = table(GTFS_TABLES.STOPS);
+  const routes = table(GTFS_TABLES.ROUTES);
+  const agencies = table(GTFS_TABLES.AGENCY);
+  const locationGroups = table(GTFS_TABLES.LOCATION_GROUPS);
 
   const entries: SearchEntry<SearchPayload>[] = [];
 
-  for (const stop of stops ?? []) {
+  for (const stop of stops) {
     const stop_id = stop['stop_id'];
     if (!stop_id) {
       continue;
@@ -67,7 +89,7 @@ export async function buildSearchEntries(
     });
   }
 
-  for (const route of routes ?? []) {
+  for (const route of routes) {
     const route_id = route['route_id'];
     if (!route_id) {
       continue;
@@ -91,7 +113,7 @@ export async function buildSearchEntries(
     });
   }
 
-  for (const agency of agencies ?? []) {
+  for (const agency of agencies) {
     // An empty agency_id is the feed's single agency, keyed as ''
     const agency_id = normalizeAgencyId(agency['agency_id']);
     entries.push({
@@ -106,7 +128,7 @@ export async function buildSearchEntries(
 
   // Flex objects rank below stops and routes: most feeds have none, and where
   // they exist they are far fewer than the scheduled objects above.
-  for (const feature of listZones(parser)) {
+  for (const feature of listZones(feed)) {
     const location_id = String(feature.id);
     const name = zoneName(feature);
     entries.push({
@@ -119,7 +141,7 @@ export async function buildSearchEntries(
     });
   }
 
-  for (const group of locationGroups ?? []) {
+  for (const group of locationGroups) {
     const location_group_id = group['location_group_id'];
     if (!location_group_id) {
       continue;

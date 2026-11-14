@@ -32,6 +32,10 @@ export interface FeedState {
   networksMode: NetworksMode;
   extensionColumns: Record<string, string[]>;
   importedAt: number;
+  /** feed_info.feed_version as imported; null without feed_info. */
+  importFeedVersion: string | null;
+  /** Row counts for the continue card, as of the last state write. */
+  counts: { routes: number; stops: number; trips: number };
 }
 
 export interface FeedLog {

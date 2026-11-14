@@ -15,14 +15,18 @@ import {
   syncAutoZoomControl,
   wireAutoZoomControl,
 } from 'gtfs-zone-web-common/map/auto-zoom';
-import { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
+import { createEmptyFeed, loadFeed } from '../feed/feed-loader';
+import { updateOp } from '../feed/patch-build';
+import { GTFS_FILES } from '../types/gtfs';
+import { ALL_GTFS_FILES } from './gtfs-file-registry';
+import { getZoneFeatures } from './zone-store';
 import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { Editor } from './editor';
 import { BrowseNavigation } from './browse-navigation';
 import { buildExportFilename } from '../utils/export-filename';
 import { runWhenIdle } from '../utils/run-when-idle';
 import { showHelpPageOnce } from 'gtfs-zone-web-common/ui/help-modal';
-import type { PatchManager } from './patch-manager';
 import { GTFSSchemas } from '../types/gtfs';
 import { generateFieldConfigsFromSchema } from '../utils/field-component';
 import {
@@ -41,6 +45,12 @@ import {
 import { googleExtension } from '../gtfs-spec/extensions/google';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
+
+/** Row count of a table file, or line count of a non-spec entry. */
+interface FileCounts {
+  rows?: number;
+  lines?: number;
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -64,8 +74,49 @@ function showURLErrorModal(url: string, error: Error) {
   });
 }
 
+/** The open feed's files, grouped as the Files list shows them. */
+interface FileCategories {
+  required: string[];
+  optional: string[];
+  extensions: string[];
+  /** Non-spec entries, carried through as text. */
+  additional: string[];
+  /** Row count per table file. */
+  rows: Map<string, number>;
+}
+
+async function categorizeFiles(feed: EditorFeed): Promise<FileCategories> {
+  const counts = await feed.read('counts');
+  const entries = await feed.fileNames();
+  const rows = new Map(
+    Object.entries(counts).map(([table, n]) => [`${table}.txt`, n])
+  );
+  const allFiles = [
+    ...rows.keys(),
+    ...entries.filter((f) => ALL_GTFS_FILES.includes(f)),
+  ];
+  const requiredFiles = GTFS_FILES.filter((f) => f.presence === 'Required').map(
+    (f) => f.filename
+  );
+  const overlayFiles = new Set(overlayFileNames());
+  return {
+    required: allFiles.filter((f) => requiredFiles.includes(f)),
+    optional: allFiles.filter(
+      (f) =>
+        !requiredFiles.includes(f) &&
+        !overlayFiles.has(f) &&
+        ALL_GTFS_FILES.includes(f)
+    ),
+    extensions: allFiles.filter(
+      (f) => overlayFiles.has(f) && (rows.get(f) ?? 0) > 0
+    ),
+    additional: entries.filter((f) => !ALL_GTFS_FILES.includes(f)),
+    rows,
+  };
+}
+
 export class UIController {
-  gtfsParser: GTFSParser | null;
+  feed: EditorFeed | null;
   editor: Editor | null;
   mapController: MapController | null;
   browseNavigation: BrowseNavigation | null;
@@ -76,7 +127,6 @@ export class UIController {
   currentSelection: FeedSelection | null;
   /** Cancels a map update scheduled for a feed that has since been replaced. */
   private cancelPendingMapUpdate: (() => void) | null = null;
-  private patchManager: PatchManager | null = null;
   /** Overlay files the user added to the Files list, for one feed generation. */
   /** The file the Files modal is showing, null on the list. */
   private shownFile: string | null = null;
@@ -86,7 +136,7 @@ export class UIController {
   };
 
   constructor() {
-    this.gtfsParser = null;
+    this.feed = null;
     this.editor = null;
     this.mapController = null;
     this.browseNavigation = null;
@@ -94,12 +144,12 @@ export class UIController {
   }
 
   initialize(
-    gtfsParser: GTFSParser,
+    feed: EditorFeed,
     editor: Editor,
     mapController: MapController,
     browseNavigation: BrowseNavigation
   ) {
-    this.gtfsParser = gtfsParser;
+    this.feed = feed;
     this.editor = editor;
     this.mapController = mapController;
     this.browseNavigation = browseNavigation;
@@ -108,10 +158,6 @@ export class UIController {
     // Boot paths other than a fresh load never touch the tool buttons, so the
     // persisted auto-zoom state has to be applied here.
     this.updateMapToolButtonState();
-  }
-
-  setPatchManager(pm: PatchManager): void {
-    this.patchManager = pm;
   }
 
   setupEventListeners() {
@@ -276,9 +322,7 @@ export class UIController {
   async refreshAfterFeedSwap(
     options: { navigateHome?: boolean } = {}
   ): Promise<void> {
-    console.time('[GTFS] updateFileList');
-    this.updateFileList();
-    console.timeEnd('[GTFS] updateFileList');
+    await this.updateFileList();
 
     this.scheduleMapUpdate();
 
@@ -303,8 +347,8 @@ export class UIController {
         throw new Error(t('load.notZip'));
       }
 
-      // Parse the file
-      const { unknownFiles } = await this.gtfsParser!.parseFile(file);
+      await loadFeed(this.feed!, { file }, file.name);
+      const unknownFiles = (await categorizeFiles(this.feed!)).additional;
       if (unknownFiles.length > 0) {
         notify.warning(
           t('load.preservingUnknown', {
@@ -466,7 +510,8 @@ export class UIController {
     try {
       console.log('Loading GTFS from URL:', url);
 
-      const { unknownFiles } = await this.gtfsParser!.parseFromURL(url);
+      await loadFeed(this.feed!, { url }, url);
+      const unknownFiles = (await categorizeFiles(this.feed!)).additional;
       if (unknownFiles.length > 0) {
         notify.warning(
           t('load.preservingUnknown', {
@@ -520,7 +565,7 @@ export class UIController {
     try {
       await showFilesModal({
         onMount: () => {
-          this.updateFileList();
+          void this.updateFileList();
           // Always open on the list, never a stale editor view from last time
           this.showFileList();
 
@@ -557,7 +602,7 @@ export class UIController {
       this.showFileList();
       return;
     }
-    if (!this.isListedFile(fileName)) {
+    if (!(await this.isListedFile(fileName))) {
       console.warn(
         `[UI] Files: ${fileName} is not in the list, showing the list`
       );
@@ -576,35 +621,46 @@ export class UIController {
   }
 
   /** Whether the Files list shows the file, so a hash may name it. */
-  private isListedFile(fileName: string): boolean {
-    if (this.gtfsParser!.getPassthroughContent(fileName) !== undefined) {
-      return true;
-    }
+  private async isListedFile(fileName: string): Promise<boolean> {
+    const files = await categorizeFiles(this.feed!);
     if (overlayFileNames().includes(fileName)) {
-      const gen = this.gtfsParser!.feedGeneration;
+      const gen = this.feed!.feedGeneration;
       const added =
         this.addedExtensionFiles.gen === gen &&
         this.addedExtensionFiles.files.has(fileName);
-      return (
-        added ||
-        this.gtfsParser!.categorizeFiles().extensions.includes(fileName)
-      );
+      return added || files.extensions.includes(fileName);
     }
-    return this.gtfsParser!.getAllFileNames().includes(fileName);
+    return [...files.required, ...files.optional, ...files.additional].includes(
+      fileName
+    );
   }
 
-  updateFileList() {
+  async updateFileList(): Promise<void> {
     // Skipped while the Files modal is closed: a feed swap refreshes the list
     // too, and the list only exists inside the open modal.
+    if (!document.getElementById('file-list') || !this.feed?.isOpen) {
+      return;
+    }
+    const files = await categorizeFiles(this.feed);
+    const { required, optional, extensions, additional } = files;
+    const lineCounts = new Map<string, number>();
+    for (const fileName of additional) {
+      const text = (await this.feed.fileText(fileName)) ?? '';
+      lineCounts.set(
+        fileName,
+        text.split('\n').filter((l) => l.trim() !== '').length
+      );
+    }
     const fileList = document.getElementById('file-list');
     if (!fileList) {
       return;
     }
     fileList.innerHTML = '';
+    const counts = (fileName: string) => ({
+      rows: files.rows.get(fileName),
+      lines: lineCounts.get(fileName),
+    });
 
-    // Get categorized files
-    const { required, optional, extensions, additional } =
-      this.gtfsParser!.categorizeFiles();
     // Create DaisyUI menu structure
     const menu = document.createElement('ul');
     menu.className = 'menu w-full';
@@ -618,7 +674,7 @@ export class UIController {
 
     const requiredList = document.createElement('ul');
     required.forEach((fileName) => {
-      this.addFileItem(requiredList, fileName, true);
+      this.addFileItem(requiredList, fileName, true, counts(fileName));
     });
     requiredSection.appendChild(requiredList);
     menu.appendChild(requiredSection);
@@ -632,12 +688,12 @@ export class UIController {
 
     const optionalList = document.createElement('ul');
     optional.forEach((fileName) => {
-      this.addFileItem(optionalList, fileName, false);
+      this.addFileItem(optionalList, fileName, false, counts(fileName));
     });
     optionalSection.appendChild(optionalList);
     menu.appendChild(optionalSection);
 
-    menu.appendChild(this.extensionFilesSection(extensions));
+    menu.appendChild(this.extensionFilesSection(extensions, counts));
 
     // Non-spec files carried through from the imported ZIP, if any
     if (additional.length > 0) {
@@ -649,7 +705,7 @@ export class UIController {
 
       const additionalList = document.createElement('ul');
       additional.forEach((fileName) => {
-        this.addFileItem(additionalList, fileName, false);
+        this.addFileItem(additionalList, fileName, false, counts(fileName));
       });
       additionalSection.appendChild(additionalList);
       menu.appendChild(additionalSection);
@@ -662,8 +718,11 @@ export class UIController {
    * Overlay files: the ones holding rows or added this feed generation, then
    * an "Add" submenu offering the rest.
    */
-  private extensionFilesSection(withRows: string[]): HTMLElement {
-    const gen = this.gtfsParser!.feedGeneration;
+  private extensionFilesSection(
+    withRows: string[],
+    counts: (fileName: string) => FileCounts
+  ): HTMLElement {
+    const gen = this.feed!.feedGeneration;
     if (this.addedExtensionFiles.gen !== gen) {
       this.addedExtensionFiles = { gen, files: new Set() };
     }
@@ -682,7 +741,7 @@ export class UIController {
 
     const list = document.createElement('ul');
     shown.forEach((fileName) => {
-      this.addFileItem(list, fileName, false);
+      this.addFileItem(list, fileName, false, counts(fileName));
     });
 
     if (addable.length > 0) {
@@ -701,7 +760,7 @@ export class UIController {
           event.preventDefault();
           added.add(fileName);
           console.log('[UI] extension file added to the Files list:', fileName);
-          this.updateFileList();
+          void this.updateFileList();
           void this.navigateFiles(fileName);
         });
         li.appendChild(link);
@@ -716,7 +775,12 @@ export class UIController {
     return section;
   }
 
-  addFileItem(container: HTMLElement, fileName: string, isRequired: boolean) {
+  addFileItem(
+    container: HTMLElement,
+    fileName: string,
+    isRequired: boolean,
+    counts: FileCounts
+  ) {
     const listItem = document.createElement('li');
 
     const link = document.createElement('a');
@@ -734,20 +798,18 @@ export class UIController {
     link.appendChild(nameSpan);
 
     // Passthrough files have no table, so count lines instead of records
-    const passthrough = this.gtfsParser!.getPassthroughContent(fileName);
-    if (passthrough !== undefined) {
-      const lines = passthrough
-        .split('\n')
-        .filter((l) => l.trim() !== '').length;
+    if (counts.lines !== undefined) {
       const lineSpan = document.createElement('span');
       lineSpan.className = 'badge badge-ghost badge-sm';
-      lineSpan.textContent = t('files.lines', { count: lines });
+      lineSpan.textContent = t('files.lines', { count: counts.lines });
       link.appendChild(lineSpan);
     } else {
-      // Add record count if available
-      const data = this.gtfsParser!.getFileDataSync(fileName);
-      if (data) {
-        const count = Array.isArray(data) ? data.length : 1;
+      const count =
+        counts.rows ??
+        (fileName === 'locations.geojson'
+          ? getZoneFeatures(this.feed!).length
+          : undefined);
+      if (count !== undefined) {
         const countSpan = document.createElement('span');
         countSpan.className = 'badge badge-neutral badge-sm';
         countSpan.textContent = formatNumber(count);
@@ -765,15 +827,6 @@ export class UIController {
   }
 
   private async openFile(fileName: string) {
-    const isPassthrough =
-      this.gtfsParser!.getPassthroughContent(fileName) !== undefined;
-    if (
-      !isPassthrough &&
-      !this.gtfsParser!.getAllFileNames().includes(fileName)
-    ) {
-      return;
-    }
-
     // Show file editor view
     this.shownFile = fileName;
     await this.showFileEditor(fileName);
@@ -837,22 +890,10 @@ export class UIController {
       return;
     }
     try {
-      // Reset to empty GTFS feed
-      await this.gtfsParser!.initializeEmpty();
-      this.updateFileList();
-      await this.mapController!.updateMap();
-
-      // Show files tab
-      this.showFileList();
-
-      // Clear editor
+      await createEmptyFeed(this.feed!, t('load.newEmpty'));
       this.editor!.clearEditor();
-
-      // Refresh Objects navigation if available
-      if (this.browseNavigation) {
-        await navigateToHome();
-        this.browseNavigation.refresh();
-      }
+      await this.refreshAfterFeedSwap({ navigateHome: true });
+      this.showFileList();
 
       notify.success(t('load.emptyCreated'));
 
@@ -869,18 +910,12 @@ export class UIController {
 
   /** Feed identity for the export filename: agency name, else feed publisher. */
   private getFeedName(): string | undefined {
-    const agencies = this.gtfsParser?.getFileDataSync(GTFS_TABLES.AGENCY) ?? [];
-    const agencyName = agencies[0]?.agency_name;
-    if (typeof agencyName === 'string' && agencyName.trim()) {
+    const agencyName = this.feed?.table('agency')[0]?.agency_name;
+    if (agencyName?.trim()) {
       return agencyName;
     }
-
-    const feedInfo =
-      this.gtfsParser?.getFileDataSync(GTFS_TABLES.FEED_INFO) ?? [];
-    const publisher = feedInfo[0]?.feed_publisher_name;
-    return typeof publisher === 'string' && publisher.trim()
-      ? publisher
-      : undefined;
+    const publisher = this.feed?.table('feed_info')[0]?.feed_publisher_name;
+    return publisher?.trim() ? publisher : undefined;
   }
 
   /**
@@ -890,13 +925,13 @@ export class UIController {
    * no feed_info row exports without asking.
    */
   private async confirmFeedVersion(): Promise<boolean> {
-    const db = this.gtfsParser!.gtfsDatabase;
-    const feedInfo = await db.getAllRows('feed_info');
+    const feed = this.feed!;
+    const feedInfo = feed.table('feed_info');
     if (feedInfo.length === 0) {
       return true;
     }
-    const current = String(feedInfo[0].feed_version ?? '');
-    const imported = await db.getImportFeedVersion();
+    const current = feedInfo[0].feed_version ?? '';
+    const imported = feed.importFeedVersion;
     if (imported !== null && current !== imported) {
       return true;
     }
@@ -955,15 +990,9 @@ export class UIController {
               showError(t('export.versionUnchanged'));
               return true;
             }
-            if (!this.patchManager) {
-              throw new Error('[UI] no patch manager to record feed_version');
-            }
-            await this.patchManager.recordUpdate(
-              'feed_info',
-              'feed_info',
-              { feed_version: current },
-              { feed_version: next }
-            );
+            await feed.apply([
+              updateOp('feed_info', feedInfo[0], { feed_version: next }),
+            ]);
             console.log(
               `[UI] Export: feed_version "${current}" -> "${next}", exporting`
             );
@@ -1001,7 +1030,7 @@ export class UIController {
    * resolves false, so the load is started again once the copy is saved.
    */
   private async confirmReplaceFeed(): Promise<boolean> {
-    const count = this.patchManager?.changeCount ?? 0;
+    const count = this.feed?.isOpen ? this.feed.version : 0;
     if (count === 0) {
       return true;
     }
@@ -1049,10 +1078,8 @@ export class UIController {
 
     try {
       if (
-        !this.gtfsParser ||
-        !this.gtfsParser
-          .getAllFileNames()
-          .some((f) => (this.gtfsParser!.getFileDataSync(f)?.length ?? 0) > 0)
+        !this.feed?.isOpen ||
+        !Object.values(await this.feed.read('counts')).some((n) => n > 0)
       ) {
         notify.warning(t('export.noData'));
         return;
@@ -1071,7 +1098,7 @@ export class UIController {
       loadingNotificationId = notify.loading(t('export.preparing'));
 
       // Generate ZIP blob
-      const blob = await this.gtfsParser!.exportAsZip();
+      const blob = await this.buildExportZip();
 
       // Download the file
       const url = URL.createObjectURL(blob);
@@ -1100,6 +1127,11 @@ export class UIController {
 
       notify.error(t('export.failed', { message: (error as Error).message }));
     }
+  }
+
+  /** The feed as a zip. Not built yet: export runs in the worker later. */
+  private async buildExportZip(): Promise<Blob> {
+    throw new Error(t('export.unavailable'));
   }
 
   /**

@@ -143,28 +143,6 @@ export function validateFrequencyRow(
 }
 
 /**
- * Whether an `exact_times=1` period's end_time lands exactly on a departure.
- *
- * The spec puts the last trip's start_time strictly below end_time, so a period
- * whose span divides evenly by the headway is ambiguous about whether that last
- * departure runs. Returns false for any row that does not parse: that is the
- * row check's problem, not this one's.
- */
-export function frequencyEndIsAmbiguous(row: Record<string, unknown>): boolean {
-  if (cell(row, 'exact_times') !== '1') {
-    return false;
-  }
-  const startSecs = TimeFormatter.timeToSeconds(cell(row, 'start_time'));
-  const endSecs = TimeFormatter.timeToSeconds(cell(row, 'end_time'));
-  const headway = cell(row, 'headway_secs');
-  if (startSecs === null || endSecs === null || !/^\d+$/.test(headway)) {
-    return false;
-  }
-  const secs = parseInt(headway, 10);
-  return secs > 0 && (endSecs - startSecs) % secs === 0;
-}
-
-/**
  * One period spelled out for a tooltip, e.g. `06:00:00-09:00:00 every 10m`.
  * The headway shows in minutes only when it divides evenly.
  */

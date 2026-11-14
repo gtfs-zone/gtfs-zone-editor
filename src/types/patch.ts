@@ -36,8 +36,17 @@ export interface PatchRename {
 export interface BatchGTFSPatch {
   op: 'batch';
   ops: SingleGTFSPatch[];
+  /** Non-table entries the batch replaces, after its row ops. */
+  files?: FileChange[];
   label?: string;
   rename?: PatchRename;
+}
+
+/** A non-table entry's text before and after; null means absent. */
+export interface FileChange {
+  name: string;
+  before: string | null;
+  after: string | null;
 }
 
 /** A patch is either a single-record operation or a batch of them. */
@@ -47,11 +56,8 @@ export type GTFSPatch = SingleGTFSPatch | BatchGTFSPatch;
  * A non-table archive entry (e.g. `locations.geojson`) replaced as a whole.
  * `null` means the entry is absent on that side.
  */
-export interface FilePatch {
+export interface FilePatch extends FileChange {
   op: 'file';
-  name: string;
-  before: string | null;
-  after: string | null;
   label?: string;
 }
 
@@ -64,20 +70,3 @@ export interface FeedPatchRecord {
   patch: FeedPatch;
   timestamp: number;
 }
-
-/** Persisted patch entry in IndexedDB (version is the autoIncrement key). */
-export interface PatchRecord {
-  version?: number; // absent on write, assigned by autoIncrement on read
-  patch: GTFSPatch;
-  timestamp: number; // Date.now()
-}
-
-/** Compressed full-state checkpoint. */
-export interface SnapshotRecord {
-  version: number; // version of the last patch included in this snapshot
-  state: string; // base64-encoded gzip-compressed JSON of GTFSState
-  timestamp: number; // Date.now()
-}
-
-/** Full GTFS state: table name -> array of row objects. */
-export type GTFSState = Record<string, Record<string, unknown>[]>;

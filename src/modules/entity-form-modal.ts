@@ -21,7 +21,7 @@ import type { GTFSPresence } from '../gtfs-spec/types';
 import { getEnumOptions, isEnumField } from '../types/gtfs-enums';
 import {
   closeDraft,
-  inlineFieldDatabase,
+  inlineFieldFeed,
   openDraft,
   openFieldForEdit,
   readDraft,
@@ -382,7 +382,7 @@ export async function promptNewEntity(
               (options.id.keyField
                 ? validateIdText(id)
                 : await validateNewId(
-                    inlineFieldDatabase(),
+                    inlineFieldFeed(),
                     options.id.table,
                     id
                   )) ??

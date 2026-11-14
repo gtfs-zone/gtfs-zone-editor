@@ -6,6 +6,7 @@
  * render the same view. The modal remains a caller like any other.
  */
 
+import type { EditorFeed } from '../feed/editor-feed';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { formatDaysOfWeek } from '../utils/entity-references';
 import {
@@ -30,10 +31,6 @@ export interface ServiceData {
 }
 
 export type ServiceDataMap = Map<string, ServiceData>;
-
-export interface ServiceTimelineSource {
-  getAllRows: (tableName: string) => Promise<Record<string, unknown>[]>;
-}
 
 /** Per-row button that opens the service itself rather than the timetable. */
 const SERVICE_EDIT_BTN = 'timeline-service-edit-btn';
@@ -114,17 +111,27 @@ export function isServiceActive(
   return Number(calendar[WEEKDAY_KEYS[dow]]) === 1;
 }
 
+/**
+ * Every service with its calendar row, colored by its place among all the
+ * feed's service ids. Exceptions are read for `only` when given (the
+ * services a page shows), else for every service.
+ */
 export async function loadServiceData(
-  db: ServiceTimelineSource
+  feed: EditorFeed,
+  only?: Iterable<string>
 ): Promise<ServiceDataMap> {
-  const [calendarRows, calendarDatesRows] = await Promise.all([
-    db.getAllRows('calendar'),
-    db.getAllRows('calendar_dates'),
+  const wanted = only ? [...new Set(only)] : null;
+  const [exceptionIds, calendarDatesRows] = await Promise.all([
+    feed.distinct('calendar_dates', 'service_id'),
+    feed.where(
+      'calendar_dates',
+      wanted ? [{ col: 'service_id', in: wanted }] : []
+    ),
   ]);
 
   const exceptionsByService = new Map<string, Record<string, unknown>[]>();
   for (const row of calendarDatesRows) {
-    const sid = String(row.service_id);
+    const sid = row.service_id;
     if (!exceptionsByService.has(sid)) {
       exceptionsByService.set(sid, []);
     }
@@ -132,13 +139,13 @@ export async function loadServiceData(
   }
 
   const calendarByService = new Map<string, Record<string, unknown>>();
-  for (const row of calendarRows) {
-    calendarByService.set(String(row.service_id), row);
+  for (const row of feed.table('calendar')) {
+    calendarByService.set(row.service_id, row);
   }
 
   const allServiceIds = new Set<string>([
     ...calendarByService.keys(),
-    ...exceptionsByService.keys(),
+    ...exceptionIds,
   ]);
 
   const sortedIds = [...allServiceIds].sort();
@@ -157,20 +164,22 @@ export async function loadServiceData(
 }
 
 /**
- * Trip count per service, optionally scoped to a single route. One full scan of
- * trips.txt, which is the same cost the pages already pay to render.
+ * Trip count per service, optionally scoped to a single route. Counted in
+ * the worker; a route reads only its own trips.
  */
 export async function loadTripCounts(
-  db: ServiceTimelineSource,
+  feed: EditorFeed,
   route_id?: string
 ): Promise<Map<string, number>> {
-  const trips = await db.getAllRows('trips');
-  return countTripsByService(trips, route_id);
+  if (route_id === undefined) {
+    return new Map(Object.entries(await feed.countBy('trips', 'service_id')));
+  }
+  return countTripsByService(await feed.find('trips', 'route_id', route_id));
 }
 
 /** Trip count per service over an already-loaded set of trips. */
 export function countTripsByService(
-  trips: Record<string, unknown>[],
+  trips: readonly Record<string, unknown>[],
   route_id?: string
 ): Map<string, number> {
   const counts = new Map<string, number>();

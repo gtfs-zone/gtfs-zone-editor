@@ -1,88 +1,84 @@
-import { GTFS_TABLES } from '../types/gtfs';
 import { getZoneCollection } from './zone-store';
-import type { GTFSParser } from './gtfs-parser';
-import type { PatchManager } from './patch-manager';
-
-interface NavbarCountsDeps {
-  gtfsParser: GTFSParser;
-  patchManager: PatchManager;
-}
+import type { EditorFeed } from '../feed/editor-feed';
 
 /**
  * Count bubbles on the navbar buttons (shapes, services, levels, fare products,
  * transfers, translations, attributions, on-demand objects, changes).
  *
- * Counts are read from the parser's in-memory tables, which share their row
- * arrays with the virtual tables, so they are current without hitting IndexedDB
- * on every refresh. `shapes.txt` is the exception: it is counted via the cached
- * `getShapeIds()` because reading its rows copies every shape point.
+ * Mirrored tables are counted on the main thread; shapes, transfers,
+ * translations and calendar_dates come from the worker, so a refresh is
+ * async and a newer one supersedes an older one still in flight.
  */
 export class NavbarCounts {
-  private deps: NavbarCountsDeps;
+  private seq = 0;
 
-  constructor(deps: NavbarCountsDeps) {
-    this.deps = deps;
-  }
+  constructor(private readonly feed: EditorFeed) {}
 
   /** Wire refreshes to every event that can change one of the counts. */
   initialize(): void {
-    for (const event of ['change', 'undo', 'redo', 'jump'] as const) {
-      this.deps.patchManager.on(event, () => this.refresh());
-    }
+    this.feed.onEdit(() => this.refresh());
+    this.feed.onFeedReplaced(() => this.refresh());
     this.refresh();
   }
 
   refresh(): void {
-    const { gtfsParser, patchManager } = this.deps;
-
-    setBadge('shapes-count-badge', gtfsParser.getShapeIds().length);
-    setBadge('calendar-count-badge', this.countServices());
-    setBadge(
-      'levels-count-badge',
-      gtfsParser.getFileDataSync(GTFS_TABLES.LEVELS).length
-    );
-    setBadge(
-      'fares-count-badge',
-      gtfsParser.getFileDataSync(GTFS_TABLES.FARE_PRODUCTS).length
-    );
-    setBadge(
-      'transfers-count-badge',
-      gtfsParser.getFileDataSync(GTFS_TABLES.TRANSFERS).length
-    );
-    setBadge(
-      'translations-count-badge',
-      gtfsParser.getFileDataSync(GTFS_TABLES.TRANSLATIONS).length
-    );
-    setBadge(
-      'attributions-count-badge',
-      gtfsParser.getFileDataSync(GTFS_TABLES.ATTRIBUTIONS).length
-    );
-    setBadge('on-demand-count-badge', this.countOnDemandObjects());
-    setBadge('history-count-badge', patchManager.changeCount);
-  }
-
-  /** Booking rules, location groups and zones together. */
-  private countOnDemandObjects(): number {
-    const { gtfsParser } = this.deps;
-    return (
-      gtfsParser.getFileDataSync(GTFS_TABLES.BOOKING_RULES).length +
-      gtfsParser.getFileDataSync(GTFS_TABLES.LOCATION_GROUPS).length +
-      getZoneCollection(gtfsParser).features.length
-    );
-  }
-
-  /** Distinct service_ids across calendar.txt and calendar_dates.txt. */
-  private countServices(): number {
-    const ids = new Set<string>();
-    for (const table of [GTFS_TABLES.CALENDAR, GTFS_TABLES.CALENDAR_DATES]) {
-      for (const row of this.deps.gtfsParser.getFileDataSync(table)) {
-        const id = String(row['service_id'] ?? '');
-        if (id !== '') {
-          ids.add(id);
+    const seq = ++this.seq;
+    this.count()
+      .then((counts) => {
+        if (seq !== this.seq) {
+          return;
         }
+        for (const [id, count] of Object.entries(counts)) {
+          setBadge(id, count);
+        }
+      })
+      .catch((e: unknown) =>
+        console.error('[NavbarCounts] refresh failed:', e)
+      );
+  }
+
+  private async count(): Promise<Record<string, number>> {
+    const feed = this.feed;
+    if (!feed.isOpen) {
+      return {
+        'shapes-count-badge': 0,
+        'calendar-count-badge': 0,
+        'levels-count-badge': 0,
+        'fares-count-badge': 0,
+        'transfers-count-badge': 0,
+        'translations-count-badge': 0,
+        'attributions-count-badge': 0,
+        'on-demand-count-badge': 0,
+        'history-count-badge': 0,
+      };
+    }
+    const [counts, shapeIds, exceptionServices] = await Promise.all([
+      feed.read('counts'),
+      feed.read('shapeIds'),
+      feed.distinct('calendar_dates', 'service_id'),
+    ]);
+    // Distinct service_ids across calendar.txt and calendar_dates.txt.
+    const services = new Set(exceptionServices);
+    for (const row of feed.table('calendar')) {
+      if (row.service_id) {
+        services.add(row.service_id);
       }
     }
-    return ids.size;
+    return {
+      'shapes-count-badge': shapeIds.length,
+      'calendar-count-badge': services.size,
+      'levels-count-badge': feed.table('levels').length,
+      'fares-count-badge': feed.table('fare_products').length,
+      'transfers-count-badge': counts.transfers ?? 0,
+      'translations-count-badge': counts.translations ?? 0,
+      'attributions-count-badge': feed.table('attributions').length,
+      // Booking rules, location groups and zones together.
+      'on-demand-count-badge':
+        feed.table('booking_rules').length +
+        feed.table('location_groups').length +
+        getZoneCollection(feed).features.length,
+      'history-count-badge': feed.version,
+    };
   }
 }
 

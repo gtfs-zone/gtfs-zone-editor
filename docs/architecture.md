@@ -12,9 +12,10 @@ references explicitly.
 
 | Group | Modules |
 |-------|---------|
-| Data | `gtfs-parser.ts`, `gtfs-database.ts`, `gtfs-validator.ts`, `gtfs-relationships.ts` |
+| Feed | `src/feed/`: `editor-feed.ts` (main-thread client), `feed-worker-api.ts` (store worker, patch log), `feed-loader.ts`, `patch-build.ts`, `patch-apply.ts`, `route-refs.ts` |
+| Data | `gtfs-validator.ts`, `zone-store.ts` |
 | Map | `map-controller.ts`, `route-renderer.ts`, `layer-manager.ts`, `interaction-handler.ts` |
-| Editor | `editor.ts` (Files table viewer, Clusterize grid), `ui.ts` (file list / editor / preview state machine), `patch-manager.ts` (append-only patch log + undo/redo), `history-controller.ts` (Changes panel UI) |
+| Editor | `editor.ts` (Files table viewer, Clusterize grid), `ui.ts` (file list / editor / preview state machine), `history-controller.ts` (Changes panel UI) |
 | Navigation | `page-state-manager.ts`, `breadcrumbs.ts`, `objects-navigation.ts`, `page-content-renderer.ts` |
 | Views | `schedule-controller.ts`, `service-days-controller.ts`, `stop-view-controller.ts`, `timetable-*.ts` |
 | UI | `navbar-action-list.ts`, `shortcut-list.ts`, `help-pages.ts`, `tab-lock.ts` |
@@ -23,43 +24,40 @@ references explicitly.
 
 There is no centralized state management (no Redux/Zustand). State is distributed:
 
-- **IndexedDB** (`GTFSDatabase`): persistent GTFS data
+- **Feed worker** (`EditorFeed`): the feed's columnar store and patch log;
+  the base is an OPFS file, the log and its state live in IndexedDB
 - **`PageStateManager`**: URL hash-based navigation state
 - **Module-level state**: each controller owns its own state
 - **DOM state**: tab selection, active view
 
 ## Patch system
 
-Every user-initiated `updateRow`, `insertRows`, or `deleteRow` must be
-accompanied by a corresponding `patchManager.record*()` call. Direct DB writes
-are only for: internal initialization, patch replay, feed import, and backup
-restore.
+Every user edit is a patch: build ops with `insertOp` / `updateOp` /
+`deleteOp` from `src/feed/patch-build.ts` and send them with
+`EditorFeed.apply` (or `edit` for a built patch). The worker applies the patch
+to the store and logs it before the call resolves; nothing writes rows any
+other way. Non-table entries (passthrough files, `locations.geojson`) are
+patched whole with `EditorFeed.editFile`, or as `files` on `apply` to batch
+them with row ops.
 
-The one exception is non-spec passthrough files (see
-`GTFSParser.setPassthroughContent`): they have no table, no primary key and no
-schema, so there is nothing a patch could describe. Do not extend this
-exception to anything else.
+## Frozen rows
 
-## Copy-on-read
+Mirror rows (`EditorFeed.table`, `byKey`) are frozen when they reach the
+mirror, and a change replaces the row object instead of mutating it. A row
+held across an edit keeps its old values; writing to one throws. Copy a row
+(or the array) before handing it to anything that mutates it. Rows read from
+the worker (`find`, `where`, `byKeys`, `read`) are copies already.
 
-All query methods on virtual tables (`getAll`, `getById`, `query`) return
-shallow copies of the stored rows, not live references. This prevents silent
-aliasing bugs where a "before" snapshot is mutated by a later in-place write.
-Do not hold a long-lived reference to a query result and assume it will remain
-unchanged.
-
-`EditorFeed` mirror rows (`table`, `byKey`) get the same guarantee without a
-copy: each row is frozen when it reaches the mirror, and a change replaces
-the row object instead of mutating it. A row held across an edit keeps its
-old values; writing to one throws.
+Values are strings, exactly as in the file; parse numbers where they are
+used. An absent value is `''`, so test with `||`, not `??`.
 
 ## Networks
 
 GTFS allows two mutually exclusive on-disk forms, `routes.network_id` or the
-two network files. In IndexedDB it is always the two tables, `networks` +
+two network files. In the store it is always the two tables, `networks` +
 `route_networks`: import synthesizes them from `routes.network_id` when that is
 the form the feed used, and nothing reads `routes.network_id` afterwards. Which
-form the feed arrived in is remembered as `networksMode` in the `meta` store
+form the feed arrived in is remembered as `networksMode` in the feed state
 and decides the export form, unless a network has gained a name (which forces
 the files form). Never write `routes.network_id` outside export.
 
@@ -107,7 +105,7 @@ optional-text spec every renderer needs. Both shared field renderers
 `renderInlineEntityFields`) append them after the spec fields that show.
 
 The one thing data-derivation cannot express, a column the user just created
-with no values yet, lives in the `meta` store under `extensionColumns`. Never
+with no values yet, lives in the feed state under `extensionColumns`. Never
 add extension fields to the Zod schemas: those are generated from
 `src/gtfs-spec/` and `pnpm check-spec` blocks the divergence.
 
@@ -116,8 +114,8 @@ add extension fields to the Zod schemas: those are generated from
 No IndexedDB request may be waited on without a way out. An open or delete
 queued behind a blocked version-change operation fires no event at all, not
 success, not error, not even `blocked`, so a bare `await` on one hangs forever
-with nothing logged. Everything on the boot path goes through `withTimeout` /
-`deleteDatabaseWithTimeout` in `src/utils/idb-request.ts`.
+with nothing logged. Everything on the boot path goes through the helpers in
+`src/utils/idb-request.ts`.
 
 A blocked delete is not a completed delete: reporting it as success and
 reloading leaves the request queued and wedges every later request on that
@@ -136,12 +134,6 @@ like a wedged database. Measured in Firefox with the tab hidden: ten
 primitive, it posts on a shared MessageChannel, and it stays a macrotask so the
 progress bar still paints.
 
-The same rule applies to deleting IndexedDB records: a cursor step
-deserializes the record's value, and a `file_blobs` value is a whole
-`BLOB_CHUNK_ROWS`-row JSON string, so a delete that never reads values goes
-through `getAllKeys` plus `store.delete` (measured on 10 x 10MB chunks: 2629ms
-by cursor, 3ms by key).
-
 ## Feed-scoped caches
 
 Every module is constructed and can read feed data before a feed exists, so a
@@ -149,12 +141,7 @@ cache guarded only by `if (this.cache)` or `=== null` pins the empty boot
 scaffold for the whole session. Feed-scoped caches key on `feedGeneration` or
 subscribe to `onFeedReplaced`.
 
-`GTFSParser.markFeedReplaced()` is the single emit point and fires only once
-the new rows are final. Use the pull side (`parser.feedGeneration` as part of
+`EditorFeed.adopt` is the single emit point and fires once the new feed is
+open, its log replayed. Use the pull side (`feed.feedGeneration` as part of
 the memo key) for anything recomputable synchronously; use `onFeedReplaced`
-only when the invalidation needs imperative or async work, and register the
-listener in the one block in `src/index.ts` rather than scattering it.
-
-The only external caller of `markFeedReplaced` is
-`GTFSEditor.restoreStoredFeed`, because the boot restore is not final until
-`PatchManager.initialize` has replayed the patch log; do not add a third.
+only when the invalidation needs imperative or async work.

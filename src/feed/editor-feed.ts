@@ -5,6 +5,8 @@
  *   replaces a row object instead of mutating it, so a row held across an
  *   edit keeps its old values.
  * - Everything else (trips, stop_times, shapes, ...) is read with `read`.
+ * - `MIRRORED_FILES` (non-table entries) are held as text and read with
+ *   `file`; other entries are read with `fileText`.
  * - Every edit is a patch sent with `edit`; the worker applies it, logs it
  *   and replies with the mirror changes, which are in place before `edit`
  *   resolves and before `onEdit` listeners run.
@@ -18,12 +20,25 @@ import type {
   Row,
   StoreApi,
 } from 'gtfs-zone-web-common/gtfs/store/store-client';
-import type { FeedPatch, FeedPatchRecord, PatchRename } from '../types/patch';
+import type {
+  FeedPatch,
+  FeedPatchRecord,
+  FileChange,
+  PatchRename,
+  SingleGTFSPatch,
+} from '../types/patch';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
 import { WORKER_ONLY_TABLES, type FeedClient } from './feed-boot';
 import type { FeedState, NetworksMode } from './feed-log';
-import type { Moved, Persistence, Versions } from './feed-worker-api';
-import { patchTargets } from './patch-build';
+import type {
+  Cond,
+  Moved,
+  Persistence,
+  RouteRefs,
+  ShapeUsageRow,
+  Versions,
+} from './feed-worker-api';
+import { batch, patchTargets } from './patch-build';
 
 /** Store methods that write: edits go through patches instead. */
 type StoreWrites =
@@ -46,8 +61,20 @@ export interface FeedEditEvent {
   /** Tables and non-table entries the edit or move wrote. */
   tables: string[];
   files: string[];
-  /** The patch, for `change`. */
+  /** The patch, for `change`; the moved patch, for `undo` / `redo`. */
   patch?: FeedPatch;
+}
+
+/** Non-table entries the main thread holds as text. */
+const MIRRORED_FILES: readonly string[] = ['locations.geojson'];
+
+/** Tables are named as in the store (`stops`), never as files (`stops.txt`). */
+function assertStoreName(table: string): void {
+  if (table.includes('.')) {
+    throw new Error(
+      `[EditorFeed] ${table} is a file name; pass the table name (specStoreName)`
+    );
+  }
 }
 
 const NO_VERSIONS: Versions = {
@@ -68,6 +95,8 @@ export class EditorFeed {
   private rowsCache = new Map<string, readonly FeedRow[]>();
   /** Primary key -> row id per mirrored table, rebuilt after a change to it. */
   private keyIndex = new Map<string, Map<string, number>>();
+  /** Text of each `MIRRORED_FILES` entry the feed has. */
+  private files = new Map<string, string>();
 
   private feedListeners = new Set<() => void>();
   private editListeners = new Set<(e: FeedEditEvent) => void>();
@@ -98,6 +127,11 @@ export class EditorFeed {
     return this.requireState().networksMode;
   }
 
+  /** feed_info.feed_version as imported; null without feed_info. */
+  get importFeedVersion(): string | null {
+    return this.requireState().importFeedVersion;
+  }
+
   /** User-added columns not yet filled in, per table. */
   get extensionColumns(): Readonly<Record<string, readonly string[]>> {
     return this.requireState().extensionColumns;
@@ -115,11 +149,27 @@ export class EditorFeed {
    * Install a loaded and opened client. The previous one must already be
    * released, so two feeds are never in memory together.
    */
-  adopt(client: FeedClient, state: FeedState, persistence: Persistence): void {
+  async adopt(
+    client: FeedClient,
+    state: FeedState,
+    persistence: Persistence
+  ): Promise<void> {
     if (this.client) {
       throw new Error('[EditorFeed] release the open feed before adopting');
     }
+    let files: Map<string, string>;
+    try {
+      files = await readFiles(client, MIRRORED_FILES);
+    } catch (err) {
+      client.release();
+      throw err;
+    }
+    if (this.client) {
+      client.release();
+      throw new Error('[EditorFeed] another feed was adopted meanwhile');
+    }
     this.client = client;
+    this.files = files;
     this.feedState = { ...state };
     this.feedPersistence = persistence;
     this.currentVersions = {
@@ -181,6 +231,7 @@ export class EditorFeed {
     this.feedState = null;
     this.feedPersistence = null;
     this.currentVersions = NO_VERSIONS;
+    this.files = new Map();
     this.dropCaches();
     console.log('[EditorFeed] released');
   }
@@ -189,6 +240,7 @@ export class EditorFeed {
 
   /** True for every table but the worker-only ones, present or not. */
   isMirrored(table: string): boolean {
+    assertStoreName(table);
     return !WORKER_ONLY_TABLES.includes(table);
   }
 
@@ -237,6 +289,139 @@ export class EditorFeed {
     >;
   }
 
+  /**
+   * Rows of any table whose `col` equals `value`: filtered from the mirror,
+   * or found in the worker for a worker-only table (copies).
+   */
+  async find(table: string, col: string, value: string): Promise<FeedRow[]> {
+    if (this.isMirrored(table)) {
+      return this.table(table).filter((r) => (r[col] ?? '') === value);
+    }
+    return this.where(table, [{ col, eq: value }]);
+  }
+
+  /**
+   * Rows of any table satisfying every condition (see `Cond`), filtered from
+   * the mirror or in the worker.
+   */
+  async where(table: string, conds: Cond[]): Promise<FeedRow[]> {
+    if (!this.isMirrored(table)) {
+      return this.requireClient().call('where', table, conds);
+    }
+    const sets = conds.map((c) => (c.in ? new Set(c.in) : null));
+    return this.table(table).filter((r) =>
+      conds.every((c, i) => {
+        const v = r[c.col] ?? '';
+        return (
+          (c.eq === undefined || v === c.eq) &&
+          (sets[i] === null || sets[i].has(v)) &&
+          (c.lt === undefined || v < c.lt) &&
+          (c.gt === undefined || v > c.gt)
+        );
+      })
+    );
+  }
+
+  /**
+   * Row count per value of `col` in any ordinary table (not stop_times or
+   * shapes), e.g. trips per route_id.
+   */
+  async countBy(table: string, col: string): Promise<Record<string, number>> {
+    if (!this.isMirrored(table)) {
+      return this.requireClient().call('countBy', table, col);
+    }
+    const out: Record<string, number> = {};
+    for (const r of this.table(table)) {
+      const v = r[col] ?? '';
+      out[v] = (out[v] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  /**
+   * Row count per value of `a`, then per value of `b`, in any ordinary table
+   * (e.g. trips per route_id and service_id).
+   */
+  async countBy2(
+    table: string,
+    a: string,
+    b: string
+  ): Promise<Record<string, Record<string, number>>> {
+    if (!this.isMirrored(table)) {
+      return this.requireClient().call('countBy2', table, a, b);
+    }
+    const out: Record<string, Record<string, number>> = {};
+    for (const r of this.table(table)) {
+      const inner = (out[r[a] ?? ''] ??= {});
+      inner[r[b] ?? ''] = (inner[r[b] ?? ''] ?? 0) + 1;
+    }
+    return out;
+  }
+
+  /** Point count and trip usage of every shape (built in the worker). */
+  shapeUsage(): Promise<Record<string, ShapeUsageRow>> {
+    return this.requireClient().call('shapeUsage');
+  }
+
+  /** Every route's stop_times references, by kind (built in the worker). */
+  routeRefs(): Promise<Record<string, RouteRefs>> {
+    return this.requireClient().call('routeRefs');
+  }
+
+  /** Rows of any table by primary key string, null where none. */
+  async byKeys(table: string, keys: string[]): Promise<(FeedRow | null)[]> {
+    if (this.isMirrored(table)) {
+      return keys.map((key) => this.byKey(table, key));
+    }
+    return this.requireClient().call('byKeys', table, keys);
+  }
+
+  /** The first `limit` rows of any table, in table order. */
+  async head(table: string, limit: number): Promise<FeedRow[]> {
+    if (this.isMirrored(table)) {
+      return this.table(table).slice(0, limit);
+    }
+    return this.requireClient().call('head', table, limit);
+  }
+
+  /** Distinct non-empty values of one column of any table. */
+  async distinct(table: string, col: string): Promise<string[]> {
+    if (!this.isMirrored(table)) {
+      return this.requireClient().call('distinct', table, col);
+    }
+    const out = new Set<string>();
+    for (const r of this.table(table)) {
+      const v = r[col] ?? '';
+      if (v !== '') {
+        out.add(v);
+      }
+    }
+    return [...out];
+  }
+
+  /** The first row `find` gives, or null. */
+  async findOne(
+    table: string,
+    col: string,
+    value: string
+  ): Promise<FeedRow | null> {
+    return (await this.find(table, col, value))[0] ?? null;
+  }
+
+  /** A `MIRRORED_FILES` entry as text, or null when the feed has none. */
+  file(name: string): string | null {
+    if (!MIRRORED_FILES.includes(name)) {
+      throw new Error(`[EditorFeed] ${name} is not mirrored; use fileText()`);
+    }
+    this.requireClient();
+    return this.files.get(name) ?? null;
+  }
+
+  /** Names of the feed's non-table entries. */
+  fileNames(): Promise<string[]> {
+    return this.requireClient().call('fileNames');
+  }
+
   /** A non-table entry (e.g. `locations.geojson`) as text, or null. */
   fileText(name: string): Promise<string | null> {
     return this.requireClient().call('fileText', name);
@@ -264,9 +449,10 @@ export class EditorFeed {
     return this.currentVersions.current;
   }
 
-  /** Subscribe to edits and history moves. No unsubscribe, as above. */
-  onEdit(listener: (e: FeedEditEvent) => void): void {
+  /** Subscribe to edits and history moves. Returns the unsubscribe. */
+  onEdit(listener: (e: FeedEditEvent) => void): () => void {
     this.editListeners.add(listener);
+    return () => this.editListeners.delete(listener);
   }
 
   /**
@@ -282,6 +468,8 @@ export class EditorFeed {
   async edit(patch: FeedPatch): Promise<void> {
     const client = this.requireClient();
     const versions = await client.call('edit', patch);
+    const targets = patchTargets(patch);
+    await this.refreshFiles(client, targets.files);
     if (this.client !== client) {
       return;
     }
@@ -289,7 +477,25 @@ export class EditorFeed {
     if (patch.op === 'batch' && patch.rename) {
       this.followRenames([{ ...patch.rename }]);
     }
-    this.emitEdit({ kind: 'change', versions, ...patchTargets(patch), patch });
+    this.emitEdit({ kind: 'change', versions, ...targets, patch });
+  }
+
+  /**
+   * Apply ops as one undo step (see `batch`). Nothing happens when every op
+   * is null. Returns whether a patch was applied.
+   */
+  async apply(
+    ops: (SingleGTFSPatch | null)[],
+    label?: string,
+    rename?: PatchRename,
+    files?: FileChange[]
+  ): Promise<boolean> {
+    const patch = batch(ops, label, rename, files);
+    if (!patch) {
+      return false;
+    }
+    await this.edit(patch);
+    return true;
   }
 
   /** Replace (or with null remove) a non-table entry, as one undo step. */
@@ -300,23 +506,26 @@ export class EditorFeed {
     if (this.client !== client || versions.current === before) {
       return;
     }
+    if (MIRRORED_FILES.includes(name)) {
+      this.setFile(name, text);
+    }
     this.currentVersions = versions;
     this.emitEdit({ kind: 'change', versions, tables: [], files: [name] });
   }
 
   async undo(): Promise<void> {
     const client = this.requireClient();
-    this.applyMove(client, 'undo', await client.call('undo'));
+    await this.applyMove(client, 'undo', await client.call('undo'));
   }
 
   async redo(): Promise<void> {
     const client = this.requireClient();
-    this.applyMove(client, 'redo', await client.call('redo'));
+    await this.applyMove(client, 'redo', await client.call('redo'));
   }
 
   async jumpTo(version: number): Promise<void> {
     const client = this.requireClient();
-    this.applyMove(client, 'jump', await client.call('jumpTo', version));
+    await this.applyMove(client, 'jump', await client.call('jumpTo', version));
   }
 
   async setNetworksMode(mode: NetworksMode): Promise<void> {
@@ -337,12 +546,16 @@ export class EditorFeed {
 
   // ===== Internals =====
 
-  private applyMove(
+  private async applyMove(
     client: FeedClient,
     kind: 'undo' | 'redo' | 'jump',
     moved: Moved | null
-  ): void {
+  ): Promise<void> {
     if (!moved || this.client !== client) {
+      return;
+    }
+    await this.refreshFiles(client, moved.files);
+    if (this.client !== client) {
       return;
     }
     this.currentVersions = moved.versions;
@@ -352,7 +565,34 @@ export class EditorFeed {
       versions: moved.versions,
       tables: moved.tables,
       files: moved.files,
+      ...(moved.patch && { patch: moved.patch }),
     });
+  }
+
+  /** Re-read the mirrored entries among `names` from the worker. */
+  private async refreshFiles(
+    client: FeedClient,
+    names: string[]
+  ): Promise<void> {
+    const wanted = names.filter((n) => MIRRORED_FILES.includes(n));
+    if (wanted.length === 0) {
+      return;
+    }
+    const fresh = await readFiles(client, wanted);
+    if (this.client !== client) {
+      return;
+    }
+    for (const name of wanted) {
+      this.setFile(name, fresh.get(name) ?? null);
+    }
+  }
+
+  private setFile(name: string, text: string | null): void {
+    if (text === null) {
+      this.files.delete(name);
+    } else {
+      this.files.set(name, text);
+    }
   }
 
   private followRenames(renames: PatchRename[]): void {
@@ -419,6 +659,7 @@ export class EditorFeed {
   }
 
   private assertMirrorable(table: string): void {
+    assertStoreName(table);
     if (WORKER_ONLY_TABLES.includes(table)) {
       throw new Error(`[EditorFeed] ${table} is not mirrored; use read()`);
     }
@@ -442,4 +683,19 @@ export class EditorFeed {
     }
     return this.feedState;
   }
+}
+
+/** The text of each of `names` the feed has. */
+async function readFiles(
+  client: FeedClient,
+  names: readonly string[]
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  for (const name of names) {
+    const text = await client.call('fileText', name);
+    if (text !== null) {
+      out.set(name, text);
+    }
+  }
+  return out;
 }

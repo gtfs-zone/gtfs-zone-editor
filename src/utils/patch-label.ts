@@ -1,4 +1,4 @@
-import { GTFSPatch } from '../types/patch';
+import type { FeedPatch } from '../types/patch';
 import { getEntityDisplay } from './entity-display';
 import { t } from '../i18n/messages';
 
@@ -43,9 +43,12 @@ function resolveName(
   return info.primary || fallbackId;
 }
 
-export function humanLabel(patch: GTFSPatch | undefined): string {
+export function humanLabel(patch: FeedPatch | undefined): string {
   if (!patch) {
     return t('patch.unknown');
+  }
+  if (patch.op === 'file') {
+    return patch.label ?? t('patch.fileEdited', { name: patch.name });
   }
   if (patch.op === 'batch') {
     return patch.label ?? t('patch.batch', { count: patch.ops.length });

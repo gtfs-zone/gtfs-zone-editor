@@ -4,10 +4,11 @@
  * Provides auto-save functionality for service day modifications
  */
 
-import { Calendar, CalendarDates, GTFSTableMap } from '../types/gtfs-entities';
+import type { Calendar, CalendarDates } from '../types/gtfs-entities';
+import type { EditorFeed } from '../feed/editor-feed';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import { GTFSSchemas, GTFS_TABLES } from '../types/gtfs';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
-import { patchUpdate } from '../utils/patch-utils';
 import {
   getUsFederalDates,
   getUsFederalHolidays,
@@ -18,7 +19,6 @@ import {
   renderEditableTable,
   type EditableTableConfig,
   type EditableTableDeps,
-  type EditableTablePatchManager,
 } from './editable-table';
 import {
   renderInlineEditableField,
@@ -37,48 +37,6 @@ import {
 import { defaultServiceRange } from '../utils/default-values';
 import { t } from '../i18n/messages';
 
-interface GTFSParserInterface {
-  gtfsDatabase: {
-    getAllRows(tableName: string): Promise<Record<string, unknown>[]>;
-    getRow(
-      tableName: string,
-      key: string
-    ): Promise<Record<string, unknown> | undefined>;
-    queryRows<T extends keyof GTFSTableMap>(
-      tableName: T,
-      filter?: { [key: string]: string | number | boolean }
-    ): Promise<GTFSTableMap[T][]>;
-    updateRow<T extends keyof GTFSTableMap>(
-      tableName: T,
-      key: string,
-      data: Partial<GTFSTableMap[T]>
-    ): Promise<void>;
-    deleteRow<T extends keyof GTFSTableMap>(
-      tableName: T,
-      key: string
-    ): Promise<void>;
-    insertRows<T extends keyof GTFSTableMap>(
-      tableName: T,
-      rows: GTFSTableMap[T][]
-    ): Promise<void>;
-  };
-}
-
-/**
- * The patch surface this controller needs: everything an embedded editable
- * table records, plus the batch forms the holidays checkbox writes.
- */
-interface PatchManagerInterface extends EditableTablePatchManager {
-  recordBatchInsert(
-    ops: Array<{ table: string; id: string; record: Record<string, unknown> }>,
-    label?: string
-  ): Promise<void>;
-  recordBatchDelete(
-    ops: Array<{ table: string; id: string; record: Record<string, unknown> }>,
-    label?: string
-  ): Promise<void>;
-}
-
 /**
  * ServiceDaysController - Manages GTFS calendar and calendar_dates editing
  *
@@ -90,21 +48,20 @@ interface PatchManagerInterface extends EditableTablePatchManager {
  * Follows the Enhanced GTFS Object pattern and FAIL HARD error handling policy.
  */
 export class ServiceDaysController {
-  private gtfsParser: GTFSParserInterface;
-  private patchManager: PatchManagerInterface | null = null;
   private savingIndicators: Set<string> = new Set();
 
-  /**
-   * Initialize ServiceDaysController with required dependencies
-   *
-   * @param gtfsParser - GTFS parser with database access
-   */
-  constructor(gtfsParser: GTFSParserInterface) {
-    this.gtfsParser = gtfsParser;
+  constructor(private readonly feed: EditorFeed) {}
+
+  private calendarRow(service_id: string): Calendar | null {
+    return this.feed.byKey('calendar', service_id) as Calendar | null;
   }
 
-  setPatchManager(pm: PatchManagerInterface): void {
-    this.patchManager = pm;
+  private async exceptionsFor(service_id: string): Promise<CalendarDates[]> {
+    return (await this.feed.find(
+      'calendar_dates',
+      'service_id',
+      service_id
+    )) as unknown as CalendarDates[];
   }
 
   // ===== PUBLIC RENDERING METHODS =====
@@ -119,15 +76,8 @@ export class ServiceDaysController {
   async renderServiceEditor(service_id: string): Promise<string> {
     try {
       // Get calendar and calendar_dates data
-      const [calendarRows, calendarDatesRows] = await Promise.all([
-        this.gtfsParser.gtfsDatabase.queryRows('calendar', { service_id }),
-        this.gtfsParser.gtfsDatabase.queryRows('calendar_dates', {
-          service_id,
-        }),
-      ]);
-
-      const calendar = calendarRows[0] || null;
-      const exceptions = calendarDatesRows || [];
+      const calendar = this.calendarRow(service_id);
+      const exceptions = await this.exceptionsFor(service_id);
 
       return await this.renderServiceEditorHTML(
         service_id,
@@ -153,19 +103,12 @@ export class ServiceDaysController {
       this.showSavingIndicator(`day-${dayKey}-${service_id}`);
 
       // Get current calendar entry
-      const calendarRows = await this.gtfsParser.gtfsDatabase.queryRows(
-        'calendar',
-        { service_id }
-      );
-      let calendar = calendarRows[0];
+      const calendar = this.calendarRow(service_id);
 
       if (!calendar) {
         // Derive date range from existing calendar_dates, fall back to the
         // default service range
-        const existingDates = await this.gtfsParser.gtfsDatabase.queryRows(
-          'calendar_dates',
-          { service_id }
-        );
+        const existingDates = await this.exceptionsFor(service_id);
         let startDate: string;
         let endDate: string;
         if (existingDates.length > 0) {
@@ -173,31 +116,25 @@ export class ServiceDaysController {
           startDate = sorted[0];
           endDate = sorted[sorted.length - 1];
         } else {
-          const range = await defaultServiceRange(this.gtfsParser.gtfsDatabase);
+          const range = defaultServiceRange(this.feed);
           startDate = range.start;
           endDate = range.end;
         }
 
-        calendar = {
+        const created: Record<string, string> = {
           service_id,
-          monday: 0,
-          tuesday: 0,
-          wednesday: 0,
-          thursday: 0,
-          friday: 0,
-          saturday: 0,
-          sunday: 0,
+          monday: '0',
+          tuesday: '0',
+          wednesday: '0',
+          thursday: '0',
+          friday: '0',
+          saturday: '0',
+          sunday: '0',
           start_date: startDate,
           end_date: endDate,
-        } as Calendar;
-
-        (calendar as Record<string, unknown>)[dayKey] = 1;
-        await this.gtfsParser.gtfsDatabase.insertRows('calendar', [calendar]);
-        await this.patchManager?.recordInsert(
-          'calendar',
-          service_id,
-          calendar as Record<string, unknown>
-        );
+        };
+        created[dayKey] = '1';
+        await this.feed.apply([insertOp('calendar', created)]);
         // The service just gained a date range, which both the range editor
         // and the holidays checkbox render from.
         await this.refreshDateRangeDisplay(service_id);
@@ -209,14 +146,9 @@ export class ServiceDaysController {
         );
         const newValue = currentValue === 1 ? 0 : 1;
 
-        await patchUpdate(
-          this.gtfsParser.gtfsDatabase,
-          this.patchManager,
-          'calendar',
-          service_id,
-          { [dayKey]: currentValue },
-          { [dayKey]: newValue }
-        );
+        await this.feed.apply([
+          updateOp('calendar', calendar, { [dayKey]: newValue }),
+        ]);
       }
 
       this.showSaveSuccess(`day-${dayKey}-${service_id}`);
@@ -249,31 +181,20 @@ export class ServiceDaysController {
 
       const gtfsDate = fromInputValue(date);
 
-      const existing = await this.gtfsParser.gtfsDatabase.queryRows(
-        'calendar_dates',
-        { service_id, date: gtfsDate }
-      );
-      const existingRecord = existing[0] ?? null;
+      const existingRecord =
+        (await this.exceptionsFor(service_id)).find(
+          (e) => e.date === gtfsDate
+        ) ?? null;
 
       if (existingRecord) {
-        if (existingRecord.exception_type === exception_type) {
+        if (Number(existingRecord.exception_type) === exception_type) {
           // Already the correct type, no-op
           this.showSaveSuccess('exceptions');
           return;
         }
         // Different type, update in place
-        const key = `${service_id}:${gtfsDate}`;
-        await this.gtfsParser.gtfsDatabase.updateRow('calendar_dates', key, {
-          exception_type,
-        });
-        await this.patchManager?.recordBatchMixed([
-          {
-            op: 'update',
-            table: 'calendar_dates',
-            id: key,
-            before: { exception_type: existingRecord.exception_type },
-            after: { exception_type },
-          },
+        await this.feed.apply([
+          updateOp('calendar_dates', existingRecord, { exception_type }),
         ]);
         this.showSaveSuccess('exceptions');
         console.log(
@@ -285,14 +206,7 @@ export class ServiceDaysController {
           date: gtfsDate,
           exception_type,
         };
-        await this.gtfsParser.gtfsDatabase.insertRows('calendar_dates', [
-          exceptionData,
-        ]);
-        await this.patchManager?.recordInsert(
-          'calendar_dates',
-          `${service_id}:${gtfsDate}`,
-          exceptionData as Record<string, unknown>
-        );
+        await this.feed.apply([insertOp('calendar_dates', exceptionData)]);
         this.showSaveSuccess('exceptions');
         console.log(
           `[ServiceDaysController] Added exception for service ${service_id} on ${gtfsDate} (type ${exception_type})`
@@ -441,40 +355,6 @@ export class ServiceDaysController {
   }
 
   /**
-   * The writing handle the exception tables need.
-   *
-   * Null before the patch manager is wired: a table that cannot record its
-   * edits must not be rendered at all.
-   */
-  private editableDeps(): EditableTableDeps | null {
-    if (!this.patchManager) {
-      console.warn(
-        '[ServiceDaysController] no patch manager, exception tables are skipped'
-      );
-      return null;
-    }
-    const db = this.gtfsParser.gtfsDatabase;
-    return {
-      gtfsDatabase: {
-        getAllRows: (table) => db.getAllRows(table),
-        getRow: (table, key) => db.getRow(table, key),
-        queryRows: (table, filter) =>
-          db.queryRows(table as keyof GTFSTableMap, filter),
-        insertRows: (table, rows) =>
-          db.insertRows(
-            table as keyof GTFSTableMap,
-            rows as GTFSTableMap[keyof GTFSTableMap][]
-          ),
-        updateRow: (table, key, data) =>
-          db.updateRow(table as keyof GTFSTableMap, key, data),
-        deleteRow: (table, key) =>
-          db.deleteRow(table as keyof GTFSTableMap, key),
-      },
-      patchManager: this.patchManager,
-    };
-  }
-
-  /**
    * The exceptions, split by what they do: one list of dates that add service,
    * one of dates that remove it. The heading carries the meaning, so no row
    * needs a badge.
@@ -484,7 +364,7 @@ export class ServiceDaysController {
     calendar: Calendar | null,
     exceptions: CalendarDates[]
   ): Promise<string> {
-    const deps = this.editableDeps();
+    const deps: EditableTableDeps = { feed: this.feed };
     const byDate = (a: CalendarDates, b: CalendarDates) =>
       String(a.date).localeCompare(String(b.date));
     const added = exceptions
@@ -698,13 +578,8 @@ export class ServiceDaysController {
     try {
       this.showSavingIndicator('exceptions');
 
-      const [calendarRows, exceptions] = await Promise.all([
-        this.gtfsParser.gtfsDatabase.queryRows('calendar', { service_id }),
-        this.gtfsParser.gtfsDatabase.queryRows('calendar_dates', {
-          service_id,
-        }),
-      ]);
-      const calendar = calendarRows[0] ?? null;
+      const calendar = this.calendarRow(service_id);
+      const exceptions = await this.exceptionsFor(service_id);
       const holidays = this.federalHolidayDates(calendar, exceptions);
       if (holidays.length === 0) {
         this.showSaveError('exceptions', t('svc.setRangeBeforeHolidays'));
@@ -719,22 +594,15 @@ export class ServiceDaysController {
       const table = 'calendar_dates';
 
       if (allRemoved) {
-        const ops = exceptions
-          .filter((e) => holidaySet.has(String(e.date)))
-          .map((e) => ({
-            table,
-            id: `${service_id}:${e.date}`,
-            record: e as unknown as Record<string, unknown>,
-          }));
-        for (const op of ops) {
-          await this.gtfsParser.gtfsDatabase.deleteRow(table, op.id);
-        }
-        await this.patchManager?.recordBatchDelete(
-          ops,
+        const removed = exceptions.filter((e) =>
+          holidaySet.has(String(e.date))
+        );
+        await this.feed.apply(
+          removed.map((e) => deleteOp(table, e)),
           t('svc.includeHolidaysLabel')
         );
         console.log(
-          `[ServiceDaysController] Removed ${ops.length} federal holiday rows for ${service_id}`
+          `[ServiceDaysController] Removed ${removed.length} federal holiday rows for ${service_id}`
         );
       } else {
         const inserts: CalendarDates[] = holidays
@@ -746,41 +614,13 @@ export class ServiceDaysController {
             (row): row is CalendarDates =>
               row !== undefined && Number(row.exception_type) !== 2
           );
-
-        if (inserts.length > 0) {
-          await this.gtfsParser.gtfsDatabase.insertRows(table, inserts);
-        }
-        for (const row of flips) {
-          await this.gtfsParser.gtfsDatabase.updateRow(
-            table,
-            `${service_id}:${row.date}`,
-            { exception_type: 2 }
-          );
-        }
-
-        const label = t('svc.excludeHolidaysLabel');
-        const insertOps = inserts.map((row) => ({
-          table,
-          id: `${service_id}:${row.date}`,
-          record: row as unknown as Record<string, unknown>,
-        }));
-        if (flips.length === 0) {
-          await this.patchManager?.recordBatchInsert(insertOps, label);
-        } else {
-          await this.patchManager?.recordBatchMixed(
-            [
-              ...insertOps.map((op) => ({ op: 'insert' as const, ...op })),
-              ...flips.map((row) => ({
-                op: 'update' as const,
-                table,
-                id: `${service_id}:${row.date}`,
-                before: { exception_type: row.exception_type },
-                after: { exception_type: 2 },
-              })),
-            ],
-            label
-          );
-        }
+        await this.feed.apply(
+          [
+            ...inserts.map((row) => insertOp(table, row)),
+            ...flips.map((row) => updateOp(table, row, { exception_type: 2 })),
+          ],
+          t('svc.excludeHolidaysLabel')
+        );
         console.log(
           `[ServiceDaysController] Excluded federal holidays for ${service_id} (+${inserts.length}, flipped ${flips.length})`
         );
@@ -825,11 +665,7 @@ export class ServiceDaysController {
     if (!container) {
       return;
     }
-    const calendarRows = await this.gtfsParser.gtfsDatabase.queryRows(
-      'calendar',
-      { service_id }
-    );
-    const calendar = calendarRows[0] ?? null;
+    const calendar = this.calendarRow(service_id);
     container.innerHTML = `
       <h4 class="text-sm font-semibold mb-2 text-base-content/80">${t('svc.dateRange')}</h4>
       ${await this.renderDateRange(service_id, calendar)}
@@ -841,13 +677,8 @@ export class ServiceDaysController {
    */
   async refreshExceptionsDisplay(service_id: string): Promise<void> {
     try {
-      const [calendarRows, exceptions] = await Promise.all([
-        this.gtfsParser.gtfsDatabase.queryRows('calendar', { service_id }),
-        this.gtfsParser.gtfsDatabase.queryRows('calendar_dates', {
-          service_id,
-        }),
-      ]);
-      const calendar = calendarRows[0] ?? null;
+      const calendar = this.calendarRow(service_id);
+      const exceptions = await this.exceptionsFor(service_id);
       const container = document.getElementById(
         `service-exceptions-${service_id}`
       );
@@ -874,12 +705,7 @@ export class ServiceDaysController {
     dayKey: string
   ): Promise<void> {
     try {
-      // Get current state from database
-      const calendarRows = await this.gtfsParser.gtfsDatabase.queryRows(
-        'calendar',
-        { service_id }
-      );
-      const calendar = calendarRows[0];
+      const calendar = this.calendarRow(service_id);
 
       if (!calendar) {
         return;

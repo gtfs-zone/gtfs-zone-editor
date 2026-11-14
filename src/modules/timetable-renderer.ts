@@ -1223,7 +1223,7 @@ export class TimetableRenderer {
           title="${openLabel}"
         >
           <span class="badge badge-xs badge-info badge-outline shrink-0">${kindLabel}</span>
-          <span class="truncate">${escapeHtml(String(stop.stop_name ?? ref.id))}</span>
+          <span class="truncate">${escapeHtml(String(stop.stop_name || ref.id))}</span>
           ${revisitHtml}
         </span>
         <span class="stop-id-line text-xs opacity-50 font-mono truncate px-1">${escapeHtml(ref.id)}</span>

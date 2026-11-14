@@ -1,5 +1,5 @@
 import type { Pathways, Stops } from '../types/gtfs-entities';
-import type { QueryOnlyDatabase } from '../utils/field-component';
+import type { EditorFeed } from '../feed/editor-feed';
 import { renderInlineEntityFields } from '../utils/inline-editable-field';
 import { GTFS_TABLES } from '../types/gtfs';
 import { ENTITY_REF_BTN } from '../utils/entity-references';
@@ -13,7 +13,7 @@ function escapeAttr(s: string): string {
 }
 
 export interface PathwayViewDependencies {
-  gtfsDatabase?: QueryOnlyDatabase;
+  feed: EditorFeed;
   onDeletePathway: (pathway_id: string) => Promise<void>;
 }
 
@@ -111,32 +111,11 @@ export class PathwayViewController {
   }
 
   private async getPathwayData(pathway_id: string): Promise<Pathways | null> {
-    if (!this.dependencies.gtfsDatabase) {
-      return null;
-    }
-    try {
-      const rows = await this.dependencies.gtfsDatabase.queryRows('pathways', {
-        pathway_id,
-      });
-      return rows.length > 0 ? (rows[0] as Pathways) : null;
-    } catch (error) {
-      console.error('[PathwayViewController] Error fetching pathway:', error);
-      return null;
-    }
+    return this.dependencies.feed.byKey('pathways', pathway_id);
   }
 
   private async getStopData(stop_id: string): Promise<Stops | null> {
-    if (!this.dependencies.gtfsDatabase) {
-      return null;
-    }
-    try {
-      const rows = await this.dependencies.gtfsDatabase.queryRows('stops', {
-        stop_id,
-      });
-      return rows.length > 0 ? (rows[0] as Stops) : null;
-    } catch {
-      return null;
-    }
+    return this.dependencies.feed.byKey('stops', stop_id);
   }
 
   addEventListeners(container: HTMLElement): void {

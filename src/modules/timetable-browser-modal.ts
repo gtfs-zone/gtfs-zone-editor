@@ -14,9 +14,8 @@ import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { routeColor } from 'gtfs-zone-web-common/gtfs/route-colors';
 import { routeSortKey } from 'gtfs-zone-web-common/gtfs/route-sort';
 import { SELECTED_ROW_CLASS } from 'gtfs-zone-web-common/ui/selectable-row';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
 import type { ScheduleController } from './schedule-controller';
-import { GTFS_TABLES } from '../types/gtfs';
 import { openTimetable } from './navigation-actions';
 import {
   getAgencyDisplay,
@@ -30,7 +29,7 @@ import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 
 export interface TimetableBrowserDeps {
-  gtfsParser: GTFSParser;
+  feed: EditorFeed;
   scheduleController: ScheduleController;
 }
 
@@ -205,30 +204,24 @@ export async function showTimetableBrowserModal(
   deps: TimetableBrowserDeps,
   currentRouteId: string | null
 ): Promise<void> {
-  const { gtfsParser } = deps;
-  const agencies = gtfsParser.getFileDataSyncTyped<Row>(GTFS_TABLES.AGENCY);
-  const routes = gtfsParser.getFileDataSyncTyped<Row>(GTFS_TABLES.ROUTES);
-  const trips = gtfsParser.getFileDataSyncTyped<Row>(GTFS_TABLES.TRIPS);
+  const { feed } = deps;
+  const agencies = feed.table('agency') as Row[];
+  const routes = feed.table('routes') as Row[];
+  const counts = await feed.countBy2('trips', 'route_id', 'service_id');
 
-  // One pass over trips for both the per-pair and the per-route counts.
   const tripCounts = new Map<string, number>();
   const routeTripCounts = new Map<string, number>();
   const services = new Map<string, Row>();
-  for (const trip of trips) {
-    const route_id = trip.route_id ?? '';
-    const service_id = trip.service_id ?? '';
-    const key = pairKey(route_id, service_id);
-    tripCounts.set(key, (tripCounts.get(key) ?? 0) + 1);
-    routeTripCounts.set(route_id, (routeTripCounts.get(route_id) ?? 0) + 1);
-    services.set(service_id, { service_id });
-  }
-  // Day patterns come from calendar.txt; a service only in calendar_dates.txt
-  // keeps its id-only record.
-  for (const row of gtfsParser.getFileDataSyncTyped<Row>(
-    GTFS_TABLES.CALENDAR
-  )) {
-    if (services.has(row.service_id ?? '')) {
-      services.set(row.service_id, row);
+  for (const [route_id, perService] of Object.entries(counts)) {
+    for (const [service_id, n] of Object.entries(perService)) {
+      tripCounts.set(pairKey(route_id, service_id), n);
+      routeTripCounts.set(route_id, (routeTripCounts.get(route_id) ?? 0) + n);
+      // Day patterns come from calendar.txt; a service only in
+      // calendar_dates.txt keeps its id-only record.
+      services.set(
+        service_id,
+        (feed.byKey('calendar', service_id) as Row | null) ?? { service_id }
+      );
     }
   }
 

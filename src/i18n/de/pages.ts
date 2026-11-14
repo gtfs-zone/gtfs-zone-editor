@@ -10,7 +10,6 @@ export const pages: Translation<typeof en> = {
   'page.cleanFeed':
     'Alles in Ordnung? Exportieren und veröffentlichen Sie Ihren Feed.',
   'page.publishingGuide': 'Anleitung zur Veröffentlichung',
-  'page.noPatchManager': 'Kein Patch-Manager verfügbar',
   'page.trimAllTitle':
     'start_date jedes Service auf {date} setzen und alle Ausnahmen davor entfernen',
   'page.extendAllTitle':

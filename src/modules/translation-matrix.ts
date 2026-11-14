@@ -12,7 +12,7 @@ import type { EditableTableDeps } from './editable-table';
 import { getEntityDisplay } from '../utils/entity-display';
 import { extensionFieldSpec } from '../utils/extension-fields';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
-import { patchUpdate } from '../utils/patch-utils';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import { specStoreName, validateFieldValue } from '../utils/spec-field-edit';
 import { yieldToEventLoop } from '../utils/async-yield';
 import {
@@ -585,10 +585,8 @@ export async function writeCell(
     if (!own) {
       return 'unchanged';
     }
-    const key = generateCompositeKeyFromRecord(TRANSLATIONS_STORE, own);
     console.log(`[Translations] delete ${label}`);
-    await deps.gtfsDatabase.deleteRow(TRANSLATIONS_STORE, key);
-    await deps.patchManager.recordDelete(TRANSLATIONS_STORE, key, own);
+    await deps.feed.apply([deleteOp(TRANSLATIONS_STORE, own)]);
     return null;
   }
 
@@ -603,16 +601,10 @@ export async function writeCell(
   }
 
   if (own) {
-    const key = generateCompositeKeyFromRecord(TRANSLATIONS_STORE, own);
     console.log(`[Translations] update ${label}`);
-    await patchUpdate(
-      deps.gtfsDatabase,
-      deps.patchManager,
-      TRANSLATIONS_STORE,
-      key,
-      { translation: own.translation },
-      { translation: value }
-    );
+    await deps.feed.apply([
+      updateOp(TRANSLATIONS_STORE, own, { translation: value }),
+    ]);
     return null;
   }
 
@@ -637,12 +629,11 @@ export async function writeCell(
     return rowError;
   }
   const key = generateCompositeKeyFromRecord(TRANSLATIONS_STORE, record);
-  if ((await deps.gtfsDatabase.getRow(TRANSLATIONS_STORE, key)) !== undefined) {
+  if ((await deps.feed.byKeys(TRANSLATIONS_STORE, [key]))[0] !== null) {
     return t('translations.exists');
   }
   console.log(`[Translations] insert ${label}`);
-  await deps.gtfsDatabase.insertRows(TRANSLATIONS_STORE, [record]);
-  await deps.patchManager.recordInsert(TRANSLATIONS_STORE, key, record);
+  await deps.feed.apply([insertOp(TRANSLATIONS_STORE, record)]);
   return null;
 }
 

@@ -1,4 +1,8 @@
 import { CONFIG } from '../config';
+import { notify } from 'gtfs-zone-web-common/ui/notification-system';
+import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
+import type { EditorFeed } from '../feed/editor-feed';
+import { updateOp } from '../feed/patch-build';
 import { gtfsSpec } from '../gtfs-spec';
 import { fileOrigin, renderSpecNotes } from '../utils/spec-origin';
 import {
@@ -15,38 +19,9 @@ import {
   createTooltip,
 } from '../utils/zod-tooltip-helper';
 import { renderSpecDescriptionPlain } from 'gtfs-zone-web-common/gtfs/spec-markup';
-import {
-  generateCompositeKeyFromRecord,
-  getGTFSPrimaryKey,
-} from '../utils/gtfs-primary-keys';
+import { getGTFSPrimaryKey } from '../utils/gtfs-primary-keys';
 import { keyToGridDirection } from '../utils/grid-navigation';
 import { t } from '../i18n/messages';
-
-interface GTFSParser {
-  updateFileInMemory(fileName: string, content: string): void;
-  getFileContent(fileName: string): string;
-  getFileData(fileName: string): Promise<unknown[] | null>;
-  updateFileContent(fileName: string, content: string): Promise<void>;
-  getPassthroughContent(fileName: string): string | undefined;
-  setPassthroughContent(fileName: string, rawContent: string): Promise<void>;
-  gtfsDatabase: {
-    updateRow(
-      tableName: string,
-      key: string,
-      data: Record<string, unknown>
-    ): Promise<void>;
-  };
-  // Add other methods as needed
-}
-
-interface PatchManagerRef {
-  recordUpdate(
-    table: string,
-    id: string,
-    before: Record<string, unknown>,
-    after: Record<string, unknown>
-  ): Promise<void>;
-}
 
 interface PendingUpdate {
   rowIndex: number;
@@ -62,43 +37,27 @@ const OVERLAY_TABLE_ID = 'files-overlay';
 export class Editor {
   private currentFile: string | null = null;
   private tableData: CSVRow[] | null = null;
-  private gtfsParser: GTFSParser | null = null;
+  private feed: EditorFeed | null = null;
   private clusterize: Clusterize | null = null;
   private headers: string[] = [];
   private pendingUpdates: Map<string, PendingUpdate> = new Map();
   private pendingBeforeRows: Map<number, CSVRow> = new Map();
-  private patchManager: PatchManagerRef | null = null;
   private debounceTimeout: NodeJS.Timeout | null = null;
   private readonly DEBOUNCE_DELAY = CONFIG.DEBOUNCE_DELAY;
-  private tableDeps: EditableTableDeps | null = null;
   private overlayTable: EditableTableConfig | null = null;
 
-  initialize(gtfsParser: GTFSParser): void {
-    this.gtfsParser = gtfsParser;
-  }
-
-  /** Deps for the editable table overlay files open in. */
-  setTableDeps(deps: EditableTableDeps): void {
-    this.tableDeps = deps;
-  }
-
-  setPatchManager(pm: PatchManagerRef): void {
-    this.patchManager = pm;
+  initialize(feed: EditorFeed): void {
+    this.feed = feed;
   }
 
   async openFile(fileName: string): Promise<void> {
-    if (!this.gtfsParser) {
+    if (!this.feed) {
       return;
     }
 
-    const rawContent = this.gtfsParser.getPassthroughContent(fileName);
-    if (rawContent !== undefined) {
-      this.openRawFile(fileName, rawContent);
-      return;
-    }
-
-    const content = this.gtfsParser.getFileContent(fileName);
-    if (!content) {
+    // Non-table entries (passthrough files, locations.geojson) open as text.
+    if ((await this.feed.fileNames()).includes(fileName)) {
+      this.openRawFile(fileName, (await this.feed.fileText(fileName)) ?? '');
       return;
     }
 
@@ -135,21 +94,22 @@ export class Editor {
    * list starts out empty.
    */
   private async openOverlayTable(fileName: string): Promise<void> {
-    if (!this.tableDeps) {
-      throw new Error('[Editor] table deps not set');
+    const feed = this.feed;
+    if (!feed) {
+      throw new Error('[Editor] feed not set');
     }
     if (this.clusterize) {
       this.clusterize.destroy();
       this.clusterize = null;
     }
-    const deps = this.tableDeps;
+    const deps: EditableTableDeps = { feed };
     const store = specStoreName(fileName);
     const refresh = async (): Promise<void> => {
       const container = document.getElementById('table-editor');
       if (!container || this.overlayTable !== config) {
         return;
       }
-      config.rows = await deps.gtfsDatabase.getAllRows(store);
+      config.rows = await feed.where(store, []);
       container.innerHTML = `<div class="p-2">${await renderEditableTable(config)}</div>`;
     };
     const config: EditableTableConfig = {
@@ -192,8 +152,8 @@ export class Editor {
   /**
    * Open a non-spec passthrough file as raw text.
    *
-   * There is no schema to build a grid from, and no table to record a patch
-   * against, so saving writes straight through to the parser's passthrough map.
+   * There is no schema to build a grid from, so saving replaces the whole
+   * entry as one patch.
    */
   private openRawFile(fileName: string, rawContent: string): void {
     this.tableData = null;
@@ -235,7 +195,7 @@ export class Editor {
     const freshSave = saveButton.cloneNode(true) as HTMLElement;
     saveButton.replaceWith(freshSave);
     freshSave.addEventListener('click', async () => {
-      await this.gtfsParser!.setPassthroughContent(fileName, textarea.value);
+      await this.feed!.editFile(fileName, textarea.value);
       if (status) {
         status.textContent = t('files.saved', { name: fileName });
       }
@@ -289,11 +249,26 @@ export class Editor {
     }
 
     try {
-      // Load data from IndexedDB
-      if (!this.gtfsParser) {
+      if (!this.feed) {
         return;
       }
-      const data = await this.gtfsParser.getFileData(this.currentFile);
+      // Copies: cell edits write into these rows before the patch is built.
+      const table = this.currentFile.replace('.txt', '');
+      const data = (
+        await this.feed.head(table, CONFIG.FILES_GRID_MAX_ROWS)
+      ).map((row) => ({ ...row }));
+      const total = (await this.feed.read('counts'))[table] ?? data.length;
+      if (total > data.length) {
+        console.log(
+          `[Editor] ${this.currentFile}: showing ${data.length} of ${total} rows`
+        );
+        notify.info(
+          t('files.firstRows', {
+            shown: formatNumber(data.length),
+            total: formatNumber(total),
+          })
+        );
+      }
 
       if (!data || data.length === 0) {
         if (tableContainer) {
@@ -508,7 +483,7 @@ export class Editor {
   }
 
   async saveCurrentFileChanges() {
-    if (!this.currentFile || !this.gtfsParser) {
+    if (!this.currentFile || !this.feed) {
       return;
     }
 
@@ -528,11 +503,7 @@ export class Editor {
   }
 
   private async flushPendingUpdates(): Promise<void> {
-    if (
-      this.pendingUpdates.size === 0 ||
-      !this.currentFile ||
-      !this.gtfsParser
-    ) {
+    if (this.pendingUpdates.size === 0 || !this.currentFile || !this.feed) {
       return;
     }
 
@@ -540,41 +511,15 @@ export class Editor {
       const tableName = this.currentFile.replace('.txt', '');
       const updates = Array.from(this.pendingUpdates.values());
 
-      // Track rows already patched to emit one patch per row
-      const patchedRows = new Set<number>();
+      // One update per edited row, all as one undo step.
+      const ops = [...this.pendingBeforeRows].map(([rowIndex, before]) =>
+        this.tableData
+          ? updateOp(tableName, before, this.tableData[rowIndex])
+          : null
+      );
+      await this.feed.apply(ops);
 
-      // Perform batch updates to IndexedDB using natural keys
       for (const update of updates) {
-        // Generate natural key for the row data
-        const naturalKey = generateCompositeKeyFromRecord(
-          tableName,
-          update.rowData
-        );
-
-        await this.gtfsParser.gtfsDatabase.updateRow(
-          tableName,
-          naturalKey,
-          update.rowData
-        );
-
-        // Record patch once per row (combining all column changes)
-        if (this.patchManager && !patchedRows.has(update.rowIndex)) {
-          patchedRows.add(update.rowIndex);
-          const beforeRow = this.pendingBeforeRows.get(update.rowIndex);
-          if (beforeRow && this.tableData) {
-            const afterRow = {
-              ...this.tableData[update.rowIndex],
-            } as Record<string, unknown>;
-            await this.patchManager.recordUpdate(
-              tableName,
-              naturalKey,
-              beforeRow as Record<string, unknown>,
-              afterRow
-            );
-          }
-        }
-
-        // Remove pending indicator
         if (update.originalInput) {
           update.originalInput.classList.remove('pending-save');
           update.originalInput.classList.add('saved');
@@ -592,9 +537,9 @@ export class Editor {
       this.pendingUpdates.clear();
       this.pendingBeforeRows.clear();
 
-      console.log(`Saved ${updates.length} table cell updates to IndexedDB`);
+      console.log(`[Editor] saved ${updates.length} table cell updates`);
     } catch (error) {
-      console.error('Error saving table updates to IndexedDB:', error);
+      console.error('[Editor] saving table updates failed:', error);
 
       // Mark all pending inputs as having errors
       this.pendingUpdates.forEach((update) => {

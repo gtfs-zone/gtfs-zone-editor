@@ -8,7 +8,6 @@ export const pages: Translation<typeof en> = {
   'page.loadFailed': 'Échec du chargement du contenu. Réessayez.',
   'page.cleanFeed': 'Tout est bon ? Exportez votre flux et publiez-le.',
   'page.publishingGuide': 'Guide de publication',
-  'page.noPatchManager': 'Aucun gestionnaire de modifications disponible',
   'page.trimAllTitle':
     'Mettre la start_date de chaque service au {date} et supprimer toutes les exceptions antérieures',
   'page.extendAllTitle':

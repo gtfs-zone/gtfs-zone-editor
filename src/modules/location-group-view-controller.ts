@@ -15,7 +15,8 @@ import {
   renderCardLabel,
   renderOptionLabel,
 } from '../utils/entity-display';
-import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
+import { deleteOp, insertOp } from '../feed/patch-build';
 import { renderInlineEntityFields } from '../utils/inline-editable-field';
 import { showOptionPickerModal } from './option-picker-modal';
 import { t } from '../i18n/messages';
@@ -29,31 +30,7 @@ const GROUPS_STORE = 'location_groups';
 const MEMBERS_STORE = 'location_group_stops';
 
 export interface LocationGroupViewDependencies {
-  gtfsDatabase: {
-    queryRows: (
-      tableName: string,
-      filter?: Record<string, unknown>
-    ) => Promise<unknown[]>;
-    getAllRows: (tableName: string) => Promise<unknown[]>;
-    insertRows: (tableName: string, rows: unknown[]) => Promise<void>;
-    deleteRow?: (tableName: string, key: string) => Promise<void>;
-  };
-  patchManager?: {
-    recordInsert: (
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ) => Promise<void>;
-    recordDelete: (
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ) => Promise<void>;
-  } | null;
-  getTripsForLocationGroup?: (
-    location_group_id: string
-  ) => Array<Record<string, unknown>>;
-  getRouteAsync?: (route_id: string) => Promise<unknown>;
+  feed: EditorFeed;
   onStopClick?: (stop_id: string) => void;
   onRouteClick?: (route_id: string) => void;
   /** Re-render the page after a member is added or removed. */
@@ -131,40 +108,27 @@ export class LocationGroupViewController {
     }
   }
 
-  private async getGroup(
-    location_group_id: string
-  ): Promise<Record<string, unknown> | null> {
-    const rows = (await this.dependencies.gtfsDatabase.queryRows(GROUPS_STORE, {
-      location_group_id,
-    })) as Record<string, unknown>[];
-    return rows[0] ?? null;
+  private async getGroup(location_group_id: string): Promise<FeedRow | null> {
+    return this.dependencies.feed.byKey(GROUPS_STORE, location_group_id);
   }
 
   /** The location_group_stops rows for this group. */
-  private async getMemberRows(
-    location_group_id: string
-  ): Promise<Record<string, unknown>[]> {
-    return (await this.dependencies.gtfsDatabase.queryRows(MEMBERS_STORE, {
-      location_group_id,
-    })) as Record<string, unknown>[];
+  private getMemberRows(location_group_id: string): FeedRow[] {
+    return this.dependencies.feed
+      .table(MEMBERS_STORE)
+      .filter((row) => row.location_group_id === location_group_id);
   }
 
   private async renderMembers(location_group_id: string): Promise<string> {
-    const members = await this.getMemberRows(location_group_id);
+    const members = this.getMemberRows(location_group_id);
     if (members.length === 0) {
       return `<p class="text-sm opacity-60">${t('view.noMembers')}</p>`;
     }
 
     const rows: string[] = [];
     for (const member of members) {
-      const stop_id = String(member.stop_id ?? '');
-      const stopRows = (await this.dependencies.gtfsDatabase.queryRows(
-        'stops',
-        {
-          stop_id,
-        }
-      )) as Record<string, string>[];
-      const stop = stopRows[0];
+      const stop_id = member.stop_id ?? '';
+      const stop = this.dependencies.feed.byKey('stops', stop_id);
       // A member pointing at a missing stop is a feed error: show it as one
       // rather than dropping the row and hiding the problem.
       const label = stop
@@ -181,8 +145,15 @@ export class LocationGroupViewController {
   }
 
   private async renderRoutes(location_group_id: string): Promise<string> {
+    const feed = this.dependencies.feed;
+    const stopTimes = await feed.where('stop_times', [
+      { col: 'location_group_id', eq: location_group_id },
+    ]);
+    const tripIds = [...new Set(stopTimes.map((st) => st.trip_id))];
     const trips =
-      this.dependencies.getTripsForLocationGroup?.(location_group_id) ?? [];
+      tripIds.length > 0
+        ? await feed.where('trips', [{ col: 'trip_id', in: tripIds }])
+        : [];
     if (trips.length === 0) {
       return `<p class="text-sm opacity-60">${t('view.groupNoStopTimes')}</p>`;
     }
@@ -198,8 +169,7 @@ export class LocationGroupViewController {
 
     const rows: string[] = [];
     for (const [route_id, count] of counts) {
-      const route = (await this.dependencies.getRouteAsync?.(route_id)) as
-        Record<string, string> | null | undefined;
+      const route = feed.byKey('routes', route_id);
       const label = route
         ? renderCardLabel(getRouteDisplay(route))
         : `<span class="font-mono">${escapeHtml(route_id)}</span>`;
@@ -258,12 +228,10 @@ export class LocationGroupViewController {
     if (location_group_id === '') {
       return;
     }
-    const members = await this.getMemberRows(location_group_id);
-    const assigned = new Set(members.map((m) => String(m.stop_id ?? '')));
+    const members = this.getMemberRows(location_group_id);
+    const assigned = new Set(members.map((m) => m.stop_id ?? ''));
 
-    const stops = (await this.dependencies.gtfsDatabase.getAllRows(
-      'stops'
-    )) as Record<string, string>[];
+    const stops = this.dependencies.feed.table('stops');
     const options = stops
       .filter((stop) => !assigned.has(String(stop.stop_id ?? '')))
       .map((stop) => ({
@@ -281,15 +249,10 @@ export class LocationGroupViewController {
       return;
     }
 
-    const record = { location_group_id, stop_id };
-    const key = generateCompositeKeyFromRecord(MEMBERS_STORE, record);
     console.log(`[LocationGroups] add ${stop_id} to ${location_group_id}`);
-    await this.dependencies.gtfsDatabase.insertRows(MEMBERS_STORE, [record]);
-    await this.dependencies.patchManager?.recordInsert(
-      MEMBERS_STORE,
-      key,
-      record
-    );
+    await this.dependencies.feed.apply([
+      insertOp(MEMBERS_STORE, { location_group_id, stop_id }),
+    ]);
 
     this.dependencies.onMembersChanged?.(location_group_id);
   }
@@ -302,16 +265,9 @@ export class LocationGroupViewController {
     if (location_group_id === '' || stop_id === '') {
       return;
     }
-    if (!this.dependencies.gtfsDatabase.deleteRow) {
-      console.warn('[LocationGroups] database cannot delete rows');
-      return;
-    }
-
-    const rows = (await this.dependencies.gtfsDatabase.queryRows(
-      MEMBERS_STORE,
-      { location_group_id, stop_id }
-    )) as Record<string, unknown>[];
-    const record = rows[0];
+    const record = this.getMemberRows(location_group_id).find(
+      (row) => row.stop_id === stop_id
+    );
     if (!record) {
       console.warn(
         `[LocationGroups] no location_group_stops row for ${stop_id} in ${location_group_id}`
@@ -319,14 +275,8 @@ export class LocationGroupViewController {
       return;
     }
 
-    const key = generateCompositeKeyFromRecord(MEMBERS_STORE, record);
     console.log(`[LocationGroups] remove ${stop_id} from ${location_group_id}`);
-    await this.dependencies.gtfsDatabase.deleteRow(MEMBERS_STORE, key);
-    await this.dependencies.patchManager?.recordDelete(
-      MEMBERS_STORE,
-      key,
-      record
-    );
+    await this.dependencies.feed.apply([deleteOp(MEMBERS_STORE, record)]);
 
     this.dependencies.onMembersChanged?.(location_group_id);
   }

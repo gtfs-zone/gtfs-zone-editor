@@ -12,7 +12,10 @@
  *   log into a new base when `open` says it is due.
  */
 
-import type { FeedStore } from 'gtfs-zone-web-common/gtfs/store/feed-store';
+import type {
+  FeedStore,
+  Row,
+} from 'gtfs-zone-web-common/gtfs/store/feed-store';
 import type { StoreContext } from 'gtfs-zone-web-common/gtfs/store/store-worker-core';
 import {
   deleteBaseFile,
@@ -21,7 +24,7 @@ import {
 } from 'gtfs-zone-web-common/gtfs/store/opfs-base';
 import { CONFIG } from '../config';
 import type { FeedPatch, FeedPatchRecord, PatchRename } from '../types/patch';
-import { applyPatch, applyPatches } from './patch-apply';
+import { applyPatch, applyPatches, rowByKey } from './patch-apply';
 import { patchTargets } from './patch-build';
 import {
   IdbFeedLog,
@@ -47,6 +50,8 @@ export interface Moved {
   /** Tables and non-table entries the moved patches write. */
   tables: string[];
   files: string[];
+  /** The patch, when the move went over exactly one. */
+  patch?: FeedPatch;
 }
 
 export interface Opened {
@@ -56,6 +61,278 @@ export interface Opened {
   replayed: number;
   /** True when `compact()` should run before the session starts. */
   foldDue: boolean;
+}
+
+/**
+ * One condition of `where`: the column's value equals `eq`, is one of `in`,
+ * or sorts below `lt` / above `gt` (string order, so YYYYMMDD dates work).
+ * Conditions in a list must all hold.
+ */
+export interface Cond {
+  col: string;
+  eq?: string;
+  in?: string[];
+  lt?: string;
+  gt?: string;
+}
+
+function matcher(conds: Cond[]): (get: (col: string) => string) => boolean {
+  const sets = conds.map((c) => (c.in ? new Set(c.in) : null));
+  return (get) =>
+    conds.every((c, i) => {
+      const v = get(c.col);
+      return (
+        (c.eq === undefined || v === c.eq) &&
+        (sets[i] === null || sets[i].has(v)) &&
+        (c.lt === undefined || v < c.lt) &&
+        (c.gt === undefined || v > c.gt)
+      );
+    });
+}
+
+/** stop_times rows matching `conds`, using the trip or stop index when one applies. */
+function stopTimesWhere(s: FeedStore, conds: Cond[]): Row[] {
+  const match = matcher(conds);
+  // The values a column is limited to, or null when no condition limits it.
+  const valuesOf = (col: string): string[] | null => {
+    const c = conds.find((x) => x.col === col && (x.eq !== undefined || x.in));
+    return c ? (c.eq !== undefined ? [c.eq] : c.in!) : null;
+  };
+  const tripIds = valuesOf('trip_id');
+  const stopIds = valuesOf('stop_id');
+  const trips =
+    tripIds ??
+    (stopIds
+      ? [...new Set(stopIds.flatMap((id) => s.tripsAtStop(id)))]
+      : s.tripsWithStopTimes());
+  const out: Row[] = [];
+  for (const id of trips) {
+    for (const row of s.stopTimesForTrip(id)) {
+      if (match((c) => row[c] ?? '')) {
+        out.push(row);
+      }
+    }
+  }
+  return out;
+}
+
+/** Rows of `table` matching `conds`, in table order. */
+function where(s: FeedStore, table: string, conds: Cond[]): Row[] {
+  if (!s.hasTable(table)) {
+    return [];
+  }
+  if (table === 'stop_times') {
+    return stopTimesWhere(s, conds);
+  }
+  if (table === 'shapes') {
+    const match = matcher(conds);
+    const shapeId = conds.find((c) => c.col === 'shape_id')?.eq;
+    const out: Row[] = [];
+    for (const id of shapeId !== undefined ? [shapeId] : s.shapeIds()) {
+      for (const row of s.shapeRows(id)) {
+        if (match((c) => row[c] ?? '')) {
+          out.push(row);
+        }
+      }
+    }
+    return out;
+  }
+  const eq = conds.find((c) => c.eq !== undefined);
+  if (eq) {
+    const match = matcher(conds);
+    return s
+      .find(table, eq.col, eq.eq!)
+      .map((h) => h.row)
+      .filter((row) => match((c) => row[c] ?? ''));
+  }
+  const cols = [...new Set(conds.map((c) => c.col))];
+  const match = matcher(conds);
+  const ids: number[] = [];
+  s.scan(table, cols, (values, id) => {
+    if (match((c) => values[cols.indexOf(c)])) {
+      ids.push(id);
+    }
+  });
+  return ids.map((id) => s.row(table, id)!);
+}
+
+/** The first `limit` rows of `table`, in table order (per trip / shape for the grouped ones). */
+function head(s: FeedStore, table: string, limit: number): Row[] {
+  if (!s.hasTable(table)) {
+    return [];
+  }
+  if (table !== 'stop_times' && table !== 'shapes') {
+    return s.rows(table, 0, limit).map((r) => r.row);
+  }
+  const out: Row[] = [];
+  const groups = table === 'stop_times' ? s.tripsWithStopTimes() : s.shapeIds();
+  for (const id of groups) {
+    const rows =
+      table === 'stop_times' ? s.stopTimesForTrip(id) : s.shapeRows(id);
+    for (const row of rows) {
+      if (out.length >= limit) {
+        return out;
+      }
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+/** Distinct non-empty values of `col` in `table`. */
+function distinct(s: FeedStore, table: string, col: string): string[] {
+  const out = new Set<string>();
+  if (!s.hasTable(table)) {
+    return [];
+  }
+  if (table === 'stop_times') {
+    for (const id of s.tripsWithStopTimes()) {
+      for (const row of s.stopTimesForTrip(id)) {
+        const v = row[col] ?? '';
+        if (v !== '') {
+          out.add(v);
+        }
+      }
+    }
+    return [...out];
+  }
+  if (table === 'shapes') {
+    if (col === 'shape_id') {
+      return s.shapeIds();
+    }
+    throw new Error(`[FeedWorker] distinct on shapes.${col} is not supported`);
+  }
+  s.scan(table, [col], ([v]) => {
+    if (v !== '') {
+      out.add(v);
+    }
+  });
+  return [...out];
+}
+
+/** What a route's stop_times reference, by kind. */
+export interface RouteRefs {
+  stops: string[];
+  zones: string[];
+  groups: string[];
+}
+
+/**
+ * Every route's stop_times references. One stop_times read per distinct
+ * stop list: trips sharing a pattern share every non-time column.
+ */
+function routeRefs(s: FeedStore): Record<string, RouteRefs> {
+  const routeOf = new Map<string, string>();
+  if (s.hasTable('trips')) {
+    s.scan('trips', ['trip_id', 'route_id'], ([trip, route]) => {
+      routeOf.set(trip, route);
+    });
+  }
+  const acc = new Map<
+    string,
+    { stops: Set<string>; zones: Set<string>; groups: Set<string> }
+  >();
+  if (!s.hasTable('stop_times')) {
+    return {};
+  }
+  s.forEachStopList((_stops, tripIds) => {
+    const rows = s.stopTimesForTrip(tripIds[0]);
+    const routes = new Set<string>();
+    for (const id of tripIds) {
+      const route = routeOf.get(id);
+      if (route !== undefined) {
+        routes.add(route);
+      }
+    }
+    for (const route of routes) {
+      let a = acc.get(route);
+      if (!a) {
+        a = { stops: new Set(), zones: new Set(), groups: new Set() };
+        acc.set(route, a);
+      }
+      for (const row of rows) {
+        if (row.stop_id) {
+          a.stops.add(row.stop_id);
+        }
+        if (row.location_id) {
+          a.zones.add(row.location_id);
+        }
+        if (row.location_group_id) {
+          a.groups.add(row.location_group_id);
+        }
+      }
+    }
+  });
+  const out: Record<string, RouteRefs> = {};
+  for (const [route, a] of acc) {
+    out[route] = {
+      stops: [...a.stops],
+      zones: [...a.zones],
+      groups: [...a.groups],
+    };
+  }
+  return out;
+}
+
+/** How one shape is used, for the shapes modal. */
+export interface ShapeUsageRow {
+  points: number;
+  trips: number;
+  /** Distinct [route_id, service_id, direction_id] of the trips using it. */
+  timetables: [string, string, string][];
+  /** First and last stop of one trip using it, when it has two or more. */
+  origin?: string;
+  destination?: string;
+}
+
+/** Point count and trip usage of every shape. */
+function shapeUsage(s: FeedStore): Record<string, ShapeUsageRow> {
+  const out: Record<string, ShapeUsageRow> = {};
+  if (s.hasTable('shapes')) {
+    for (const id of s.shapeIds()) {
+      out[id] = {
+        points: s.shapeCoords(id).length / 2,
+        trips: 0,
+        timetables: [],
+      };
+    }
+  }
+  if (!s.hasTable('trips')) {
+    return out;
+  }
+  const seen = new Map<string, Set<string>>();
+  const firstTrip = new Map<string, string>();
+  s.scan(
+    'trips',
+    ['shape_id', 'trip_id', 'route_id', 'service_id', 'direction_id'],
+    ([shape, trip, route, service, direction]) => {
+      const usage = out[shape];
+      if (!usage) {
+        return;
+      }
+      usage.trips++;
+      if (!firstTrip.has(shape)) {
+        firstTrip.set(shape, trip);
+      }
+      const keys = seen.get(shape) ?? new Set<string>();
+      seen.set(shape, keys);
+      const key = `${route}\u0000${service}\u0000${direction}`;
+      if (!keys.has(key)) {
+        keys.add(key);
+        usage.timetables.push([route, service, direction]);
+      }
+    }
+  );
+  if (s.hasTable('stop_times')) {
+    for (const [shape, trip] of firstTrip) {
+      const stops = s.tripStops(trip);
+      if (stops.length >= 2) {
+        out[shape].origin = stops[0].stop_id;
+        out[shape].destination = stops[stops.length - 1].stop_id;
+      }
+    }
+  }
+  return out;
 }
 
 export interface Imported {
@@ -207,6 +484,19 @@ export function feedWorkerApi(ctx: StoreContext) {
     return state;
   };
 
+  /** `s` with its counts taken from the store as it is now. */
+  const counted = (s: FeedState): FeedState => {
+    const c = ctx.store().counts();
+    return {
+      ...s,
+      counts: {
+        routes: c.routes ?? 0,
+        stops: c.stops ?? 0,
+        trips: c.trips ?? 0,
+      },
+    };
+  };
+
   const versions = (): Versions => {
     const s = requireState();
     return {
@@ -238,11 +528,13 @@ export function feedWorkerApi(ctx: StoreContext) {
   const move = async (
     patches: FeedPatch[],
     dir: 'forward' | 'inverse',
-    next: FeedState
+    target: FeedState
   ): Promise<Moved> => {
+    let next = target;
     const log = await getLog();
     const store = ctx.store();
     applyPatches(store, patches, dir);
+    next = counted(next);
     try {
       await log.saveState(next);
     } catch (err) {
@@ -269,6 +561,7 @@ export function feedWorkerApi(ctx: StoreContext) {
       renames,
       tables: [...tables],
       files: [...files],
+      ...(patches.length === 1 && { patch: patches[0] }),
     };
   };
 
@@ -307,7 +600,7 @@ export function feedWorkerApi(ctx: StoreContext) {
     const store = ctx.store();
     applyPatch(store, patch, 'forward');
     try {
-      state = await log.append(s, patch);
+      state = await log.append(counted(s), patch);
     } catch (err) {
       applyPatch(store, patch, 'inverse');
       throw err;
@@ -337,7 +630,10 @@ export function feedWorkerApi(ctx: StoreContext) {
       }
       const log = await getLog();
       const previous = await log.state();
-      const next: FeedState = {
+      const feedVersion = ctx.store().hasTable('feed_info')
+        ? (ctx.store().rows('feed_info', 0, 1)[0]?.row.feed_version ?? null)
+        : null;
+      const next: FeedState = counted({
         baseName: log.persistent ? newBaseName() : '',
         label,
         anchorVersion: 0,
@@ -347,7 +643,9 @@ export function feedWorkerApi(ctx: StoreContext) {
         networksMode: mode,
         extensionColumns: {},
         importedAt: Date.now(),
-      };
+        importFeedVersion: feedVersion,
+        counts: { routes: 0, stops: 0, trips: 0 },
+      });
       if (next.baseName) {
         await saveBase(ctx.store(), ctx, next.baseName);
       }
@@ -434,12 +732,12 @@ export function feedWorkerApi(ctx: StoreContext) {
       const t0 = performance.now();
       const store = ctx.store();
       const folded = store.hasEdits() ? store.fold() : store;
-      const next: FeedState = {
+      const next: FeedState = counted({
         ...s,
         baseName: newBaseName(),
         anchorVersion: s.currentVersion,
         bridgeLength: 0,
-      };
+      });
       await saveBase(folded, ctx, next.baseName);
       await commitBase(log, next, false);
       state = next;
@@ -524,6 +822,57 @@ export function feedWorkerApi(ctx: StoreContext) {
       await (await getLog()).saveState(next);
       state = next;
     },
+
+    /** Rows of `table` whose columns satisfy every condition (copies). */
+    where: (table: string, conds: Cond[]): Row[] =>
+      where(ctx.store(), table, conds),
+
+    /** The rows the primary key strings name, null where none (copies). */
+    byKeys: (table: string, keys: string[]): (Row | null)[] =>
+      keys.map((key) => rowByKey(ctx.store(), table, key)),
+
+    /** Every route's stop_times references, by kind. */
+    routeRefs: (): Record<string, RouteRefs> => routeRefs(ctx.store()),
+
+    /** Point count and trip usage of every shape. */
+    shapeUsage: (): Record<string, ShapeUsageRow> => shapeUsage(ctx.store()),
+
+    /** Row count per value of `col`, e.g. trips per route_id. */
+    countBy: (table: string, col: string): Record<string, number> => {
+      const out: Record<string, number> = {};
+      const store = ctx.store();
+      if (store.hasTable(table)) {
+        store.scan(table, [col], ([v]) => {
+          out[v] = (out[v] ?? 0) + 1;
+        });
+      }
+      return out;
+    },
+
+    /** Row count per value of `a`, then per value of `b`, e.g. trips per route and service. */
+    countBy2: (
+      table: string,
+      a: string,
+      b: string
+    ): Record<string, Record<string, number>> => {
+      const out: Record<string, Record<string, number>> = {};
+      const store = ctx.store();
+      if (store.hasTable(table)) {
+        store.scan(table, [a, b], ([va, vb]) => {
+          const inner = (out[va] ??= {});
+          inner[vb] = (inner[vb] ?? 0) + 1;
+        });
+      }
+      return out;
+    },
+
+    /** The first `limit` rows of any table (copies). */
+    head: (table: string, limit: number): Row[] =>
+      head(ctx.store(), table, limit),
+
+    /** Distinct non-empty values of one column. */
+    distinct: (table: string, col: string): string[] =>
+      distinct(ctx.store(), table, col),
 
     /** A non-table entry as text, or null when the feed has none. */
     fileText: (name: string): string | null => decode(ctx.store().file(name)),

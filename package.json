@@ -64,7 +64,6 @@
     "gtfs-zone-vocab": "github:gtfs-zone/gtfs-zone-vocab#v0.2.0",
     "gtfs-zone-web-common": "github:gtfs-zone/gtfs-zone-web-common#v5.24.1",
     "idb": "^8.0.3",
-    "jszip": "^3.10.2",
     "maplibre-gl": "^6.11.2",
     "papaparse": "^5.7.0",
     "zod": "^4.6.7"

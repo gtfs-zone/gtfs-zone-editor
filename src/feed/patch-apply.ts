@@ -127,8 +127,18 @@ function stepsOf(patch: FeedPatch, dir: Direction): Step[] {
     ];
   }
   if (patch.op === 'batch') {
-    const ops = dir === 'forward' ? patch.ops : [...patch.ops].reverse();
-    return ops.map((op) => stepOf(op, dir));
+    const files: Step[] = (patch.files ?? []).map((f) => ({
+      kind: 'file',
+      name: f.name,
+      text: dir === 'forward' ? f.after : f.before,
+    }));
+    if (dir === 'forward') {
+      return [...patch.ops.map((op) => stepOf(op, dir)), ...files];
+    }
+    return [
+      ...files.reverse(),
+      ...[...patch.ops].reverse().map((op) => stepOf(op, dir)),
+    ];
   }
   return [stepOf(patch, dir)];
 }
@@ -213,6 +223,48 @@ function matches(table: string, row: Row, look: Lookup): boolean {
   }
   const keyed = look.toKey ? { ...row, ...look.toKey } : row;
   return keyOf(table, keyed) === normalizeKey(table, look.key);
+}
+
+/**
+ * The row a primary key string names, or null. Same lookup an update or a
+ * delete uses.
+ */
+export function rowByKey(s: FeedStore, table: string, key: string): Row | null {
+  if (!s.hasTable(table)) {
+    return null;
+  }
+  const look: Lookup = { key, toKey: null, expect: null, firstNow: null };
+  const first = firstValue(table, normalizeKey(table, key), null);
+  if (table in GROUPED) {
+    if (first === null) {
+      return null;
+    }
+    const rows =
+      table === 'stop_times' ? s.stopTimesForTrip(first) : s.shapeRows(first);
+    return rows.find((row) => matches(table, row, look)) ?? null;
+  }
+  const field = getGTFSPrimaryKey(table)?.fields[0];
+  if (field && first !== null) {
+    const hit = s
+      .find(table, field, first)
+      .find(({ row }) => matches(table, row, look));
+    if (hit) {
+      return hit.row;
+    }
+  }
+  let found: Row | null = null;
+  const cols = s.columns(table);
+  s.scan(table, cols, (values) => {
+    if (found) {
+      return;
+    }
+    const row: Row = {};
+    cols.forEach((c, i) => (row[c] = values[i]));
+    if (matches(table, row, look)) {
+      found = row;
+    }
+  });
+  return found;
 }
 
 /** Applies steps to one store and remembers how to take them back. */

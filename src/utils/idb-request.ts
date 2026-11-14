@@ -9,43 +9,6 @@
 import { CONFIG } from '../config';
 
 /**
- * Resolve with the promise's value, or null if it has not settled in `ms`.
- * Only use this where a null result is distinguishable from a real one.
- */
-export function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number = CONFIG.DB_REQUEST_TIMEOUT_MS
-): Promise<T | null> {
-  return new Promise((resolve) => {
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      resolve(null);
-    }, ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        if (timedOut) {
-          // Gave up on this one already: close it rather than leave a
-          // connection open, which would block the next upgrade exactly the
-          // way the abandoned request did.
-          (value as { close?: () => void } | null)?.close?.();
-          return;
-        }
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        if (!timedOut) {
-          console.warn('[idb] request failed:', error);
-          resolve(null);
-        }
-      }
-    );
-  });
-}
-
-/**
  * Resolve with the promise's value, or reject when it has not settled in
  * `ms`. For writes, where a stall or a quota error must reach the caller.
  */

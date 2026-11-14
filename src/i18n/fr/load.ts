@@ -69,6 +69,8 @@ export const load: Translation<typeof en> = {
     "Aucune donnée GTFS à exporter. Ajoutez d'abord des données.",
   'export.preparing': "Préparation de l'export GTFS...",
   'export.done': 'Données GTFS exportées.',
+  'export.unavailable':
+    "L'export n'est pas encore disponible dans cette version.",
   'export.failed': "Échec de l'export des données GTFS : {message}",
   'db.contextInit': "l'initialisation",
   'db.unknownError': 'Erreur inconnue',

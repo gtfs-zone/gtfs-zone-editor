@@ -7,8 +7,8 @@ import {
   type EditableTableJoinColumn,
 } from './editable-table';
 import type { OptionPickerItem } from './option-picker-modal';
-import type { GTFSDatabase } from './gtfs-database';
-import type { PatchManager } from './patch-manager';
+import type { EditorFeed } from '../feed/editor-feed';
+import { updateOp } from '../feed/patch-build';
 import { getStopDisplay, renderOptionLabel } from '../utils/entity-display';
 import { specStoreName } from '../utils/spec-field-edit';
 import { GTFS_TABLES } from '../types/gtfs';
@@ -18,16 +18,7 @@ const INSTANCE_ID = 'levels';
 const STOPS_STORE = specStoreName(GTFS_TABLES.STOPS);
 
 export class LevelsController {
-  private db: GTFSDatabase;
-  private patchManager: PatchManager | null = null;
-
-  constructor(db: GTFSDatabase) {
-    this.db = db;
-  }
-
-  setPatchManager(pm: PatchManager): void {
-    this.patchManager = pm;
-  }
+  constructor(private readonly feed: EditorFeed) {}
 
   /**
    * The stops sitting on each level, and the writer that reassigns them.
@@ -37,10 +28,7 @@ export class LevelsController {
    * stop, and unpicking one clears it. Built per refresh, since it reads stops.
    */
   private async stopsColumn(): Promise<EditableTableJoinColumn> {
-    const stops = (await this.db.getAllRows(STOPS_STORE)) as Record<
-      string,
-      unknown
-    >[];
+    const stops = this.feed.table(STOPS_STORE);
 
     const byLevel = new Map<string, { value: string; label: string }[]>();
     for (const stop of stops) {
@@ -85,50 +73,27 @@ export class LevelsController {
         }
 
         const ops = [
-          ...removed.map((stop_id) => ({
-            op: 'update' as const,
-            table: STOPS_STORE,
-            id: stop_id,
-            before: { level_id },
-            after: { level_id: '' },
-          })),
-          ...added.map((stop_id) => ({
-            op: 'update' as const,
-            table: STOPS_STORE,
-            id: stop_id,
-            before: {
-              level_id: String(
-                stops.find((s) => String(s.stop_id) === stop_id)?.level_id ?? ''
-              ),
-            },
-            after: { level_id },
-          })),
-        ];
+          ...removed.map((stop_id) => ({ stop_id, level_id: '' })),
+          ...added.map((stop_id) => ({ stop_id, level_id })),
+        ].map(({ stop_id, level_id: next }) => {
+          const stop = this.feed.byKey(STOPS_STORE, stop_id);
+          return stop ? updateOp(STOPS_STORE, stop, { level_id: next }) : null;
+        });
 
         console.log(
           `[LevelsController] stops on ${level_id} (-${removed.length} +${added.length})`
         );
-        for (const op of ops) {
-          await this.db.updateRow(op.table, op.id, op.after);
-        }
-        await this.patchManager?.recordBatchMixed(
-          ops,
-          t('levels.editStops', { id: level_id })
-        );
+        await this.feed.apply(ops, t('levels.editStops', { id: level_id }));
       },
     };
   }
 
   async showLevelsModal(): Promise<void> {
-    if (!this.patchManager) {
-      throw new Error('[LevelsController] patch manager not set');
-    }
-
     const config: EditableTableConfig = {
       instanceId: INSTANCE_ID,
       tableName: GTFS_TABLES.LEVELS,
       rows: [],
-      deps: { gtfsDatabase: this.db, patchManager: this.patchManager },
+      deps: { feed: this.feed },
       emptyMessage: t('levels.empty'),
       columnOverrides: {
         level_id: { widthClass: 'min-w-64' },
@@ -144,11 +109,11 @@ export class LevelsController {
         return;
       }
       config.joinColumns = [await this.stopsColumn()];
-      const rows = await this.db.getAllRows(specStoreName(GTFS_TABLES.LEVELS));
+      const rows = [...this.feed.table(specStoreName(GTFS_TABLES.LEVELS))];
       // Floors read bottom-up; a level with no index sorts last.
       config.rows = rows.sort((a, b) => {
-        const ai = Number(a.level_index ?? NaN);
-        const bi = Number(b.level_index ?? NaN);
+        const ai = a.level_index ? Number(a.level_index) : NaN;
+        const bi = b.level_index ? Number(b.level_index) : NaN;
         if (!Number.isFinite(ai)) {
           return Number.isFinite(bi) ? 1 : 0;
         }
