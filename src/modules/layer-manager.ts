@@ -44,7 +44,6 @@ import {
   stopFadeOpacity,
   type StopFadeBands,
 } from 'gtfs-zone-web-common/map/layer-specs';
-import { t } from '../i18n/messages';
 
 export interface StopLayerOptions {
   showBackground: boolean;
@@ -131,6 +130,16 @@ function offsetSegment([a, b]: Segment, meters: number): Segment {
 
 // Default filter: show all top-level stops (empty parent_station) and stations (location_type=1), hide child stops.
 export const DEFAULT_STOPS_FILTER = TOP_LEVEL_STOPS_FILTER;
+
+/** Every layer drawn from the stops source. */
+const STOP_LAYER_IDS = [
+  STOP_FOCUS_HALO_LAYER,
+  STOP_FOCUS_RING_LAYER,
+  STOPS_BACKGROUND_LAYER,
+  STOP_FOCUS_TOP_LAYER,
+  STOPS_STATION_DOT_LAYER,
+  STOPS_CLICKAREA_LAYER,
+];
 
 /** The zoom bands the stop layers fade through, from this app's config. */
 const STOP_FADE_BANDS: StopFadeBands = {
@@ -688,13 +697,9 @@ export class LayerManager {
         },
         properties: {
           stop_id: stop.stop_id,
-          stop_name: stop.stop_name || t('map.unnamedStop'),
-          stop_code: stop.stop_code || '',
-          stop_desc: stop.stop_desc || '',
           location_type: stopType,
           parent_station: stop.parent_station ?? '',
           station_id: resolveStationId(stop),
-          wheelchair_boarding: stop.wheelchair_boarding || '',
           has_own_coords: hasValidCoords(stop),
         },
       });
@@ -754,6 +759,7 @@ export class LayerManager {
       id: STOP_FOCUS_HALO_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: focusHaloPaint(accent),
     });
@@ -762,6 +768,7 @@ export class LayerManager {
       id: STOP_FOCUS_RING_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: focusRingPaint(accent),
     });
@@ -786,6 +793,7 @@ export class LayerManager {
       id: STOPS_BACKGROUND_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: stopsBackgroundPaint(
         this.stopStyle(options),
@@ -809,6 +817,7 @@ export class LayerManager {
       id: STOP_FOCUS_TOP_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: focusTopPaint(this.stopStyle(options)),
     });
@@ -828,6 +837,7 @@ export class LayerManager {
       id: STOPS_STATION_DOT_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      minzoom: this.stopsMinZoom(),
       filter: stationDotFilter(null),
       paint: stationDotPaint(this.stationFadeOpacity(null)),
     });
@@ -851,6 +861,7 @@ export class LayerManager {
       id: STOPS_CLICKAREA_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: {
         'circle-radius': this.clickAreaRadius(options.clickAreaRadius),
@@ -1210,6 +1221,16 @@ export class LayerManager {
       `[LayerManager] stop fade ${disabled ? 'disabled' : 'enabled'}, ${stopCount} stops`
     );
     this.applyStopFadePaint();
+    for (const id of STOP_LAYER_IDS) {
+      if (this.map.getLayer(id)) {
+        this.map.setLayerZoomRange(id, this.stopsMinZoom(), 24);
+      }
+    }
+  }
+
+  /** Stop layers skip low zooms while the fade hides every stop there anyway. */
+  private stopsMinZoom(): number {
+    return this.stopFadeDisabled ? 0 : CONFIG.STOPS_MIN_ZOOM;
   }
 
   /**

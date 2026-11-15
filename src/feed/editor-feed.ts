@@ -48,6 +48,7 @@ import type {
 } from './feed-worker-api';
 import { batch, patchTargets } from './patch-build';
 import type { ValidateStep } from './feed-validate';
+import type { RouteLines } from './route-lines';
 
 /** Store methods that write: edits go through patches instead. */
 type StoreWrites =
@@ -384,6 +385,11 @@ export class EditorFeed {
   /** Point count and trip usage of every shape (built in the worker). */
   shapeUsage(): Promise<Record<string, ShapeUsageRow>> {
     return this.requireClient().call('shapeUsage');
+  }
+
+  /** Every route's simplified map lines and bounds (built in the worker). */
+  routeLines(): Promise<RouteLines[]> {
+    return this.requireClient().call('routeLines');
   }
 
   /** The whole feed as a GTFS zip, built in the worker (see `exportZip`). */

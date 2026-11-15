@@ -640,9 +640,7 @@ export class MapController {
       return null;
     }
 
-    // Running min/max rather than a collected array: a feed-wide fit walks
-    // every shape point (~395k on the MBTA feed) and materializing a tuple per
-    // point would allocate hundreds of thousands of throwaway arrays.
+    // Running min/max over stop coordinates, zone bounds and route bounds.
     let west = Infinity;
     let south = Infinity;
     let east = -Infinity;
@@ -691,13 +689,13 @@ export class MapController {
       // route_ids present means "the shapes of these routes"; absent means
       // every shape in the feed, which is what a feed-wide fit wants.
       const wanted = input.route_ids ? new Set(input.route_ids) : null;
-      for (const feature of this.routeRenderer?.getRouteFeatures() ?? []) {
-        if (wanted && !wanted.has(feature.properties.route_id)) {
+      for (const [route_id, bbox] of this.routeRenderer?.getRouteBounds() ??
+        []) {
+        if (wanted && !wanted.has(route_id)) {
           continue;
         }
-        for (const [lng, lat] of feature.geometry.coordinates) {
-          extend(lng, lat);
-        }
+        extend(bbox[0], bbox[1]);
+        extend(bbox[2], bbox[3]);
       }
     }
 
@@ -1805,7 +1803,7 @@ export class MapController {
       currentBasemap: this.basemapControl?.getCurrentBasemap(),
       mapCenter: this.map?.getCenter(),
       mapZoom: this.map?.getZoom(),
-      routeDataCount: this.routeRenderer?.getRouteFeatures().length || 0,
+      routeDataCount: this.routeRenderer?.getRouteBounds().size || 0,
       focusedObject: this.focusedObject,
     };
   }

@@ -33,6 +33,7 @@ import { applyPatch, applyPatches, rowByKey } from './patch-apply';
 import { patchTargets } from './patch-build';
 import { FeedValidator, type ValidateStep } from './feed-validate';
 import { FeedExporter, type ExportStep } from './feed-export';
+import { routeLines, type RouteLines } from './route-lines';
 import {
   FeedDb,
   IdbFeedLog,
@@ -963,6 +964,9 @@ export function feedWorkerApi(ctx: StoreContext) {
 
     /** Point count and trip usage of every shape. */
     shapeUsage: (): Record<string, ShapeUsageRow> => shapeUsage(ctx.store()),
+
+    /** Every route's simplified map lines and bounds. */
+    routeLines: (): RouteLines[] => routeLines(ctx.store()),
 
     /** Row count per value of `col`, e.g. trips per route_id. */
     countBy: (table: string, col: string): Record<string, number> => {

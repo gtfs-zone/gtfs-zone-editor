@@ -17,7 +17,6 @@ export const map = {
   'map.clickTwoStops': 'Click two stops to make a pathway between them.',
   'map.ok': 'OK',
   'map.coordsFailed': 'Failed to update stop coordinates: {message}',
-  'map.unnamedStop': 'Unnamed Stop',
   'map.servedBy': '{serves} of {total} trips',
   'map.servedByTitle': 'Served by {serves} of {total} trips',
   'map.routeDiagram': 'Route diagram',

@@ -83,6 +83,20 @@ export const CONFIG = {
   ROUTE_ARROW_FADE_ZOOM_MAX: 13.5,
   ROUTE_ARROW_OPACITY: 0.85,
 
+  // Route lines: Douglas-Peucker tolerance in degrees applied in the worker
+  // before the lines reach the map (1e-5 is about 1m).
+  ROUTE_LINE_SIMPLIFY_DEG: 1e-5,
+  // Routes GeoJSON source: deepest zoom tiled (deeper zooms overscale it),
+  // simplification in tile pixels and tile buffer.
+  ROUTES_SOURCE_MAXZOOM: 14,
+  ROUTES_SOURCE_TOLERANCE: 0.5,
+  ROUTES_SOURCE_BUFFER: 64,
+
+  // Stop layers: lowest zoom drawn once the zoom fade is on (see
+  // STOP_FADE_MIN_STOPS). Below it the fade already hides every stop but the
+  // focused and spotlighted ones; routes carry the overview there.
+  STOPS_MIN_ZOOM: 7.5,
+
   // Map spotlight: line-sort-key applied to the focused route so it paints
   // above every other route. Far above any natural key (max ~90999).
   SPOTLIGHT_SORT_KEY: 1_000_000,

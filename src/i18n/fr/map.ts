@@ -25,7 +25,6 @@ export const map: Translation<typeof en> = {
   'map.ok': 'OK',
   'map.coordsFailed':
     "Échec de la mise à jour des coordonnées de l'arrêt : {message}",
-  'map.unnamedStop': 'Arrêt sans nom',
   'map.servedBy': '{serves} voyages sur {total}',
   'map.servedByTitle': 'Desservi par {serves} voyages sur {total}',
   'map.routeDiagram': 'Schéma de ligne',

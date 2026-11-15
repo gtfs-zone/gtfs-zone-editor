@@ -1,6 +1,6 @@
 import { Map as MapLibreMap } from 'maplibre-gl';
 import type { ExpressionSpecification, GeoJSONSource } from 'maplibre-gl';
-import type { EditorFeed, FeedRow } from '../feed/editor-feed';
+import type { EditorFeed } from '../feed/editor-feed';
 import { CONFIG } from '../config';
 import { routeSortKey } from 'gtfs-zone-web-common/gtfs/route-sort';
 import { ensureMapIcons } from 'gtfs-zone-web-common/map/icons';
@@ -31,16 +31,14 @@ import {
   routeLabelText,
 } from 'gtfs-zone-web-common/map/route-labels';
 
-export interface RouteFeature extends GeoJSON.Feature {
-  id: string;
+/** Only what the paint expressions and labels read; names come from the mirror. */
+interface RouteFeature extends GeoJSON.Feature {
+  id: number;
   geometry: GeoJSON.LineString;
   properties: {
     route_id: string;
-    route_data: FeedRow;
     color: string;
     colorDark: string;
-    route_short_name?: string;
-    route_long_name?: string;
     // line-sort-key: mode rank blended with the route's line count. Every
     // feature of a route carries the same value, so a route's segments never
     // reorder against each other. See route-sort.ts.
@@ -52,13 +50,14 @@ const ROUTE_LINE_WIDTH = zoomWidth(ROUTE_WIDTH_STOPS, null, 1);
 const ROUTE_CASING_WIDTH = zoomWidth(ROUTE_CASING_WIDTH_STOPS, null, 1);
 
 /**
- * Draws every route's distinct lines, built in the feed worker
- * (`routeGeometries`). Any change that can move a line rebuilds them all.
+ * Draws every route's distinct lines, built and simplified in the feed worker
+ * (`routeLines`). Any change that can move a line rebuilds them all. Only the
+ * per-route bounds are kept here once the lines are handed to MapLibre.
  */
 export class RouteRenderer {
   private map: MapLibreMap;
   private feed: EditorFeed;
-  private routeFeatures: RouteFeature[] = [];
+  private routeBounds = new Map<string, [number, number, number, number]>();
   private routeLabels = new Map<
     string,
     { short?: string; long?: string; color: string }
@@ -128,6 +127,9 @@ export class RouteRenderer {
         type: 'FeatureCollection',
         features: [],
       },
+      maxzoom: CONFIG.ROUTES_SOURCE_MAXZOOM,
+      tolerance: CONFIG.ROUTES_SOURCE_TOLERANCE,
+      buffer: CONFIG.ROUTES_SOURCE_BUFFER,
     });
 
     this.map.addLayer({
@@ -239,11 +241,11 @@ export class RouteRenderer {
     await this.ensureInitialized();
     const seq = ++this.buildSeq;
     if (!this.feed.isOpen) {
-      this.setFeatures([]);
+      this.setFeatures([], new Map());
       return;
     }
     const t0 = performance.now();
-    const geometries = await this.feed.read('routeGeometries');
+    const geometries = await this.feed.routeLines();
     if (seq !== this.buildSeq) {
       console.log('[RouteRenderer] build superseded');
       return;
@@ -253,12 +255,15 @@ export class RouteRenderer {
       string,
       { short?: string; long?: string; color: string }
     >();
+    const bounds = new Map<string, [number, number, number, number]>();
     for (const geometry of geometries) {
       const route = this.feed.byKey('routes', geometry.routeId);
       if (!route) {
         continue;
       }
+      bounds.set(route.route_id, geometry.bbox);
       const color = deriveRouteColor(route.route_id, route.route_color);
+      const colorDark = deriveCasingColor(color);
       const lineCount = geometry.lineStarts.length;
       const sortKey = routeSortKey(route.route_type, lineCount);
       labels.set(route.route_id, {
@@ -281,15 +286,12 @@ export class RouteRenderer {
         }
         features.push({
           type: 'Feature',
-          id: `${route.route_id}::${i}`,
+          id: features.length,
           geometry: { type: 'LineString', coordinates },
           properties: {
             route_id: route.route_id,
-            route_data: route,
             color,
-            colorDark: deriveCasingColor(color),
-            route_short_name: route.route_short_name,
-            route_long_name: route.route_long_name,
+            colorDark,
             sortKey,
           },
         });
@@ -299,14 +301,17 @@ export class RouteRenderer {
       clearRouteLabelImages(this.map);
     }
     this.routeLabels = labels;
-    this.setFeatures(features);
+    this.setFeatures(features, bounds);
     console.log(
       `[RouteRenderer] ${features.length} lines for ${labels.size} routes in ${Math.round(performance.now() - t0)}ms`
     );
   }
 
-  private setFeatures(features: RouteFeature[]): void {
-    this.routeFeatures = features;
+  private setFeatures(
+    features: RouteFeature[],
+    bounds: Map<string, [number, number, number, number]>
+  ): void {
+    this.routeBounds = bounds;
     const source = this.map.getSource(ROUTES_SOURCE) as
       GeoJSONSource | undefined;
     source?.setData({ type: 'FeatureCollection', features });
@@ -319,7 +324,7 @@ export class RouteRenderer {
       clearRouteLabelImages(this.map);
     }
     this.routeLabels = new Map();
-    this.setFeatures([]);
+    this.setFeatures([], new Map());
   }
 
   /**
@@ -385,7 +390,7 @@ export class RouteRenderer {
   }
 
   public highlightRoute(route_id: string): void {
-    if (this.routeFeatures.length === 0) {
+    if (this.routeBounds.size === 0) {
       return;
     }
     console.log(`[RouteRenderer] Highlighting route: ${route_id}`);
@@ -393,7 +398,7 @@ export class RouteRenderer {
   }
 
   public highlightRoutes(route_ids: string[]): void {
-    if (this.routeFeatures.length === 0 || route_ids.length === 0) {
+    if (this.routeBounds.size === 0 || route_ids.length === 0) {
       return;
     }
     console.log(`[RouteRenderer] Highlighting ${route_ids.length} routes`);
@@ -407,9 +412,15 @@ export class RouteRenderer {
     this.applySpotlight(null);
   }
 
-  /** The lines last drawn; empty until the first build lands. */
-  public getRouteFeatures(): RouteFeature[] {
-    return this.routeFeatures;
+  /**
+   * [west, south, east, north] of each drawn route's lines, by route_id; empty
+   * until the first build lands.
+   */
+  public getRouteBounds(): ReadonlyMap<
+    string,
+    [number, number, number, number]
+  > {
+    return this.routeBounds;
   }
 
   public destroy(): void {

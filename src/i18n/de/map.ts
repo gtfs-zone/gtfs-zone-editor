@@ -25,7 +25,6 @@ export const map: Translation<typeof en> = {
   'map.ok': 'OK',
   'map.coordsFailed':
     'Die Koordinaten der Haltestelle konnten nicht aktualisiert werden: {message}',
-  'map.unnamedStop': 'Unbenannte Haltestelle',
   'map.servedBy': '{serves} von {total} Fahrten',
   'map.servedByTitle': 'Bedient von {serves} von {total} Fahrten',
   'map.routeDiagram': 'Linienschema',
