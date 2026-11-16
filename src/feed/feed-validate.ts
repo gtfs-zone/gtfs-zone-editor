@@ -25,6 +25,7 @@ import {
   GTFS_TABLES,
 } from '../types/gtfs';
 import { getEnumOptions } from '../types/gtfs-enums';
+import { ALL_GTFS_FILES } from '../modules/gtfs-file-registry';
 import { GTFSFieldType, mapGTFSTypeString } from '../types/gtfs-field-types';
 import type { Pathways, Stops } from '../types/gtfs-entities';
 import { stopLocationType } from '../utils/area-hierarchy';
@@ -400,6 +401,19 @@ function requiredFiles(c: Sweep): void {
       'At least one calendar file is required: calendar.txt or calendar_dates.txt',
       'MISSING_CALENDAR_FILE'
     );
+  }
+}
+
+/** Entries kept as files that the spec does not define (e.g. `trips2.txt`). */
+function unknownFiles(c: Sweep): void {
+  for (const name of c.s.fileNames()) {
+    if (!ALL_GTFS_FILES.includes(name)) {
+      c.warning(
+        `${name} is not a GTFS file; it is kept unchanged for export`,
+        'UNKNOWN_FILE',
+        name
+      );
+    }
   }
 }
 
@@ -1819,6 +1833,7 @@ function* constrainedCodes(c: Sweep): Pass {
 /** Passes that walk large tables are generators; the rest run in one go. */
 const PASSES: [string, (c: Sweep) => Pass | void][] = [
   ['requiredFiles', requiredFiles],
+  ['unknownFiles', unknownFiles],
   ['agencies', agencies],
   ['routes', routes],
   ['trips', trips],

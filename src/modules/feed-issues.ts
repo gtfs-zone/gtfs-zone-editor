@@ -197,6 +197,10 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
   FREQUENCY_END_AMBIGUOUS: {
     label: rowsLabel(t('issues.frequencyEnd')),
   },
+  UNKNOWN_FILE: {
+    label: (group) => t('issues.unknownFile', { file: group.file }),
+    note: () => t('issues.unknownFileNote'),
+  },
 };
 
 /** Codes already warned about for having no kind, so each warns once. */

@@ -19,6 +19,7 @@ import {
 } from 'gtfs-zone-web-common/gtfs/store/opfs-base';
 import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { CONFIG } from '../config';
+import { ALL_GTFS_FILES } from '../modules/gtfs-file-registry';
 import { deleteDatabaseWithTimeout } from '../utils/idb-request';
 import { FeedDb, type FeedState } from './feed-log';
 import type { ExportStep } from './feed-export';
@@ -39,9 +40,15 @@ export const WORKER_ONLY_TABLES: readonly string[] = [
   'translations',
 ];
 
+/** Spec tables, by store name. Other `.txt` entries are kept as files. */
+const SPEC_TABLES: readonly string[] = ALL_GTFS_FILES.filter((f) =>
+  f.endsWith('.txt')
+).map((f) => f.slice(0, -'.txt'.length));
+
 const FEED_LOAD_OPTIONS: LoadOptions = {
   stopTimes: 'full',
   keepFiles: true,
+  tables: SPEC_TABLES,
   mirror: { except: [...WORKER_ONLY_TABLES] },
 };
 
