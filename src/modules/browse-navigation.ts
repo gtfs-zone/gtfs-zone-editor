@@ -419,6 +419,19 @@ export class BrowseNavigation {
     await this.render();
   }
 
+  /** Point the map at the current page again without re-rendering it. */
+  refocusMap(): void {
+    const pageState = getCurrentPageState();
+    try {
+      this.contentRenderer?.focusMap(pageState);
+    } catch (error) {
+      console.error(
+        `[BrowseNavigation] map focus failed for ${pageState.type}:`,
+        error
+      );
+    }
+  }
+
   /**
    * Take the last rendered state with a renamed ID.
    *

@@ -556,9 +556,9 @@ export class GTFSEditor {
         console.time('[boot] refresh after feed swap');
       }
       // The same post-swap refresh a user load runs, minus the navigation home:
-      // boot's page state comes from the URL. The map update it schedules also
-      // refreshes navigation once it lands, so a deep-linked stop keeps its
-      // selection through the focus reset inside updateMap.
+      // boot's page state comes from the URL. The map update it schedules
+      // re-applies the page's map focus once it lands, so a deep-linked stop
+      // keeps its selection through the focus reset inside updateMap.
       await this.uiController.refreshAfterFeedSwap().catch((e: unknown) =>
         notify.error(
           t('boot.refreshFailed', {

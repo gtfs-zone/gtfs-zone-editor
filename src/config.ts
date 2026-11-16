@@ -19,6 +19,11 @@ export const CONFIG = {
   CLUSTERIZE_ROWS_IN_BLOCK: 50,
   CLUSTERIZE_BLOCKS_IN_CLUSTER: 4,
 
+  // Home panel services list: rows shown at first and added per "show more",
+  // and the filter input's debounce.
+  HOME_SERVICE_ROWS: 50,
+  HOME_SERVICE_FILTER_DEBOUNCE_MS: 150,
+
   // Enum menus: option count above which the searchable modal opens instead.
   ENUM_MODAL_THRESHOLD: 15,
 

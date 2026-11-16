@@ -39,7 +39,11 @@ import { installStopAreasField } from '../utils/stop-areas-field';
 import type { EditableTableDeps } from './editable-table';
 import { renderIssueCard } from 'gtfs-zone-web-common/ui/issue-card';
 import { installGuideButtons } from 'gtfs-zone-web-common/ui/help-modal';
-import { getFeedIssues, refreshFeedIssuesIfStale } from './feed-issues';
+import {
+  feedIssuesNeedRefresh,
+  getFeedIssues,
+  refreshFeedIssuesIfStale,
+} from './feed-issues';
 import { navigateToIssueItem, runFeedIssueAction } from './feed-issues-modal';
 import { GTFS_TABLES } from '../types/gtfs';
 import { nextEntityId } from '../utils/inline-entity-creator';
@@ -84,10 +88,18 @@ import { getZoneFeatures, zoneFileChange } from './zone-store';
 import {
   attachServiceTimelineListeners,
   filterServiceDataMap,
+  isServiceActive,
   loadServiceData,
   loadTripCounts,
   renderServiceTimeline,
+  serviceDateBounds,
+  sortServiceEntries,
+  timelineSpan,
+  type ServiceData,
+  type TimelineSpan,
 } from './service-timeline';
+import { formatGtfsDateRange, todayGtfsDate } from '../utils/gtfs-date';
+import { CONFIG } from '../config';
 import { normalizeAgencyId } from '../utils/agency-helpers';
 import { feedBounds, trimOrExtendServices } from '../utils/feed-bounds';
 import {
@@ -101,6 +113,22 @@ import {
 } from '../utils/entity-references';
 import { introHtml } from '../intro';
 import { t } from '../i18n/messages';
+
+/** The home panel's issues section; `data-pending` until validation lands. */
+const HOME_ISSUES_ID = 'home-issues';
+const HOME_SERVICES_LIST_ID = 'home-services-list';
+const HOME_SERVICES_FILTER_ID = 'home-services-filter';
+const HOME_SERVICES_MORE_ID = 'home-services-more';
+
+/** The home services list: every service, and what the list shows of it. */
+interface HomeServices {
+  /** Running today first, then `sortServiceEntries` order. */
+  entries: Array<[string, ServiceData]>;
+  tripCounts: Map<string, number>;
+  span: TimelineSpan | null;
+  filter: string;
+  limit: number;
+}
 
 /** Marks the route page's network picker. */
 const ROUTE_NETWORK_FIELD = 'route-network-field';
@@ -163,8 +191,11 @@ export class PageContentRenderer {
   private zoneViewController: ZoneViewController;
   private locationGroupViewController: LocationGroupViewController;
 
-  // Time the last applyMapFocus took, folded into the renderHome timing line.
+  // Time the last focusMap took, folded into the renderHome timing line.
   private lastMapFocusMs = 0;
+
+  // The services list of the last home render, re-cut by filter and "show more".
+  private homeServices: HomeServices | null = null;
 
   constructor(dependencies: ContentRendererDependencies) {
     this.dependencies = dependencies;
@@ -297,7 +328,10 @@ export class PageContentRenderer {
    * map back to the old object. Skipped outright when page state has moved on
    * since this render was requested.
    */
-  private applyMapFocus(pageState: PageState): void {
+  focusMap(pageState: PageState): void {
+    if (!this.dependencies.feed.isOpen) {
+      return;
+    }
     if (JSON.stringify(getCurrentPageState()) !== JSON.stringify(pageState)) {
       console.log(
         `[PageContentRenderer] stale render for ${pageState.type}, skipping map focus`
@@ -341,7 +375,7 @@ export class PageContentRenderer {
     const focusStart = performance.now();
     // A camera error must not take the sidebar render down with it.
     try {
-      this.applyMapFocus(pageState);
+      this.focusMap(pageState);
     } catch (error) {
       console.error(
         `[PageContentRenderer] map focus failed for ${pageState.type}:`,
@@ -425,20 +459,20 @@ export class PageContentRenderer {
    * Render home page (feed info and agencies list)
    */
   private async renderHome(): Promise<string> {
-    const t0 = performance.now();
-
-    // Edits since the last pass are not reflected in the published issues.
-    await refreshFeedIssuesIfStale();
-    const tIssues = performance.now();
-
     const feed = this.dependencies.feed;
+    // Fresh boot renders home before any feed is open.
+    if (!feed.isOpen) {
+      console.log('[PageContentRenderer] renderHome: no feed open');
+      this.homeServices = null;
+      return `<div class="p-4"><div class="text-center py-6 opacity-70">${t('page.noFeedOpen')}</div></div>`;
+    }
+    const t0 = performance.now();
     const agencies = feed.table('agency');
 
     // Get feed_info data
     const feedInfo = this.getFeedInfo();
     const tMeta = performance.now();
 
-    // Every service in the feed, rendered as the shared timeline
     const serviceData = await loadServiceData(feed);
     const serviceCount = serviceData.size;
     const tServices = performance.now();
@@ -472,28 +506,28 @@ export class PageContentRenderer {
       .join('');
 
     const tTimelineStart = performance.now();
-    const timelineHtml =
+    const servicesHtml =
       serviceCount === 0
         ? ''
-        : renderServiceTimeline(serviceData, { tripCounts });
+        : this.renderHomeServices(serviceData, tripCounts);
     const tTimeline = performance.now();
 
-    const feedIssues = getFeedIssues();
-    // Only worth encouraging export once there is something to export, and
-    // nothing left to clean up first.
     const feedIsEmpty = !Object.values(await feed.read('counts')).some(
       (n) => n > 0
     );
-    const cleanFeedEncouragement =
-      !feedIsEmpty && feedIssues.every((row) => row.count === 0);
+    // Validation of a large feed takes seconds to minutes, so the issues
+    // section fills in on its own once the pass lands (fillHomeIssues).
+    const issuesPending = feedIssuesNeedRefresh();
+    const issuesHtml = issuesPending
+      ? `<div class="flex items-center gap-2 text-sm opacity-70"><span class="loading loading-spinner loading-sm"></span>${t('page.issuesChecking')}</div>`
+      : this.renderHomeIssues(feedIsEmpty);
 
     const html = `
       <div class="p-4 space-y-4">
         ${feedIsEmpty ? `<div class="card bg-base-100 shadow-lg"><div class="card-body p-4">${introHtml()}</div></div>` : ''}
         ${await this.renderFeedInfoProperties(feedInfo)}
 
-        ${renderIssueCard(t('page.feedIssues'), feedIssues)}
-        ${cleanFeedEncouragement ? this.renderCleanFeedEncouragement() : ''}
+        <div id="${HOME_ISSUES_ID}" class="space-y-4"${issuesPending ? ` data-pending="${feedIsEmpty ? 'empty' : 'data'}"` : ''}>${issuesHtml}</div>
 
         <div class="space-y-4">
           <div class="flex items-center justify-between gap-4">
@@ -561,7 +595,7 @@ export class PageContentRenderer {
                 </div>`
               : `<div class="card bg-base-100 shadow-lg">
                   <div class="card-body p-4">
-                    ${timelineHtml}
+                    ${servicesHtml}
                   </div>
                 </div>`
           }
@@ -571,18 +605,204 @@ export class PageContentRenderer {
     `;
 
     console.log(
-      `[PageContentRenderer] renderHome: issues=${Math.round(tIssues - t0)}ms ` +
-        `meta=${Math.round(tMeta - tIssues)}ms ` +
+      `[PageContentRenderer] renderHome: ` +
+        `meta=${Math.round(tMeta - t0)}ms ` +
         `services=${Math.round(tServices - tMeta)}ms ` +
         `tripCounts=${Math.round(tTripCounts - tServices)}ms ` +
         `timeline=${Math.round(tTimeline - tTimelineStart)}ms ` +
         `mapFocus=${Math.round(this.lastMapFocusMs)}ms ` +
-        `total=${Math.round(tTimeline - t0)}ms ` +
+        `total=${Math.round(performance.now() - t0)}ms ` +
         `services=${serviceCount} agencies=${agencies.length} ` +
+        `issues=${issuesPending ? 'pending' : 'current'} ` +
         `html=${Math.round(html.length / 1024)}kb`
     );
 
     return html;
+  }
+
+  /** The issue card, or the clean-feed note when there is nothing to fix. */
+  private renderHomeIssues(feedIsEmpty: boolean): string {
+    const feedIssues = getFeedIssues();
+    // Only worth encouraging export once there is something to export, and
+    // nothing left to clean up first.
+    const clean = !feedIsEmpty && feedIssues.every((row) => row.count === 0);
+    return `
+      ${renderIssueCard(t('page.feedIssues'), feedIssues)}
+      ${clean ? this.renderCleanFeedEncouragement() : ''}
+    `;
+  }
+
+  /**
+   * Fill a pending home issues section once validation has caught up with the
+   * feed. A section the page has since re-rendered away is left alone: its
+   * replacement fills itself.
+   */
+  private async fillHomeIssues(slot: HTMLElement): Promise<void> {
+    const feedIsEmpty = slot.dataset.pending === 'empty';
+    try {
+      // A pass discarded because the feed moved on leaves the issues stale.
+      do {
+        await refreshFeedIssuesIfStale();
+      } while (slot.isConnected && feedIssuesNeedRefresh());
+    } catch (error) {
+      console.error('[PageContentRenderer] home issues failed:', error);
+      if (slot.isConnected) {
+        slot.innerHTML = this.renderError(t('page.loadFailed'));
+      }
+      return;
+    }
+    if (!slot.isConnected) {
+      console.log('[PageContentRenderer] home re-rendered before its issues');
+      return;
+    }
+    slot.innerHTML = this.renderHomeIssues(feedIsEmpty);
+    delete slot.dataset.pending;
+    installGuideButtons(slot);
+    this.attachIssueCardListeners(slot);
+    console.log('[PageContentRenderer] home issues filled in');
+  }
+
+  /**
+   * The services summary, filter and capped list. The list is re-cut in place
+   * by the filter and "show more", from what is kept in `homeServices`.
+   */
+  private renderHomeServices(
+    data: Map<string, ServiceData>,
+    tripCounts: Map<string, number>
+  ): string {
+    const today = todayGtfsDate();
+    const sorted = sortServiceEntries(data, tripCounts);
+    const active = sorted.filter(([, sd]) =>
+      isServiceActive(sd.calendar, sd.exceptions, today)
+    );
+    const activeIds = new Set(active.map(([sid]) => sid));
+    const entries = [
+      ...active,
+      ...sorted.filter(([sid]) => !activeIds.has(sid)),
+    ];
+
+    let first = '';
+    let last = '';
+    for (const [, sd] of entries) {
+      const b = serviceDateBounds(sd);
+      if (b.first !== '99999999' && (first === '' || b.first < first)) {
+        first = b.first;
+      }
+      if (b.last !== '99999999' && b.last > last) {
+        last = b.last;
+      }
+    }
+
+    // A filter typed before an edit's re-render carries over to the new list.
+    const previous = this.homeServices;
+    this.homeServices = {
+      entries,
+      tripCounts,
+      span: timelineSpan(data),
+      filter: previous?.filter ?? '',
+      limit: previous?.limit ?? CONFIG.HOME_SERVICE_ROWS,
+    };
+
+    const summary = [
+      t('count.services', { count: entries.length }),
+      t('page.servicesActiveToday', { count: active.length }),
+      ...(first && last ? [formatGtfsDateRange(first, last)] : []),
+    ].join(', ');
+
+    return `
+      <div class="space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-sm opacity-70">${escapeHtml(summary)}</div>
+          <input
+            type="search"
+            id="${HOME_SERVICES_FILTER_ID}"
+            class="input input-sm w-56"
+            placeholder="${escapeHtml(t('page.filterServices'))}"
+            value="${escapeHtml(this.homeServices.filter)}"
+          />
+        </div>
+        <div id="${HOME_SERVICES_LIST_ID}">${this.renderHomeServiceList()}</div>
+      </div>
+    `;
+  }
+
+  /** The services matching the filter, up to the current limit. */
+  private renderHomeServiceList(): string {
+    const state = this.homeServices;
+    if (!state) {
+      return '';
+    }
+    const needle = state.filter.trim().toLowerCase();
+    const matching = needle
+      ? state.entries.filter(([sid]) => sid.toLowerCase().includes(needle))
+      : state.entries;
+    if (matching.length === 0) {
+      return `<div class="text-center py-6 opacity-70">${escapeHtml(t('page.noServiceMatch', { filter: state.filter.trim() }))}</div>`;
+    }
+    const shown = matching.slice(0, state.limit);
+    const timeline = renderServiceTimeline(new Map(shown), {
+      tripCounts: state.tripCounts,
+      span: state.span ?? undefined,
+      keepOrder: true,
+    });
+    const remaining = matching.length - shown.length;
+    const more =
+      remaining > 0
+        ? `<div class="flex items-center justify-between gap-2 pt-2 text-sm">
+            <span class="opacity-70">${t('page.servicesShown', { shown: shown.length, total: matching.length })}</span>
+            <button type="button" class="btn btn-xs btn-outline" id="${HOME_SERVICES_MORE_ID}">
+              ${t('page.showMoreServices', { count: Math.min(remaining, CONFIG.HOME_SERVICE_ROWS) })}
+            </button>
+          </div>`
+        : '';
+    return timeline + more;
+  }
+
+  /** Re-cut the home services list in place and wire what it rendered. */
+  private refreshHomeServiceList(list: HTMLElement): void {
+    list.innerHTML = this.renderHomeServiceList();
+    attachServiceTimelineListeners(list, (service_id) => {
+      this.dependencies.onServiceClick?.(service_id);
+    });
+    this.attachHomeServicesMore(list);
+  }
+
+  /** "Show more" under the home services list: one more page of rows. */
+  private attachHomeServicesMore(list: HTMLElement): void {
+    list
+      .querySelector(`#${HOME_SERVICES_MORE_ID}`)
+      ?.addEventListener('click', () => {
+        if (this.homeServices) {
+          this.homeServices.limit += CONFIG.HOME_SERVICE_ROWS;
+          this.refreshHomeServiceList(list);
+        }
+      });
+  }
+
+  /** The home services filter input and "show more", after a home render. */
+  private attachHomeServicesListeners(container: HTMLElement): void {
+    const list = container.querySelector<HTMLElement>(
+      `#${HOME_SERVICES_LIST_ID}`
+    );
+    const input = container.querySelector<HTMLInputElement>(
+      `#${HOME_SERVICES_FILTER_ID}`
+    );
+    if (!list || !input) {
+      return;
+    }
+    this.attachHomeServicesMore(list);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    input.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!this.homeServices || !list.isConnected) {
+          return;
+        }
+        this.homeServices.filter = input.value;
+        this.homeServices.limit = CONFIG.HOME_SERVICE_ROWS;
+        this.refreshHomeServiceList(list);
+      }, CONFIG.HOME_SERVICE_FILTER_DEBOUNCE_MS);
+    });
   }
 
   /**
@@ -938,6 +1158,40 @@ export class PageContentRenderer {
     return values ? network_id : null;
   }
 
+  /** The feed issue card's item links, row actions and "Show all". */
+  private attachIssueCardListeners(root: HTMLElement): void {
+    // Feed issue card items: navigate to the offending object's own page.
+    root.querySelectorAll('[data-issue-nav]').forEach((item) => {
+      item.addEventListener('click', () => navigateToIssueItem(item));
+    });
+
+    // Feed issue card row actions: a fix for that row's group only.
+    root.querySelectorAll('[data-issue-action]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        // The button sits inside a <summary>, which would otherwise toggle.
+        event.preventDefault();
+        event.stopPropagation();
+        void this.runIssueAction(button as HTMLButtonElement);
+      });
+    });
+
+    // Feed issue card "Show all n": the group's full list in a modal.
+    root.querySelectorAll('[data-issue-show-all]').forEach((button) => {
+      button.addEventListener('click', () => {
+        void openModal(
+          {
+            type: 'feed_issues',
+            table: button.getAttribute('data-issue-key') ?? undefined,
+          },
+          {
+            // An action run from the modal changes what the card shows.
+            onClosed: () => this.dependencies.onEntityCreated?.(),
+          }
+        );
+      });
+    });
+  }
+
   addEventListeners(container: HTMLElement): void {
     // Clean-feed encouragement's link into the publishing guide.
     installGuideButtons(container);
@@ -1065,36 +1319,16 @@ export class PageContentRenderer {
       });
     });
 
-    // Feed issue card items: navigate to the offending object's own page.
-    container.querySelectorAll('[data-issue-nav]').forEach((item) => {
-      item.addEventListener('click', () => navigateToIssueItem(item));
-    });
+    this.attachIssueCardListeners(container);
+    this.attachHomeServicesListeners(container);
 
-    // Feed issue card row actions: a fix for that row's group only.
-    container.querySelectorAll('[data-issue-action]').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        // The button sits inside a <summary>, which would otherwise toggle.
-        event.preventDefault();
-        event.stopPropagation();
-        void this.runIssueAction(button as HTMLButtonElement);
-      });
-    });
-
-    // Feed issue card "Show all n": the group's full list in a modal.
-    container.querySelectorAll('[data-issue-show-all]').forEach((button) => {
-      button.addEventListener('click', () => {
-        void openModal(
-          {
-            type: 'feed_issues',
-            table: button.getAttribute('data-issue-key') ?? undefined,
-          },
-          {
-            // An action run from the modal changes what the card shows.
-            onClosed: () => this.dependencies.onEntityCreated?.(),
-          }
-        );
-      });
-    });
+    // The home issues section renders before validation and fills in after.
+    const issuesSlot = container.querySelector<HTMLElement>(
+      `#${HOME_ISSUES_ID}[data-pending]`
+    );
+    if (issuesSlot) {
+      void this.fillHomeIssues(issuesSlot);
+    }
 
     // Route header timetable button
     const openTimetableBtn = container.querySelector('.open-timetable-btn');

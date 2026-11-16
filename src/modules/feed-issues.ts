@@ -520,6 +520,11 @@ export function setFeedIssueRevalidator(next: FeedIssueRevalidator): void {
   revalidator = next;
 }
 
+/** Whether the published issues are behind the feed (a pass is due). */
+export function feedIssuesNeedRefresh(): boolean {
+  return revalidator !== null && revalidator.getStalenessKey() !== validatedKey;
+}
+
 /**
  * Re-run validation if the feed has changed since the issues were published.
  *

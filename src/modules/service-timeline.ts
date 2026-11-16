@@ -41,6 +41,16 @@ export interface ServiceTimelineOptions {
   route_id?: string;
   /** service_id -> trip count. When present, rows gain a trip count column. */
   tripCounts?: Map<string, number>;
+  /** Week axis to draw, instead of the span of `data` (see `timelineSpan`). */
+  span?: TimelineSpan;
+  /** Rows in the map's own order rather than `sortServiceEntries`. */
+  keepOrder?: boolean;
+}
+
+/** First and last day on a timeline's week axis, as epoch ms. */
+export interface TimelineSpan {
+  minTs: number;
+  maxTs: number;
 }
 
 const PALETTE: string[] = [
@@ -230,7 +240,10 @@ const NO_DATE = '99999999';
  * First and last date a service runs: the calendar range widened by any added
  * exception. Removed exceptions (type 2) never extend the range.
  */
-function serviceDateBounds(sd: ServiceData): { first: string; last: string } {
+export function serviceDateBounds(sd: ServiceData): {
+  first: string;
+  last: string;
+} {
   let first = sd.calendar ? String(sd.calendar.start_date) : NO_DATE;
   let last = sd.calendar ? String(sd.calendar.end_date) : '';
   for (const ex of sd.exceptions) {
@@ -344,17 +357,10 @@ function getDaysTooltip(calendar: Record<string, unknown> | null): string {
   return formatDaysOfWeek(calendar);
 }
 
-export function renderServiceTimeline(
-  data: ServiceDataMap,
-  options: ServiceTimelineOptions = {}
-): string {
-  if (data.size === 0) {
-    return `<div class="flex items-center justify-center h-32 text-base-content/50 text-sm">${t('timeline.noData')}</div>`;
-  }
-
+/** Every date of `data`'s calendars and exceptions, or null without any. */
+export function timelineSpan(data: ServiceDataMap): TimelineSpan | null {
   let minTs = Infinity;
   let maxTs = -Infinity;
-
   for (const [, sd] of data) {
     if (sd.calendar) {
       const s = parseGTFSDate(String(sd.calendar.start_date)).getTime();
@@ -378,8 +384,24 @@ export function renderServiceTimeline(
   }
 
   if (!isFinite(minTs) || !isFinite(maxTs)) {
+    return null;
+  }
+  return { minTs, maxTs };
+}
+
+export function renderServiceTimeline(
+  data: ServiceDataMap,
+  options: ServiceTimelineOptions = {}
+): string {
+  if (data.size === 0) {
+    return `<div class="flex items-center justify-center h-32 text-base-content/50 text-sm">${t('timeline.noData')}</div>`;
+  }
+
+  const span = options.span ?? timelineSpan(data);
+  if (!span) {
     return `<div class="flex items-center justify-center h-32 text-base-content/50 text-sm">${t('timeline.noDates')}</div>`;
   }
+  const { minTs, maxTs } = span;
 
   // Snap minDate back to the nearest Sunday
   const dow = new Date(minTs).getUTCDay();
@@ -463,7 +485,10 @@ export function renderServiceTimeline(
     ? ` data-route-id="${escapeHtml(options.route_id)}"`
     : '';
 
-  const rowsHtml = sortServiceEntries(data, options.tripCounts)
+  const entries = options.keepOrder
+    ? [...data.entries()]
+    : sortServiceEntries(data, options.tripCounts);
+  const rowsHtml = entries
     .map(([sid, sd]) => {
       const calStart = sd.calendar ? String(sd.calendar.start_date) : null;
       const calEnd = sd.calendar ? String(sd.calendar.end_date) : null;

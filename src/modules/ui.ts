@@ -294,8 +294,8 @@ export class UIController {
    * Build the map for the feed just loaded, off the load's critical path.
    *
    * The route build walks every shape point and every trip, so awaiting it
-   * inline keeps the progress bar up long after the feed is usable. The
-   * navigation refresh follows it because updateMap clears map focus.
+   * inline keeps the progress bar up long after the feed is usable. The page's
+   * map focus is re-applied after it because updateMap clears it.
    */
   private scheduleMapUpdate(): void {
     // A pending update belongs to the feed that scheduled it. Drop it rather
@@ -305,8 +305,8 @@ export class UIController {
       this.cancelPendingMapUpdate = null;
       console.time('[GTFS] updateMap');
       this.mapController!.updateMap()
-        .then(async () => {
-          await this.browseNavigation?.refresh();
+        .then(() => {
+          this.browseNavigation?.refocusMap();
           console.timeEnd('[GTFS] updateMap');
         })
         .catch((error: unknown) =>
@@ -344,7 +344,8 @@ export class UIController {
     this.updateMapToolButtonState();
   }
 
-  async loadGTFSFile(file: File, { navigateHome = true } = {}) {
+  /** `refresh: false` leaves the post-load refresh to the caller (boot). */
+  async loadGTFSFile(file: File, { navigateHome = true, refresh = true } = {}) {
     try {
       console.log('Loading GTFS file:', file.name);
 
@@ -366,7 +367,9 @@ export class UIController {
         );
       }
 
-      await this.refreshAfterFeedSwap({ navigateHome });
+      if (refresh) {
+        await this.refreshAfterFeedSwap({ navigateHome });
+      }
 
       // Populate the file list without opening the Files modal
       this.showFileList();
@@ -574,7 +577,11 @@ export class UIController {
       return 'empty';
     }
     if (result) {
-      await this.loadSelection(result.selection, { navigateHome: false });
+      // Boot runs the one post-load refresh once the URL's page state is in.
+      await this.loadSelection(result.selection, {
+        navigateHome: false,
+        refresh: false,
+      });
       return 'loaded';
     }
     return activeId && !deleted.has(activeId) ? { stored: activeId } : 'empty';
@@ -586,7 +593,7 @@ export class UIController {
    */
   async loadSelection(
     selection: FeedSelection,
-    options: { navigateHome?: boolean } = {}
+    options: { navigateHome?: boolean; refresh?: boolean } = {}
   ) {
     this.currentSelection = selection;
     const src = selection.scheduled;
@@ -615,9 +622,15 @@ export class UIController {
     url: string,
     {
       navigateHome = true,
+      refresh = true,
       sourceUrl = url,
       label = url,
-    }: { navigateHome?: boolean; sourceUrl?: string; label?: string } = {}
+    }: {
+      navigateHome?: boolean;
+      refresh?: boolean;
+      sourceUrl?: string;
+      label?: string;
+    } = {}
   ) {
     try {
       console.log('Loading GTFS from URL:', url);
@@ -633,7 +646,9 @@ export class UIController {
         );
       }
 
-      await this.refreshAfterFeedSwap({ navigateHome });
+      if (refresh) {
+        await this.refreshAfterFeedSwap({ navigateHome });
+      }
 
       notify.success(t('load.loadedUrl'));
     } catch (error) {
