@@ -7,6 +7,8 @@ import {
   MapGeoJSONFeature,
 } from 'maplibre-gl';
 import { MapMode } from './map-controller';
+import { STOPS_SOURCE_LAYER } from './map-tile-protocol';
+import { STOPS_SOURCE } from 'gtfs-zone-web-common/map/layer-specs';
 import type { EditorFeed } from '../feed/editor-feed';
 import { insertOp } from '../feed/patch-build';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
@@ -25,6 +27,9 @@ import { t } from '../i18n/messages';
 /** The marker shown while the New stop modal is open. */
 const PENDING_STOP_SOURCE = 'pending-stop';
 const PENDING_STOP_LAYER = 'pending-stop';
+/** The marker that follows the pointer while a stop is dragged. */
+const DRAG_STOP_SOURCE = 'drag-stop';
+const DRAG_STOP_LAYER = 'drag-stop';
 
 export interface InteractionCallbacks {
   onRouteClick?: (route_id: string) => void;
@@ -54,8 +59,8 @@ export class InteractionHandler {
   // Whether an inline editor was open when the current press started
   private hadLiveEditorOnPress = false;
 
-  // Local copy of stops GeoJSON for drag: avoids reading MapLibre's private _data
-  private stopsGeoJSON: GeoJSON.FeatureCollection | null = null;
+  // Where the dragged stop is now; null until the pointer moves
+  private dragPosition: [number, number] | null = null;
 
   // Callback to retrieve the currently expanded station id from MapController
   private getExpandedStationId: (() => string | null) | null = null;
@@ -77,10 +82,6 @@ export class InteractionHandler {
    */
   public setCallbacks(callbacks: Partial<InteractionCallbacks>): void {
     this.callbacks = { ...this.callbacks, ...callbacks };
-  }
-
-  public setStopsGeoJSON(data: GeoJSON.FeatureCollection): void {
-    this.stopsGeoJSON = data;
   }
 
   public setGetExpandedStationId(fn: () => string | null): void {
@@ -573,26 +574,7 @@ export class InteractionHandler {
       return;
     }
 
-    // Update the stop position in the GeoJSON source
-    const source = this.map.getSource('stops') as GeoJSONSource;
-    if (!source || !this.stopsGeoJSON) {
-      return;
-    }
-
-    const data = this.stopsGeoJSON;
-
-    // Find and update the feature coordinates
-    const featureIndex = data.features.findIndex(
-      (f) => f.properties && f.properties.stop_id === this.draggedStopId
-    );
-
-    if (featureIndex !== -1) {
-      (data.features[featureIndex].geometry as GeoJSON.Point).coordinates = [
-        e.lngLat.lng,
-        e.lngLat.lat,
-      ];
-      source.setData(data);
-    }
+    this.moveDragMarker(e.lngLat.lng, e.lngLat.lat);
   }
 
   /**
@@ -603,26 +585,16 @@ export class InteractionHandler {
       return;
     }
 
-    const source = this.map.getSource('stops') as GeoJSONSource;
-    if (!source || !this.stopsGeoJSON) {
-      return;
-    }
-
-    const data = this.stopsGeoJSON;
-    const finalPosition = data.features.find(
-      (f) => f.properties && f.properties.stop_id === this.draggedStopId
-    );
-
-    if (finalPosition && this.callbacks.onStopDragComplete) {
-      const [lng, lat] = (finalPosition.geometry as GeoJSON.Point).coordinates;
+    // A press without a move leaves the stop where it was.
+    if (this.dragPosition && this.callbacks.onStopDragComplete) {
+      const [lng, lat] = this.dragPosition;
       console.log(`Stop ${this.draggedStopId} moved to: ${lat}, ${lng}`);
-
-      // Notify callback about the drag completion
       this.callbacks.onStopDragComplete(this.draggedStopId, lat, lng);
     }
 
     // Clean up drag state
     this.setStopDragState(this.draggedStopId, false);
+    this.removeDragMarker();
     this.draggedStopId = null;
     this.isDragging = false;
     this.updateCursor(this.currentMode);
@@ -672,25 +644,7 @@ export class InteractionHandler {
     }
 
     e.preventDefault();
-
-    const source = this.map.getSource('stops') as GeoJSONSource;
-    if (!source || !this.stopsGeoJSON) {
-      return;
-    }
-
-    const data = this.stopsGeoJSON;
-
-    const featureIndex = data.features.findIndex(
-      (f) => f.properties && f.properties.stop_id === this.draggedStopId
-    );
-
-    if (featureIndex !== -1) {
-      (data.features[featureIndex].geometry as GeoJSON.Point).coordinates = [
-        e.lngLat.lng,
-        e.lngLat.lat,
-      ];
-      source.setData(data);
-    }
+    this.moveDragMarker(e.lngLat.lng, e.lngLat.lat);
   }
 
   /**
@@ -701,12 +655,53 @@ export class InteractionHandler {
   }
 
   /**
+   * Draw the dragged stop at the pointer. The stop's own circle stays in the
+   * tiles until the drop's edit re-indexes them.
+   */
+  private moveDragMarker(lng: number, lat: number): void {
+    this.dragPosition = [lng, lat];
+    const data: GeoJSON.Feature = {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [lng, lat] },
+      properties: {},
+    };
+    const source = this.map.getSource(DRAG_STOP_SOURCE) as
+      GeoJSONSource | undefined;
+    if (source) {
+      source.setData(data);
+      return;
+    }
+    this.map.addSource(DRAG_STOP_SOURCE, { type: 'geojson', data });
+    this.map.addLayer({
+      id: DRAG_STOP_LAYER,
+      type: 'circle',
+      source: DRAG_STOP_SOURCE,
+      paint: {
+        'circle-radius': 7,
+        'circle-color': resolveThemeColor('--color-primary', '#3b82f6'),
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+      },
+    });
+  }
+
+  private removeDragMarker(): void {
+    this.dragPosition = null;
+    if (this.map.getLayer(DRAG_STOP_LAYER)) {
+      this.map.removeLayer(DRAG_STOP_LAYER);
+    }
+    if (this.map.getSource(DRAG_STOP_SOURCE)) {
+      this.map.removeSource(DRAG_STOP_SOURCE);
+    }
+  }
+
+  /**
    * Set visual feedback for stop dragging
    */
   private setStopDragState(stop_id: string, isDragging: boolean): void {
     try {
       this.map.setFeatureState(
-        { source: 'stops', id: stop_id },
+        { source: STOPS_SOURCE, sourceLayer: STOPS_SOURCE_LAYER, id: stop_id },
         { dragging: isDragging }
       );
     } catch (error) {

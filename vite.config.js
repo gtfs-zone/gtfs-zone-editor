@@ -65,7 +65,7 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    include: ['maplibre-gl', 'codemirror', 'jszip', 'papaparse'],
+    include: ['maplibre-gl', '@maplibre/geojson-vt', '@maplibre/vt-pbf', 'codemirror', 'jszip', 'papaparse'],
     // gtfs-zone-web-common ships raw .ts; let vite transform it as source
     exclude: ['gtfs-zone-web-common']
   }

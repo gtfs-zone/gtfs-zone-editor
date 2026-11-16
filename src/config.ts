@@ -86,11 +86,13 @@ export const CONFIG = {
   // Route lines: Douglas-Peucker tolerance in degrees applied in the worker
   // before the lines reach the map (1e-5 is about 1m).
   ROUTE_LINE_SIMPLIFY_DEG: 1e-5,
-  // Routes GeoJSON source: deepest zoom tiled (deeper zooms overscale it),
-  // simplification in tile pixels and tile buffer.
-  ROUTES_SOURCE_MAXZOOM: 14,
-  ROUTES_SOURCE_TOLERANCE: 0.5,
-  ROUTES_SOURCE_BUFFER: 64,
+  // Map vector tiles cut in the feed worker: deepest zoom tiled per layer
+  // (deeper zooms overscale it), line simplification in tile pixels, and tile
+  // buffer in tile pixels (of 4096).
+  MAP_ROUTES_MAXZOOM: 14,
+  MAP_STOPS_MAXZOOM: 18,
+  MAP_TILE_TOLERANCE: 0.5,
+  MAP_TILE_BUFFER: 64,
 
   // Stop layers: lowest zoom drawn once the zoom fade is on (see
   // STOP_FADE_MIN_STOPS). Below it the fade already hides every stop but the

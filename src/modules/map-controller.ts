@@ -9,6 +9,7 @@ import {
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
+import { registerMapTileProtocol } from './map-tile-protocol';
 import { RouteRenderer } from './route-renderer';
 import { DEFAULT_STOPS_FILTER, LayerManager } from './layer-manager';
 import {
@@ -354,15 +355,11 @@ export class MapController {
     }
 
     // Initialize modules
+    registerMapTileProtocol(this.feed);
     this.layerManager = new LayerManager(this.map, this.feed);
     this.routeRenderer = new RouteRenderer(this.map, this.feed);
     this.interactionHandler = new InteractionHandler(this.map, this.feed);
     this.basemapControl = new BasemapControl(this.map);
-
-    // Keep InteractionHandler's GeoJSON cache in sync with LayerManager
-    this.layerManager.onStopsDataUpdated = (data) => {
-      this.interactionHandler?.setStopsGeoJSON(data);
-    };
 
     // Let InteractionHandler read the expanded station id for contextual stop creation
     this.interactionHandler.setGetExpandedStationId(() =>

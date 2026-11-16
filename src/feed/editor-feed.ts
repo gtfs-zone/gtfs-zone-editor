@@ -48,7 +48,7 @@ import type {
 } from './feed-worker-api';
 import { batch, patchTargets } from './patch-build';
 import type { ValidateStep } from './feed-validate';
-import type { RouteLines } from './route-lines';
+import type { MapRoutesBuilt, MapTileLayer } from './map-tiles';
 
 /** Store methods that write: edits go through patches instead. */
 type StoreWrites =
@@ -387,9 +387,24 @@ export class EditorFeed {
     return this.requireClient().call('shapeUsage');
   }
 
-  /** Every route's simplified map lines and bounds (built in the worker). */
-  routeLines(): Promise<RouteLines[]> {
-    return this.requireClient().call('routeLines');
+  /** Re-index the map's route lines in the worker; each route's bounds. */
+  mapRoutes(): Promise<MapRoutesBuilt> {
+    return this.requireClient().call('mapRoutes');
+  }
+
+  /** Re-index the map's stops in the worker. */
+  mapStops(): Promise<{ stops: number }> {
+    return this.requireClient().call('mapStops');
+  }
+
+  /** One map tile as MVT bytes, or null when empty (see `mapRoutes`). */
+  mapTile(
+    layer: MapTileLayer,
+    z: number,
+    x: number,
+    y: number
+  ): Promise<Uint8Array | null> {
+    return this.requireClient().call('mapTile', layer, z, x, y);
   }
 
   /** The whole feed as a GTFS zip, built in the worker (see `exportZip`). */

@@ -57,6 +57,8 @@
   },
   "dependencies": {
     "@leeoniya/ufuzzy": "^1.0.19",
+    "@maplibre/geojson-vt": "^6.1.1",
+    "@maplibre/vt-pbf": "^4.3.2",
     "@tailwindcss/postcss": "^4.3.3",
     "clusterize.js": "^1.0.0",
     "daisyui": "^5.7.46",

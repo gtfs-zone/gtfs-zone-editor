@@ -1,13 +1,14 @@
 import { Map as MapLibreMap } from 'maplibre-gl';
-import type { ExpressionSpecification, GeoJSONSource } from 'maplibre-gl';
+import type { ExpressionSpecification } from 'maplibre-gl';
 import type { EditorFeed } from '../feed/editor-feed';
 import { CONFIG } from '../config';
-import { routeSortKey } from 'gtfs-zone-web-common/gtfs/route-sort';
 import { ensureMapIcons } from 'gtfs-zone-web-common/map/icons';
+import { routeColor as deriveRouteColor } from 'gtfs-zone-web-common/gtfs/route-colors';
 import {
-  routeColor as deriveRouteColor,
-  casingColor as deriveCasingColor,
-} from 'gtfs-zone-web-common/gtfs/route-colors';
+  ROUTES_SOURCE_LAYER,
+  mapTileUrl,
+  setSourceTiles,
+} from './map-tile-protocol';
 import {
   NO_ROUTE_FILTER,
   ROUTES_BACKGROUND_LAYER,
@@ -31,28 +32,13 @@ import {
   routeLabelText,
 } from 'gtfs-zone-web-common/map/route-labels';
 
-/** Only what the paint expressions and labels read; names come from the mirror. */
-interface RouteFeature extends GeoJSON.Feature {
-  id: number;
-  geometry: GeoJSON.LineString;
-  properties: {
-    route_id: string;
-    color: string;
-    colorDark: string;
-    // line-sort-key: mode rank blended with the route's line count. Every
-    // feature of a route carries the same value, so a route's segments never
-    // reorder against each other. See route-sort.ts.
-    sortKey: number;
-  };
-}
-
 const ROUTE_LINE_WIDTH = zoomWidth(ROUTE_WIDTH_STOPS, null, 1);
 const ROUTE_CASING_WIDTH = zoomWidth(ROUTE_CASING_WIDTH_STOPS, null, 1);
 
 /**
- * Draws every route's distinct lines, built and simplified in the feed worker
- * (`routeLines`). Any change that can move a line rebuilds them all. Only the
- * per-route bounds are kept here once the lines are handed to MapLibre.
+ * Draws every route's distinct lines as vector tiles cut in the feed worker
+ * (`mapRoutes`, `mapTile`). Any change that can move a line re-indexes them
+ * all. Only the per-route bounds are kept here.
  */
 export class RouteRenderer {
   private map: MapLibreMap;
@@ -122,20 +108,16 @@ export class RouteRenderer {
     }
 
     this.map.addSource(ROUTES_SOURCE, {
-      type: 'geojson',
-      data: {
-        type: 'FeatureCollection',
-        features: [],
-      },
-      maxzoom: CONFIG.ROUTES_SOURCE_MAXZOOM,
-      tolerance: CONFIG.ROUTES_SOURCE_TOLERANCE,
-      buffer: CONFIG.ROUTES_SOURCE_BUFFER,
+      type: 'vector',
+      tiles: [mapTileUrl(null)],
+      maxzoom: CONFIG.MAP_ROUTES_MAXZOOM,
     });
 
     this.map.addLayer({
       id: ROUTES_CASING_LAYER,
       type: 'line',
       source: ROUTES_SOURCE,
+      'source-layer': ROUTES_SOURCE_LAYER,
       paint: {
         'line-color': ['get', 'colorDark'],
         'line-width': ROUTE_CASING_WIDTH,
@@ -152,6 +134,7 @@ export class RouteRenderer {
       id: ROUTES_BACKGROUND_LAYER,
       type: 'line',
       source: ROUTES_SOURCE,
+      'source-layer': ROUTES_SOURCE_LAYER,
       paint: {
         'line-color': ['get', 'color'],
         'line-width': ROUTE_LINE_WIDTH,
@@ -172,6 +155,7 @@ export class RouteRenderer {
       id: ROUTES_DIRECTION_LAYER,
       type: 'symbol',
       source: ROUTES_SOURCE,
+      'source-layer': ROUTES_SOURCE_LAYER,
       filter: NO_ROUTE_FILTER,
       layout: {
         'symbol-placement': 'line',
@@ -213,6 +197,7 @@ export class RouteRenderer {
       id: ROUTES_CLICKAREA_LAYER,
       type: 'line',
       source: ROUTES_SOURCE,
+      'source-layer': ROUTES_SOURCE_LAYER,
       paint: {
         'line-color': 'transparent',
         'line-width': 15,
@@ -229,93 +214,64 @@ export class RouteRenderer {
 
     // Every route's name until some are spotlighted; applySpotlight owns the
     // filter.
-    this.map.addLayer(routeLabelLayerSpec(ROUTES_SOURCE));
+    this.map.addLayer({
+      ...routeLabelLayerSpec(ROUTES_SOURCE),
+      'source-layer': ROUTES_SOURCE_LAYER,
+    });
     this.map.setFilter(ROUTE_LABELS_LAYER, null);
 
     this.initialized = true;
     console.log('[RouteRenderer] Layers initialized');
   }
 
-  /** Build every route's lines in the worker and draw them. */
+  /** Re-index every route's lines in the worker and draw them. */
   public async renderRoutes(): Promise<void> {
     await this.ensureInitialized();
     const seq = ++this.buildSeq;
     if (!this.feed.isOpen) {
-      this.setFeatures([], new Map());
+      this.setTiles(null, new Map());
       return;
     }
     const t0 = performance.now();
-    const geometries = await this.feed.routeLines();
+    const built = await this.feed.mapRoutes();
     if (seq !== this.buildSeq) {
       console.log('[RouteRenderer] build superseded');
       return;
     }
-    const features: RouteFeature[] = [];
     const labels = new Map<
       string,
       { short?: string; long?: string; color: string }
     >();
     const bounds = new Map<string, [number, number, number, number]>();
-    for (const geometry of geometries) {
-      const route = this.feed.byKey('routes', geometry.routeId);
+    for (const [route_id, bbox] of Object.entries(built.bounds)) {
+      const route = this.feed.byKey('routes', route_id);
       if (!route) {
         continue;
       }
-      bounds.set(route.route_id, geometry.bbox);
-      const color = deriveRouteColor(route.route_id, route.route_color);
-      const colorDark = deriveCasingColor(color);
-      const lineCount = geometry.lineStarts.length;
-      const sortKey = routeSortKey(route.route_type, lineCount);
-      labels.set(route.route_id, {
+      bounds.set(route_id, bbox);
+      labels.set(route_id, {
         short: route.route_short_name,
         long: route.route_long_name,
-        color,
+        color: deriveRouteColor(route.route_id, route.route_color),
       });
-      for (let i = 0; i < lineCount; i++) {
-        const from = geometry.lineStarts[i];
-        const to =
-          i + 1 < lineCount
-            ? geometry.lineStarts[i + 1]
-            : geometry.coords.length / 2;
-        const coordinates: [number, number][] = [];
-        for (let p = from; p < to; p++) {
-          coordinates.push([
-            geometry.coords[p * 2],
-            geometry.coords[p * 2 + 1],
-          ]);
-        }
-        features.push({
-          type: 'Feature',
-          id: features.length,
-          geometry: { type: 'LineString', coordinates },
-          properties: {
-            route_id: route.route_id,
-            color,
-            colorDark,
-            sortKey,
-          },
-        });
-      }
     }
     if (this.map.style) {
       clearRouteLabelImages(this.map);
     }
     this.routeLabels = labels;
-    this.setFeatures(features, bounds);
+    this.setTiles('routes', bounds);
     console.log(
-      `[RouteRenderer] ${features.length} lines for ${labels.size} routes in ${Math.round(performance.now() - t0)}ms`
+      `[RouteRenderer] ${built.lines} lines for ${labels.size} routes in ${Math.round(performance.now() - t0)}ms`
     );
   }
 
-  private setFeatures(
-    features: RouteFeature[],
+  /** Point the source at a fresh tile generation, or at no tiles. */
+  private setTiles(
+    layer: 'routes' | null,
     bounds: Map<string, [number, number, number, number]>
   ): void {
     this.routeBounds = bounds;
-    const source = this.map.getSource(ROUTES_SOURCE) as
-      GeoJSONSource | undefined;
-    source?.setData({ type: 'FeatureCollection', features });
-    this.map.triggerRepaint();
+    setSourceTiles(this.map, ROUTES_SOURCE, mapTileUrl(layer));
   }
 
   public clearRoutes(): void {
@@ -324,7 +280,7 @@ export class RouteRenderer {
       clearRouteLabelImages(this.map);
     }
     this.routeLabels = new Map();
-    this.setFeatures([], new Map());
+    this.setTiles(null, new Map());
   }
 
   /**
