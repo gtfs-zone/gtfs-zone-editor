@@ -33,8 +33,8 @@ importers:
         specifier: github:gtfs-zone/gtfs-zone-vocab#v0.2.0
         version: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be
       gtfs-zone-web-common:
-        specifier: github:gtfs-zone/gtfs-zone-web-common#v6.3.0
-        version: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/05388f3095297c50126d23b23c93c13b98dcef23(@leeoniya/ufuzzy@1.0.19)(@maplibre/geojson-vt@6.1.1)(@maplibre/vt-pbf@4.3.2)(fflate@0.8.3)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be)(maplibre-gl@6.11.2)(papaparse@5.7.0)
+        specifier: github:gtfs-zone/gtfs-zone-web-common#v6.4.0
+        version: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/52f8c7931bf645a6d061029353f80c9559b3eb80(@leeoniya/ufuzzy@1.0.19)(@maplibre/geojson-vt@6.1.1)(@maplibre/vt-pbf@4.3.2)(fflate@0.8.3)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be)(maplibre-gl@6.11.2)(papaparse@5.7.0)
       idb:
         specifier: ^8.0.3
         version: 8.0.3
@@ -1131,9 +1131,9 @@ packages:
     resolution: {gitHosted: true, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be}
     version: 0.2.0
 
-  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/05388f3095297c50126d23b23c93c13b98dcef23:
-    resolution: {gitHosted: true, integrity: sha512-RgrnVXdxuCmiWAb5dku0v0+5nX9f+xZV8BeMCV9CWSQVw4OJ9xK64v6iifStNZ2bR9rMbTk98MAX9Dt5kxiwbw==, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/05388f3095297c50126d23b23c93c13b98dcef23}
-    version: 6.3.0
+  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/52f8c7931bf645a6d061029353f80c9559b3eb80:
+    resolution: {gitHosted: true, integrity: sha512-DLEdmGxPdxrXXuczWYchUOgSbk7L8m53p+vossf9Zk9xWWTewpmVit+/NejwkOBbD0K3rysJIXMl79bunzsM5Q==, tarball: https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/52f8c7931bf645a6d061029353f80c9559b3eb80}
+    version: 6.4.0
     peerDependencies:
       '@leeoniya/ufuzzy': '*'
       '@maplibre/geojson-vt': '*'
@@ -2513,7 +2513,7 @@ snapshots:
 
   gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be: {}
 
-  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/05388f3095297c50126d23b23c93c13b98dcef23(@leeoniya/ufuzzy@1.0.19)(@maplibre/geojson-vt@6.1.1)(@maplibre/vt-pbf@4.3.2)(fflate@0.8.3)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be)(maplibre-gl@6.11.2)(papaparse@5.7.0):
+  gtfs-zone-web-common@https://codeload.github.com/gtfs-zone/gtfs-zone-web-common/tar.gz/52f8c7931bf645a6d061029353f80c9559b3eb80(@leeoniya/ufuzzy@1.0.19)(@maplibre/geojson-vt@6.1.1)(@maplibre/vt-pbf@4.3.2)(fflate@0.8.3)(gtfs-zone-vocab@https://codeload.github.com/gtfs-zone/gtfs-zone-vocab/tar.gz/341ec43a9b0b7cd179e53ce9ae371c4a0cf1b4be)(maplibre-gl@6.11.2)(papaparse@5.7.0):
     dependencies:
       '@leeoniya/ufuzzy': 1.0.19
       '@maplibre/geojson-vt': 6.1.1
