@@ -1,7 +1,7 @@
 # AGENTS.md
 
 **GTFS.zone** is a browser-based GTFS transit data editor, inspired by geojson.io.
-It is a client-only SPA: no backend, all data stays in the browser via IndexedDB.
+It is a client-only SPA: no backend, all data stays in the browser (OPFS and IndexedDB).
 
 ## Commands
 
@@ -13,7 +13,7 @@ pnpm vuln         # osv-scanner vulnerability gate
 
 ## Architecture
 
-`GTFSEditor` in `src/index.ts` instantiates every module in `src/modules/` and wires them together via constructor injection and callbacks (no DI framework). There is no central store: GTFS data lives in IndexedDB (`GTFSDatabase`), navigation in the URL hash (`PageStateManager`), and everything else in the controller that owns it. Module groups and the state model are in [docs/architecture.md](docs/architecture.md).
+`GTFSEditor` in `src/index.ts` instantiates every module in `src/modules/` and wires them together via constructor injection and callbacks (no DI framework). There is no central store: GTFS data lives in the feed worker (`EditorFeed` in `src/feed/`), navigation in the URL hash (`PageStateManager`), and everything else in the controller that owns it. Module groups and the state model are in [docs/architecture.md](docs/architecture.md).
 
 App-wide tunables live in `CONFIG` in `src/config.ts`. GTFS types and their Zod schemas are in `src/types/`; use Zod for any new field validation.
 
@@ -23,7 +23,7 @@ Modules shared with the two realtime apps live in the `gtfs-zone-web-common` pac
 
 A shared change is a commit in gtfs-zone-web-common, a tag, and a bump in each consumer. It is not edited here.
 
-Restart the dev server after a bump. The alias resolves through a pnpm symlink into the store, and Vite does not watch `node_modules`, so files whose transform is still cached keep importing the old store path: the page then holds two copies of a shared module, each with its own module-level state. gtfs-zone-web-common's `util/module-state` keeps that from corrupting anything and logs `loaded twice`.
+The dev server restarts itself when `pnpm-lock.yaml` changes (`restartOnLockfile` in `vite.config.js`). The alias resolves through a pnpm symlink into the store, and Vite does not watch `node_modules`, so without a restart files whose transform is still cached (the shared stylesheet's `@import` included) keep importing the old store path: the page then holds two copies of a shared module, each with its own module-level state. gtfs-zone-web-common's `util/module-state` keeps that from corrupting anything and logs `loaded twice`.
 
 ### Spec layer
 
@@ -40,7 +40,7 @@ Restart the dev server after a bump. The alias resolves through a pnpm symlink i
 Invariants (details in [docs/architecture.md](docs/architecture.md)):
 
 - [Every user edit goes through the patch system](docs/architecture.md#patch-system).
-- [Virtual table queries return copies](docs/architecture.md#copy-on-read), not live rows.
+- [Mirror rows are frozen](docs/architecture.md#frozen-rows); copy before mutating.
 - [Networks are canonical as `networks` + `route_networks`](docs/architecture.md#networks); never write `routes.network_id` outside export.
 - [Spec additions go in an overlay](docs/architecture.md#spec-overlays), never in `src/gtfs-spec/files/*.ts`.
 - [Extension fields are derived from row data](docs/architecture.md#extension-fields), never hardcoded or added to the Zod schemas.

@@ -9,7 +9,7 @@
  * So an extension column is *derived from the data*, not configured: a column
  * exists because rows have that key. The one case data-derivation cannot
  * express is a column the user just created and has not filled in yet, so that
- * single case is mirrored from the `meta` store into `added` below.
+ * single case is kept in the feed state (`EditorFeed.extensionColumns`).
  *
  * Fields an overlay adds to a base file (Google's `trip_direction_name`, ...)
  * follow the same rule to decide whether they show, but render with their
@@ -26,29 +26,25 @@ import { t } from '../i18n/messages';
 export const EXTENSION_FIELD_DESCRIPTION = t('field.extensionDescription');
 
 export interface ExtensionColumnStore {
-  getExtensionColumns(): Promise<Record<string, string[]>>;
+  readonly extensionColumns: Readonly<Record<string, readonly string[]>>;
   setExtensionColumns(columns: Record<string, string[]>): Promise<void>;
 }
 
 let store: ExtensionColumnStore | null = null;
 
-/** User-added column names per table, mirrored from the `meta` store. */
-let added: Record<string, string[]> = {};
+/** User-added column names per table, read from the open feed. */
+function addedColumns(): Readonly<Record<string, readonly string[]>> {
+  try {
+    return store?.extensionColumns ?? {};
+  } catch {
+    // No feed open.
+    return {};
+  }
+}
 
-/**
- * Read the user-added columns into memory and keep the store for later writes.
- *
- * Called once at boot. `extensionFields` is synchronous because every caller
- * that needs it (column lists, cell renderers) is, so the async read has to
- * happen up front rather than per call.
- */
-export async function loadExtensionColumns(
-  db: ExtensionColumnStore
-): Promise<void> {
-  store = db;
-  added = await db.getExtensionColumns();
-  const count = Object.values(added).reduce((n, list) => n + list.length, 0);
-  console.log(`[ExtensionFields] loaded ${count} user-added column(s)`);
+/** Read and write user-added columns through `feed` from now on. */
+export function bindExtensionColumns(feed: ExtensionColumnStore): void {
+  store = feed;
 }
 
 // ─── Deriving the columns ─────────────────────────────────────────────────────
@@ -59,11 +55,10 @@ const keyMemo = new WeakMap<object, Set<string>>();
  * Every key the rows carry, in order of first appearance.
  *
  * Memoised on the rows array so the several callers per render share one pass.
- * Rows are only ever mutated in place field-by-field, and a key a row gains
- * that way belongs to a column already listed in `added`, so a result keyed on
- * the array's identity cannot go stale.
+ * Feed rows are frozen and a change gives the table a new array, so a result
+ * keyed on the array's identity cannot go stale.
  */
-function rowKeys(rows: Record<string, unknown>[]): Set<string> {
+function rowKeys(rows: readonly Record<string, unknown>[]): Set<string> {
   const cached = keyMemo.get(rows);
   if (cached) {
     return cached;
@@ -86,7 +81,7 @@ function rowKeys(rows: Record<string, unknown>[]): Set<string> {
  */
 export function extensionFields(
   tableName: string,
-  rows: Record<string, unknown>[]
+  rows: readonly Record<string, unknown>[]
 ): string[] {
   const specs = GTFS_FIELD_SPECS[tableName];
   if (!specs) {
@@ -100,7 +95,7 @@ export function extensionFields(
   }
   // A column the user just created has no values in any row yet, so it only
   // exists here.
-  for (const key of added[tableName] ?? []) {
+  for (const key of addedColumns()[tableName] ?? []) {
     if (!(key in specs)) {
       fields.add(key);
     }
@@ -118,19 +113,22 @@ export function extensionFields(
 export function specFieldShown(
   tableName: string,
   field: string,
-  rows: Record<string, unknown>[]
+  rows: readonly Record<string, unknown>[]
 ): boolean {
   const spec = GTFS_FIELD_SPECS[tableName]?.[field];
   if (!spec?.origin) {
     return true;
   }
-  return rowKeys(rows).has(field) || (added[tableName] ?? []).includes(field);
+  return (
+    rowKeys(rows).has(field) ||
+    (addedColumns()[tableName] ?? []).includes(field)
+  );
 }
 
 /** The table's spec fields that show for these rows, in spec order. */
 export function shownSpecFields(
   tableName: string,
-  rows: Record<string, unknown>[]
+  rows: readonly Record<string, unknown>[]
 ): string[] {
   return Object.keys(GTFS_FIELD_SPECS[tableName] ?? {}).filter((field) =>
     specFieldShown(tableName, field, rows)
@@ -140,7 +138,7 @@ export function shownSpecFields(
 /** The overlay fields of a table hidden for these rows, in spec order. */
 export function hiddenOverlayFields(
   tableName: string,
-  rows: Record<string, unknown>[]
+  rows: readonly Record<string, unknown>[]
 ): string[] {
   return Object.keys(GTFS_FIELD_SPECS[tableName] ?? {}).filter(
     (field) => !specFieldShown(tableName, field, rows)
@@ -187,7 +185,7 @@ const VALID_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
  */
 export function validateExtensionColumnName(
   tableName: string,
-  rows: Record<string, unknown>[],
+  rows: readonly Record<string, unknown>[],
   name: string
 ): string | null {
   const trimmed = name.trim();
@@ -229,13 +227,15 @@ export async function addExtensionColumn(
   name: string
 ): Promise<void> {
   const field = name.trim();
-  added = { ...added, [tableName]: [...(added[tableName] ?? []), field] };
-  console.log(`[ExtensionFields] added column ${tableName}.${field}`);
   if (!store) {
-    console.warn(
-      '[ExtensionFields] no store, column will not survive a reload'
-    );
-    return;
+    throw new Error('[ExtensionFields] no feed bound');
   }
-  await store.setExtensionColumns(added);
+  const added = addedColumns();
+  const next: Record<string, string[]> = {};
+  for (const [table, cols] of Object.entries(added)) {
+    next[table] = [...cols];
+  }
+  next[tableName] = [...(next[tableName] ?? []), field];
+  await store.setExtensionColumns(next);
+  console.log(`[ExtensionFields] added column ${tableName}.${field}`);
 }

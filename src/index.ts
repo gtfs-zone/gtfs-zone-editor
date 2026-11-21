@@ -1,17 +1,14 @@
 // Mounts the shell markup; must stay the first import.
 import './shell';
 import { applyZodLocale } from './i18n/zod-locale';
-import { GTFSParser } from './modules/gtfs-parser';
 import { MapController } from './modules/map-controller';
 import { Editor } from './modules/editor';
 import { UIController } from './modules/ui';
 import { BottomSheetController } from 'gtfs-zone-web-common/ui/bottom-sheet';
-import { GTFSRelationships } from './modules/gtfs-relationships';
 import { BrowseNavigation } from './modules/browse-navigation';
-import { InfoDisplay } from './modules/info-display';
 import { SearchController } from 'gtfs-zone-web-common/ui/search-controller';
 import {
-  buildSearchEntries,
+  buildSearchGroups,
   type SearchPayload,
 } from './modules/search-entries';
 import { searchPlaces } from 'gtfs-zone-web-common/map/place-search';
@@ -20,8 +17,6 @@ import {
   refreshFeedIssuesIfStale,
   setFeedIssueRevalidator,
 } from './modules/feed-issues';
-import { showFeedIssuesModal } from './modules/feed-issues-modal';
-import type { EditableTableDeps } from './modules/editable-table';
 import {
   KeyboardShortcuts,
   describeShortcuts,
@@ -46,13 +41,11 @@ import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { showTimetableModal } from './modules/timetable-modal';
 import { showTimetableBrowserModal } from './modules/timetable-browser-modal';
 import type { ModalState, PageState } from './types/page-state';
-import type { PatchRecord } from './types/patch';
-import { PatchManager } from './modules/patch-manager';
 import { HistoryController } from './modules/history-controller';
 import { TabLockController } from './modules/tab-lock';
 import { humanLabel } from './utils/patch-label';
-import { loadExtensionColumns } from './utils/extension-fields';
-import { refreshFeedActiveRange } from './utils/feed-active-range';
+import { bindExtensionColumns } from './utils/extension-fields';
+import { bindFeedActiveRange } from './utils/feed-active-range';
 import { runWhenIdle } from './utils/run-when-idle';
 import {
   setHelpPages,
@@ -74,10 +67,7 @@ import {
   writeZoneFeatures,
   type ZoneFeature,
 } from './modules/zone-store';
-import {
-  showCalendarModal,
-  type CalendarModalDeps,
-} from './modules/calendar-modal';
+import { showCalendarModal } from './modules/calendar-modal';
 import { ShapesManager } from './modules/shapes-manager';
 import { DOCK_ICONS, NAVBAR_ACTIONS } from './modules/navbar-action-list';
 import {
@@ -106,6 +96,17 @@ import threeLegSvg from './assets/gtfs-spec/3-leg.svg';
 import inliningSvg from './assets/gtfs-spec/inlining.svg';
 import './styles/main.css';
 import { t } from './i18n/messages';
+import { EditorFeed } from './feed/editor-feed';
+import {
+  createEmptyFeed,
+  loadFeed,
+  recoverStoredFeedExport,
+  restoreFeed,
+} from './feed/feed-loader';
+import { batch, deleteOp, insertOp, updateOp } from './feed/patch-build';
+import { resetFeedStorage } from './feed/feed-boot';
+import { RouteRefsIndex } from './feed/route-refs';
+import { deleteDatabaseWithTimeout } from './utils/idb-request';
 
 // Reference anchors resolve against the schedule reference, and the three
 // diagrams it embeds are bundled here.
@@ -123,6 +124,8 @@ applyZodLocale();
 declare global {
   interface Window {
     gtfsEditor: GTFSEditor;
+    /** Dev builds: the feed and its loaders, for the console and harnesses. */
+    __feed?: unknown;
   }
   const __APP_VERSION__: string;
 }
@@ -137,12 +140,11 @@ type BootOutcome =
   'restored' | 'created-empty' | 'loaded' | 'nothing-stored' | 'failed';
 
 export class GTFSEditor {
-  public gtfsParser: GTFSParser;
+  public feed = new EditorFeed();
+  public routeRefs = new RouteRefsIndex(this.feed);
   public mapController: MapController;
   public editor: Editor;
   public uiController: UIController;
-  public relationships: GTFSRelationships;
-  public infoDisplay: InfoDisplay;
   public browseNavigation: BrowseNavigation;
   public searchController: SearchController<SearchPayload>;
   public validator: GTFSValidator;
@@ -152,7 +154,6 @@ export class GTFSEditor {
   public serviceDaysController: ServiceDaysController;
   public themeController: ThemeController;
   public pageStateManager: PageStateManager;
-  public patchManager: PatchManager;
   public historyController: HistoryController;
   public navbarCounts: NavbarCounts;
   public tabLock: TabLockController;
@@ -164,25 +165,20 @@ export class GTFSEditor {
   private browseRefreshDeferred = false;
 
   constructor() {
-    this.gtfsParser = new GTFSParser();
+    bindExtensionColumns(this.feed);
+    bindFeedActiveRange(this.feed);
     this.mapController = new MapController();
     this.editor = new Editor();
     this.uiController = new UIController();
-    this.relationships = new GTFSRelationships(this.gtfsParser);
-    this.infoDisplay = new InfoDisplay(this.relationships);
-    this.scheduleController = new ScheduleController(
-      this.relationships,
-      this.gtfsParser
-    );
-    this.serviceDaysController = new ServiceDaysController(this.gtfsParser);
+    this.scheduleController = new ScheduleController(this.feed);
+    this.serviceDaysController = new ServiceDaysController(this.feed);
     this.browseNavigation = new BrowseNavigation(
-      this.relationships,
+      this.feed,
       this.mapController,
-      this.serviceDaysController,
-      this.gtfsParser
+      this.serviceDaysController
     );
     this.searchController = new SearchController<SearchPayload>({
-      getEntries: () => buildSearchEntries(this.gtfsParser),
+      getGroups: () => buildSearchGroups(this.feed),
       getRemoteEntries: (query, signal) =>
         searchPlaces(query, this.mapController.getCenter(), signal),
       onSelect: (payload) => {
@@ -193,88 +189,48 @@ export class GTFSEditor {
         }
       },
     });
-    this.validator = new GTFSValidator(this.gtfsParser);
+    this.validator = new GTFSValidator(this.feed);
     this.shortcutCommands = editorShortcuts(this);
     this.keyboardShortcuts = new KeyboardShortcuts(this.shortcutCommands, () =>
       this.tabLock.isActive()
     );
     this.themeController = new ThemeController();
 
-    // Initialize PageStateManager (will be fully set up after GTFS parser initialization)
-    this.pageStateManager = initializePageStateWithGTFS(
-      this.gtfsParser,
-      this.relationships
-    );
+    this.pageStateManager = initializePageStateWithGTFS(this.feed);
     createModalRouter<ModalState>(this.pageStateManager);
 
-    // PatchManager wires the append-only patch log to the parser's database
-    this.patchManager = new PatchManager(
-      this.gtfsParser.gtfsDatabase,
-      this.gtfsParser
-    );
     // A route_color shared by every route renders as no color. Registered
-    // before the map's patch listeners so its re-render reads the new state.
-    const onRoutesPatch = (r?: PatchRecord) => {
-      const patch = r?.patch;
-      const ops = !patch ? [] : patch.op === 'batch' ? patch.ops : [patch];
-      if (
-        patch &&
-        ops.some((op) => op.source.table === 'routes') &&
-        this.refreshRouteColors()
-      ) {
+    // before the map's edit listener so its re-render reads the new state.
+    this.feed.onEdit((e) => {
+      if (e.kind !== 'change') {
+        this.refreshRouteColors();
+      } else if (e.tables.includes('routes') && this.refreshRouteColors()) {
         // The surgical map update only redraws the edited route.
         this.mapController
           .updateMap()
-          .catch((e: unknown) =>
-            console.error('[GTFSEditor] route color redraw failed:', e)
+          .catch((err: unknown) =>
+            console.error('[GTFSEditor] route color redraw failed:', err)
           );
-      } else if (!patch) {
-        this.refreshRouteColors();
       }
-    };
-    this.patchManager.on('change', onRoutesPatch);
-    this.patchManager.on('undo', onRoutesPatch);
-    this.patchManager.on('redo', onRoutesPatch);
-    this.patchManager.on('jump', onRoutesPatch);
+    });
     // Lets the home panel re-run validation itself when the feed has moved on
     // since the issues it is about to draw were published.
     setFeedIssueRevalidator({
       validate: () => this.validator.validateFeed(),
-      source: this.gtfsParser,
-      getStalenessKey: () =>
-        `${this.gtfsParser.feedGeneration}:${this.patchManager.version}`,
+      source: this.feed,
+      getStalenessKey: () => `${this.feed.feedGeneration}:${this.feed.version}`,
     });
-    // Lets the validator reuse its stop_times passes across an edit that could
-    // not have changed them, instead of re-walking the table every time.
-    this.validator.trackPatches(this.patchManager);
 
     this.historyController = new HistoryController();
-    this.navbarCounts = new NavbarCounts({
-      gtfsParser: this.gtfsParser,
-      patchManager: this.patchManager,
-    });
+    this.navbarCounts = new NavbarCounts(this.feed);
     this.tabLock = new TabLockController();
-    this.levelsController = new LevelsController(this.gtfsParser.gtfsDatabase);
-    this.shapesManager = new ShapesManager(this.gtfsParser, this.patchManager);
+    this.levelsController = new LevelsController(this.feed);
+    this.shapesManager = new ShapesManager(this.feed);
 
     const appContainer = document.querySelector<HTMLElement>('.app-container')!;
     restorePanelWidth(appContainer);
     new PanelResizer(appContainer, this.mapController);
     initFieldTooltipPortal();
-
-    // Inject patchManager so edit operations are recorded
-    this.gtfsParser.setPatchManager(this.patchManager);
-    this.editor.setPatchManager(this.patchManager);
-    this.editor.setTableDeps({
-      gtfsDatabase: this.gtfsParser
-        .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
-      patchManager: this.patchManager,
-    });
-    this.uiController.setPatchManager(this.patchManager);
-    this.levelsController.setPatchManager(this.patchManager);
-    this.browseNavigation.setPatchManager(this.patchManager);
-    this.scheduleController.setPatchManager(this.patchManager);
-    this.serviceDaysController.setPatchManager(this.patchManager);
 
     // Timetable stop column -> map: hover the row to light up whatever it
     // references. A null ref clears all three kinds: the row is already gone,
@@ -345,24 +301,11 @@ export class GTFSEditor {
       // Initialize notification system
       notify.initialize();
 
-      // Initialize GTFSParser database
-      if (CONFIG.DEBUG_BOOT) {
-        console.time('[boot] gtfs-parser.initialize');
-      }
-      await this.gtfsParser.initialize();
-      if (CONFIG.DEBUG_BOOT) {
-        console.timeEnd('[boot] gtfs-parser.initialize');
-      }
-
-      // Non-spec columns are derived from row data, except the ones the user
-      // created and has not filled in, which come from the meta store. Read
-      // them now: every consumer of that list is synchronous.
-      await loadExtensionColumns(this.gtfsParser.gtfsDatabase);
-      feedProgressIndicator.updateProgress(
-        'boot',
-        60,
-        t('boot.restoringPatches')
-      );
+      // The previous storage layer's database holds nothing worth keeping.
+      deleteLegacyDatabase();
+      // A reset from the error modal releases the feed first: its worker
+      // holds the files and the connection the reset deletes.
+      databaseFallbackManager.setConnectionCloser(() => this.feed.release());
 
       const exportBtn = document.getElementById(
         'export-btn'
@@ -372,22 +315,21 @@ export class GTFSEditor {
       }
 
       feedProgressIndicator.updateProgress('boot', 80, t('boot.buildingMap'));
-      this.historyController.initialize(this.patchManager);
+      this.historyController.initialize(this.feed);
       this.navbarCounts.initialize();
 
       // Initialize all modules
-      await this.mapController.initialize(this.gtfsParser, this.patchManager);
+      await this.mapController.initialize(this.feed, this.routeRefs);
       this.mapController.setPageStateManager(this.pageStateManager);
       this.mapController.setCallbacks({
         onEmptyClick: () => {
           this.pageStateManager.setPageState({ type: 'home' });
         },
       });
-      this.editor.initialize(this.gtfsParser);
+      this.editor.initialize(this.feed);
 
-      // Note: InfoDisplay is not used in the new UI structure
       this.uiController.initialize(
-        this.gtfsParser,
+        this.feed,
         this.editor,
         this.mapController,
         this.browseNavigation
@@ -402,123 +344,74 @@ export class GTFSEditor {
       // Initialize search controller
       this.searchController.initialize();
 
-      // A rename re-points the page from inside the commit: the rows are
-      // written, the patch events have not fired yet, so every listener below
-      // re-renders against the new ID rather than the deleted one.
-      this.patchManager.setRenameFollower(({ keyField, from, to }) => {
+      // A rename re-points the page once the mirror holds the new rows and
+      // before the edit listeners run, so every listener below re-renders
+      // against the new ID rather than the deleted one.
+      this.feed.setRenameFollower(({ keyField, from, to }) => {
         this.pageStateManager.followRename(keyField, from, to);
         this.browseNavigation.followRename(keyField, from, to);
         this.scheduleController.followIdRename(keyField, from, to);
       });
 
-      // Wire undo/redo events to refresh editor and browse navigation.
-      // Map updates are handled by MapController's own patch subscription.
-      const refreshAfterUndoRedo = async () => {
-        const openFile = this.editor.getCurrentFile();
-        if (openFile) {
+      // Edits and history moves: refresh the Files grid and the browse panel,
+      // and say what happened. The map follows edits on its own.
+      const refreshAfterMove = async () => {
+        if (this.editor.getCurrentFile()) {
           await this.editor.buildTableEditor();
         }
         await this.refreshBrowse();
       };
-      const onUndoRedoJump = () => {
-        refreshAfterUndoRedo().catch((e: unknown) =>
-          notify.error(
-            t('edit.refreshAfterUndoFailed', {
-              message: e instanceof Error ? e.message : String(e),
-            })
-          )
-        );
-      };
-      this.patchManager.on('undo', onUndoRedoJump);
-      this.patchManager.on('redo', onUndoRedoJump);
-      this.patchManager.on('jump', onUndoRedoJump);
-
-      // Patch notifications + console logging
-      this.patchManager.on('change', (r) => {
-        console.log('[patch:change]', r);
-        notify.info(humanLabel(r?.patch), { duration: 3000 });
-        this.refreshBrowse().catch((e: unknown) =>
-          notify.error(
-            t('edit.refreshAfterEditFailed', {
-              message: e instanceof Error ? e.message : String(e),
-            })
-          )
-        );
-        this.updateUndoRedoState();
-      });
-      this.patchManager.on('undo', (r) => {
-        console.log('[patch:undo]', r);
-        notify.info(t('edit.undone', { label: humanLabel(r?.patch) }), {
-          duration: 3000,
-        });
-        this.updateUndoRedoState();
-      });
-      this.patchManager.on('redo', (r) => {
-        console.log('[patch:redo]', r);
-        notify.info(t('edit.redone', { label: humanLabel(r?.patch) }), {
-          duration: 3000,
-        });
-        this.updateUndoRedoState();
-      });
-      this.patchManager.on('jump', () => {
-        this.updateUndoRedoState();
-      });
-
-      // The date pickers' feed range band follows feed_info edits. A jump
-      // carries no patch, so it always refreshes.
-      const refreshActiveRange = () => {
-        refreshFeedActiveRange(this.gtfsParser.gtfsDatabase).catch(
-          (e: unknown) =>
-            console.error('[GTFSEditor] failed to refresh feed range:', e)
-        );
-      };
-      const onFeedInfoPatch = (r?: PatchRecord) => {
-        const patch = r?.patch;
-        const ops = !patch ? [] : patch.op === 'batch' ? patch.ops : [patch];
-        if (!patch || ops.some((op) => op.source.table === 'feed_info')) {
-          refreshActiveRange();
+      this.feed.onEdit((e) => {
+        console.log(`[edit:${e.kind}]`, e.versions, e.tables, e.files);
+        if (e.kind === 'change') {
+          notify.info(humanLabel(e.patch), { duration: 3000 });
+          this.refreshBrowse().catch((err: unknown) =>
+            notify.error(
+              t('edit.refreshAfterEditFailed', {
+                message: err instanceof Error ? err.message : String(err),
+              })
+            )
+          );
+        } else {
+          if (e.kind === 'undo') {
+            notify.info(t('edit.undone', { label: humanLabel(e.patch) }), {
+              duration: 3000,
+            });
+          } else if (e.kind === 'redo') {
+            notify.info(t('edit.redone', { label: humanLabel(e.patch) }), {
+              duration: 3000,
+            });
+          }
+          refreshAfterMove().catch((err: unknown) =>
+            notify.error(
+              t('edit.refreshAfterUndoFailed', {
+                message: err instanceof Error ? err.message : String(err),
+              })
+            )
+          );
         }
-      };
-      this.patchManager.on('change', onFeedInfoPatch);
-      this.patchManager.on('undo', onFeedInfoPatch);
-      this.patchManager.on('redo', onFeedInfoPatch);
-      this.patchManager.on('jump', onFeedInfoPatch);
+        this.updateUndoRedoState();
+      });
 
-      // Every feed-scoped cache invalidation, in one place. Before this signal
-      // existed each swap path had to remember these by hand, and the boot
-      // paths did not. The parser fires it only once the new rows are final.
-      this.gtfsParser.onFeedReplaced(() => {
+      // Every feed-scoped reset, in one place. Fires once the new feed is
+      // fully adopted.
+      this.feed.onFeedReplaced(() => {
         this.refreshRouteColors();
         // The new feed renders the home panel itself.
         this.browseRefreshDeferred = false;
-        // The stop_times messages the validator cached describe the previous
-        // feed's rows, and its row numbers.
-        this.validator.invalidateStopTimesCache('the feed was replaced');
         // Timetable data and picker options are keyed by ids that collide
         // across feeds, so stale entries redisplay the previous feed's rows.
         this.scheduleController.resetForNewFeed();
-        // The previous feed's routes, stops and zones come off the map here
-        // rather than at the start of the next render, which on a large feed is
-        // seconds later: until then the map would still be showing a feed that
-        // is no longer loaded.
+        // The previous feed's routes, stops and zones come off the map now
+        // rather than at the start of the next render.
         this.mapController.clearForNewFeed();
-        // Issues and the navbar count badges: import writes rows directly,
-        // bypassing the patch events these otherwise listen to. Validation is
-        // a full sweep of every table, so it runs off the critical path: the
-        // feed is usable, and the issues populate when they are ready.
+        this.updateUndoRedoState();
+        // Issues and the navbar count badges, off the critical path.
         runWhenIdle(() => {
           this.validateAndUpdateInfo().catch((e: unknown) =>
             console.error('[GTFSEditor] validation failed:', e)
           );
         });
-        // Async, and nothing renders a column list synchronously inside the
-        // swap, so it is fire-and-forget. User-added columns live in the meta
-        // store, which the feed commit clears; without this the in-memory list
-        // keeps the previous feed's columns.
-        loadExtensionColumns(this.gtfsParser.gtfsDatabase).catch((e: unknown) =>
-          console.error('[GTFSEditor] failed to reload extension columns:', e)
-        );
-        refreshActiveRange();
       });
 
       // Initialize keyboard shortcuts
@@ -653,7 +546,7 @@ export class GTFSEditor {
       // load again from the modal.
       if (outcome === 'nothing-stored') {
         console.log('[boot] nothing stored, creating an empty feed');
-        await this.gtfsParser.initializeEmpty();
+        await createEmptyFeed(this.feed, t('load.newEmpty'));
       }
 
       this.updateUndoRedoState();
@@ -662,9 +555,9 @@ export class GTFSEditor {
         console.time('[boot] refresh after feed swap');
       }
       // The same post-swap refresh a user load runs, minus the navigation home:
-      // boot's page state comes from the URL. The map update it schedules also
-      // refreshes navigation once it lands, so a deep-linked stop keeps its
-      // selection through the focus reset inside updateMap.
+      // boot's page state comes from the URL. The map update it schedules
+      // re-applies the page's map focus once it lands, so a deep-linked stop
+      // keeps its selection through the focus reset inside updateMap.
       await this.uiController.refreshAfterFeedSwap().catch((e: unknown) =>
         notify.error(
           t('boot.refreshFailed', {
@@ -693,44 +586,18 @@ export class GTFSEditor {
   /**
    * Which feed this session opens with.
    *
-   * Boot no longer restores the stored feed unconditionally: parsing it is the
+   * Boot does not restore the active feed unconditionally: parsing it is the
    * expensive half of startup, and it is the wrong feed as often as it is the
-   * right one. The load modal comes first and the stored feed is one of its
-   * offers. A deep link into an object already states which feed is wanted,
-   * so it skips the modal. So does a `#load=` command, unless the stored feed
-   * has edits: loading over it would drop them, so the modal offers both.
+   * right one. The load modal comes first, led by "Your feeds". A deep link
+   * into an object already states which feed is wanted, so it skips the
+   * modal and opens the active feed. A `#load=` link always shows the modal,
+   * with the link as its top card.
    */
   private async bootFeed(): Promise<BootOutcome> {
     const loadUrl = takeLoadCommand();
 
-    // Both reads are single meta records: the stored feed is described without
-    // parsing a byte of it.
-    const [summary, versions] = await Promise.all([
-      this.gtfsParser.gtfsDatabase.getFeedSummary(),
-      this.gtfsParser.gtfsDatabase.getVersions(),
-    ]);
-
-    if (loadUrl && (!summary || versions.currentVersion === 0)) {
-      console.log('[boot] skipped modal: #load', loadUrl);
-      await this.uiController.loadSelection(
-        {
-          scheduled: {
-            kind: 'url',
-            url: loadUrl,
-            useCors: true,
-            label: t('load.linkedFeed'),
-          },
-          realtime: null,
-        },
-        { navigateHome: false }
-      );
-      return 'loaded';
-    }
-
     if (loadUrl) {
-      console.log(
-        `[boot] #load held: stored feed has ${versions.currentVersion} edits`
-      );
+      console.log('[boot] #load offered in the modal:', loadUrl);
     } else {
       const deepLink = this.pageStateManager.pendingStateFromURL();
       if (deepLink.type !== 'home' || deepLink.modal) {
@@ -748,17 +615,16 @@ export class GTFSEditor {
       continueLabel: t('help.welcome.start'),
     });
     const choice = await this.uiController.openBootLoadModal(
-      summary ? { ...summary, edits: versions.currentVersion } : undefined,
       loadUrl ?? undefined
     );
     feedProgressIndicator.startLoading('boot', t('boot.openingFeed'));
-    console.log(`[boot] load modal: user chose ${choice}`);
+    console.log(`[boot] load modal: user chose ${JSON.stringify(choice)}`);
 
-    if (choice === 'continue') {
-      return this.restoreStoredFeed();
+    if (typeof choice === 'object') {
+      return this.restoreStoredFeed(choice.stored);
     }
     if (choice === 'empty') {
-      await this.gtfsParser.initializeEmpty();
+      await createEmptyFeed(this.feed, t('load.newEmpty'));
       feedProgressIndicator.finishLoading('boot');
       await showHelpPageOnce('getting-started', {
         continueLabel: t('help.new.start'),
@@ -775,15 +641,14 @@ export class GTFSEditor {
    * that turned a shared color on or off, which recolors every route.
    */
   private refreshRouteColors(): boolean {
-    const routes = this.gtfsParser.getFileDataSync('routes.txt') ?? [];
+    if (!this.feed.isOpen) {
+      return false;
+    }
+    const routes = this.feed.table('routes');
     const colors = () =>
-      routes
-        .map((r) => routeColor(String(r.route_id), r.route_color as string))
-        .join();
+      routes.map((r) => routeColor(r.route_id ?? '', r.route_color)).join();
     const before = colors();
-    setFeedRouteColors(
-      routes.map((route) => route.route_color as string | undefined)
-    );
+    setFeedRouteColors(routes.map((route) => route.route_color));
     const changed = colors() !== before;
     if (changed) {
       console.log('[GTFSEditor] shared route color rule changed; recoloring');
@@ -791,43 +656,36 @@ export class GTFSEditor {
     return changed;
   }
 
-  /** Hydrate the feed sitting in IndexedDB: rows first, then the patch log. */
-  private async restoreStoredFeed(): Promise<BootOutcome> {
+  /**
+   * Open stored feed `id` (the active one when omitted): its base, then the
+   * patch log on top.
+   */
+  private async restoreStoredFeed(id?: string): Promise<BootOutcome> {
     if (CONFIG.DEBUG_BOOT) {
       console.time('[boot] restore stored feed');
     }
     try {
-      const restored = await this.gtfsParser.restoreDataFromDatabase();
-      if (!restored) {
+      if (!(await restoreFeed(this.feed, id))) {
         console.log('[boot] no stored feed to continue from');
         return 'nothing-stored';
       }
-      // Paired with the restore, never run on a feed the user declined: replaying
-      // patches over the wrong rows is how a feed gets corrupted.
-      await this.patchManager.initialize();
-      // Only now are the rows final: the snapshot branch of patchManager.initialize
-      // rebinds tables and replays the patch log on top of what the restore read.
-      this.gtfsParser.markFeedReplaced();
-      const routes = this.gtfsParser.getFileDataSync('routes.txt')?.length ?? 0;
-      console.log(`[boot] continue with stored feed (${routes} routes)`);
+      console.log(
+        `[boot] continue with stored feed (${this.feed.table('routes').length} routes)`
+      );
       return 'restored';
     } catch (error) {
       // A cancelled restore is a clean state, not a failure: nothing was
-      // installed, so the session lands on the same empty screen as declining
-      // the boot modal and the stored feed is untouched.
+      // installed, and the stored feed is untouched.
       if (error instanceof LoadCancelledError) {
         console.log('[boot] restore cancelled by the user');
         notify.info(t('common.loadCancelled'));
         return 'failed';
       }
-      // The patch log is deliberately not replayed: a half-restored feed with
-      // patches applied on top of it is worse than no feed at all. The modal
-      // offers an export of what is still on disk before clearing.
       console.error('[boot] failed to restore the stored feed:', error);
       databaseFallbackManager.showDatabaseError(
         error,
         t('boot.restoreContext'),
-        () => this.gtfsParser.gtfsDatabase.exportCurrentBlobsAsZip()
+        () => recoverStoredFeedExport(id)
       );
       return 'failed';
     } finally {
@@ -865,7 +723,7 @@ export class GTFSEditor {
         await showTimetableModal(
           {
             scheduleController: this.scheduleController,
-            patchManager: this.patchManager,
+            feed: this.feed,
           },
           modal
         );
@@ -889,7 +747,7 @@ export class GTFSEditor {
       const state = this.pageStateManager.getPageState();
       return showTimetableBrowserModal(
         {
-          gtfsParser: this.gtfsParser,
+          feed: this.feed,
           scheduleController: this.scheduleController,
         },
         state.type === 'route' ? state.route_id : null
@@ -917,47 +775,25 @@ export class GTFSEditor {
       ) {
         return;
       }
-      await showFaresModal({
-        gtfsDatabase: this.gtfsParser.gtfsDatabase as Parameters<
-          typeof showFaresModal
-        >[0]['gtfsDatabase'],
-        patchManager: this.patchManager,
-      });
+      await showFaresModal({ feed: this.feed });
     });
 
     router.register('transfers', (_modal, transient) =>
       showTransfersModal(
-        {
-          gtfsDatabase: this.gtfsParser
-            .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
-          patchManager: this.patchManager,
-          gtfsParser: this.gtfsParser,
-        },
+        { feed: this.feed },
         { focusStopId: transient.focusStopId, rowKey: transient.rowKey }
       )
     );
 
     router.register('translations', (modal, transient) =>
       showTranslationsModal(
-        {
-          gtfsDatabase: this.gtfsParser
-            .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
-          patchManager: this.patchManager,
-          gtfsParser: this.gtfsParser,
-        },
+        { feed: this.feed },
         { table: modal.table, rowKey: transient.rowKey }
       )
     );
 
     router.register('attributions', (_modal, transient) =>
-      showAttributionsModal(
-        {
-          gtfsDatabase: this.gtfsParser
-            .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
-          patchManager: this.patchManager,
-        },
-        transient.rowKey
-      )
+      showAttributionsModal({ feed: this.feed }, transient.rowKey)
     );
 
     router.register('on_demand', async (modal, transient, cancelled) => {
@@ -977,9 +813,7 @@ export class GTFSEditor {
 
     router.register('calendar', () =>
       showCalendarModal({
-        gtfsDatabase: this.gtfsParser
-          .gtfsDatabase as CalendarModalDeps['gtfsDatabase'],
-        patchManager: this.patchManager,
+        feed: this.feed,
         onServiceClick: (service_id) => {
           // Navigating drops the modal from the state, so the router closes it.
           void this.pageStateManager.setPageState({
@@ -996,21 +830,6 @@ export class GTFSEditor {
       this.uiController.openFilesModal(modal.table)
     );
 
-    router.register('feed_issues', async (modal, _transient, cancelled) => {
-      await refreshFeedIssuesIfStale();
-      if (cancelled()) {
-        return;
-      }
-      await showFeedIssuesModal(
-        {
-          gtfsDatabase: this.gtfsParser
-            .gtfsDatabase as EditableTableDeps['gtfsDatabase'],
-          patchManager: this.patchManager,
-        },
-        modal.table
-      );
-    });
-
     this.pageStateManager.addNavigationHandler((event) => {
       router.sync(event.to);
     });
@@ -1019,10 +838,7 @@ export class GTFSEditor {
   /** Deps for the On-Demand modal, which several affordances can open. */
   private onDemandModalDeps(): Parameters<typeof showOnDemandModal>[0] {
     return {
-      gtfsDatabase: this.gtfsParser.gtfsDatabase as Parameters<
-        typeof showOnDemandModal
-      >[0]['gtfsDatabase'],
-      patchManager: this.patchManager,
+      feed: this.feed,
       onZoneClick: (location_id) => {
         void this.pageStateManager.setPageState({ type: 'zone', location_id });
       },
@@ -1033,8 +849,8 @@ export class GTFSEditor {
           properties: stop_name ? { stop_name } : {},
           geometry,
         };
-        await writeZoneFeatures(this.gtfsParser, this.patchManager, [
-          ...getZoneFeatures(this.gtfsParser),
+        await writeZoneFeatures(this.feed, [
+          ...getZoneFeatures(this.feed),
           feature,
         ]);
         console.log(`[GTFSEditor] created zone ${location_id}`);
@@ -1105,8 +921,8 @@ export class GTFSEditor {
     const undoTooltip = document.getElementById('undo-tooltip');
     const redoTooltip = document.getElementById('redo-tooltip');
 
-    const canUndo = this.patchManager.canUndo;
-    const canRedo = this.patchManager.canRedo;
+    const canUndo = this.feed.isOpen && this.feed.canUndo;
+    const canRedo = this.feed.isOpen && this.feed.canRedo;
 
     if (undoBtn) {
       undoBtn.disabled = !canUndo;
@@ -1125,10 +941,10 @@ export class GTFSEditor {
       return;
     }
 
-    this.patchManager
-      .getHistory()
+    this.feed
+      .history()
       .then((history) => {
-        const currentVersion = this.patchManager.version;
+        const currentVersion = this.feed.version;
 
         if (undoTooltip) {
           if (canUndo) {
@@ -1160,12 +976,11 @@ export class GTFSEditor {
   }
 
   public undoEdit(): void {
-    const stackSize = this.patchManager.canUndo;
-    if (!stackSize) {
+    if (!this.feed.isOpen || !this.feed.canUndo) {
       notify.info(t('nav.nothingToUndo'));
       return;
     }
-    this.patchManager.undo().catch((e: unknown) =>
+    this.feed.undo().catch((e: unknown) =>
       notify.error(
         t('edit.undoFailed', {
           message: e instanceof Error ? e.message : String(e),
@@ -1175,11 +990,11 @@ export class GTFSEditor {
   }
 
   public redoEdit(): void {
-    if (!this.patchManager.canRedo) {
+    if (!this.feed.isOpen || !this.feed.canRedo) {
       notify.info(t('nav.nothingToRedo'));
       return;
     }
-    this.patchManager.redo().catch((e: unknown) =>
+    this.feed.redo().catch((e: unknown) =>
       notify.error(
         t('edit.redoFailed', {
           message: e instanceof Error ? e.message : String(e),
@@ -1189,9 +1004,33 @@ export class GTFSEditor {
   }
 }
 
+/** Drop the previous storage layer's IndexedDB database. Not awaited. */
+function deleteLegacyDatabase(): void {
+  void deleteDatabaseWithTimeout(CONFIG.LEGACY_DB_NAME).then((outcome) =>
+    console.log(
+      `[GTFSEditor] legacy database ${CONFIG.LEGACY_DB_NAME}: ${outcome}`
+    )
+  );
+}
+
 // Initialize the application
 function initializeApp(): void {
   window.gtfsEditor = new GTFSEditor();
+  if (import.meta.env.DEV) {
+    const feed = window.gtfsEditor.feed;
+    window.__feed = {
+      feed,
+      load: (input: { url: string } | { file: File }, label: string) =>
+        loadFeed(feed, input, label),
+      restore: () => restoreFeed(feed),
+      empty: (label: string) => createEmptyFeed(feed, label),
+      reset: () => {
+        feed.release();
+        return resetFeedStorage();
+      },
+      build: { insertOp, updateOp, deleteOp, batch },
+    };
+  }
 }
 
 if (document.readyState === 'loading') {

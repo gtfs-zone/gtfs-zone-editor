@@ -81,6 +81,8 @@ export const timetable: Translation<typeof en> = {
   'tt.browserTitle': 'Horaires',
   'tt.noAgency': 'Aucune agence',
   'tt.noRoutes': 'Aucune ligne.',
+  'tt.searchRoutes': 'Rechercher des lignes',
+  'tt.noRouteMatch': 'Aucune ligne ne correspond à « {filter} ».',
   'tt.newTimetable': 'Nouvel horaire',
   'tt.openTimetable': "Ouvrir l'horaire",
   'tt.feedNoRoutes': "Ce flux n'a pas encore de ligne.",
@@ -104,7 +106,6 @@ export const timetable: Translation<typeof en> = {
   'tt.stopMissing':
     'Arrêt {id} absent de stops.txt mais référencé dans stop_times.txt',
   'tt.invalidTime': 'Heure invalide {time} : {reason}',
-  'tt.dbLost': 'Connexion à la base de données perdue',
   'sched.offsetError':
     'Le décalage doit être en minutes signées, MM:SS ou HH:MM:SS, par ex. -5',
   'sched.offsetLabel': 'Décalage horaire',

@@ -81,6 +81,8 @@ export const timetable: Translation<typeof en> = {
   'tt.browserTitle': 'Fahrpläne',
   'tt.noAgency': 'Kein Verkehrsunternehmen',
   'tt.noRoutes': 'Keine Linien.',
+  'tt.searchRoutes': 'Linien suchen',
+  'tt.noRouteMatch': 'Keine Linie passt zu „{filter}“.',
   'tt.newTimetable': 'Neuer Fahrplan',
   'tt.openTimetable': 'Fahrplan öffnen',
   'tt.feedNoRoutes': 'Dieser Feed hat noch keine Linien.',
@@ -105,7 +107,6 @@ export const timetable: Translation<typeof en> = {
   'tt.stopMissing':
     'Haltestelle {id} fehlt in stops.txt, wird aber in stop_times.txt verwendet',
   'tt.invalidTime': 'Ungültige Zeit {time}: {reason}',
-  'tt.dbLost': 'Verbindung zur Datenbank verloren',
   'sched.offsetError':
     'Der Versatz muss in Minuten mit Vorzeichen, MM:SS oder HH:MM:SS angegeben werden, z. B. -5',
   'sched.offsetLabel': 'Zeitversatz',

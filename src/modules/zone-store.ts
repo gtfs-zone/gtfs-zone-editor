@@ -1,40 +1,17 @@
 /**
  * Read and write access to on-demand zones (locations.geojson).
  *
- * locations.geojson is stored as a *single* row holding the whole
- * FeatureCollection, not one row per feature, so every write rewrites the
- * feature array. The row lives in the `locations` object store under the fixed
- * key `locations` (primary key type 'none', see utils/gtfs-primary-keys.ts).
+ * locations.geojson is a non-table entry of the feed, mirrored as text by
+ * `EditorFeed` and parsed here once per text. Every write replaces the whole
+ * FeatureCollection, as one patch (or as a file change inside a caller's
+ * batch, see `zoneFileChange`).
  */
 
-import type { GTFSParser } from './gtfs-parser';
-import { GTFS_TABLES } from '../types/gtfs';
-import { patchUpdate } from '../utils/patch-utils';
-import type { GTFSDatabaseRecord } from './gtfs-database';
+import type { EditorFeed } from '../feed/editor-feed';
+import type { FileChange } from '../types/patch';
 import { t } from '../i18n/messages';
 
-/** Object store and row key for locations.geojson. */
-export const LOCATIONS_TABLE = 'locations';
-export const LOCATIONS_ROW_KEY = 'locations';
-
-/**
- * The slice of PatchManager a zone write needs. Structural rather than the
- * class itself, so the view layer can pass the narrowed patch-manager handle it
- * already holds.
- */
-export interface ZonePatchRecorder {
-  recordInsert: (
-    table: string,
-    id: string,
-    record: Record<string, unknown>
-  ) => Promise<void>;
-  recordUpdate: (
-    table: string,
-    id: string,
-    before: Record<string, unknown>,
-    after: Record<string, unknown>
-  ) => Promise<void>;
-}
+export const LOCATIONS_GEOJSON = 'locations.geojson';
 
 /**
  * A stored locations.geojson feature.
@@ -55,16 +32,29 @@ export type DrawnZoneFeature = GeoJSON.Feature<
 /** [west, south, east, north] */
 export type ZoneBounds = [number, number, number, number];
 
+let parsed: { text: string; collection: GeoJSON.FeatureCollection } | null =
+  null;
+
 /** The stored FeatureCollection, or an empty one when the feed has no zones. */
-export function getZoneCollection(
-  parser: GTFSParser
-): GeoJSON.FeatureCollection {
-  const rows = parser.getFileDataSync(GTFS_TABLES.LOCATIONS_GEOJSON);
-  const stored = rows[0] as unknown as Partial<GeoJSON.FeatureCollection>;
-  if (!stored || !Array.isArray(stored.features)) {
+export function getZoneCollection(feed: EditorFeed): GeoJSON.FeatureCollection {
+  const text = feed.isOpen ? feed.file(LOCATIONS_GEOJSON) : null;
+  if (text === null) {
     return { type: 'FeatureCollection', features: [] };
   }
-  return stored as GeoJSON.FeatureCollection;
+  if (parsed?.text !== text) {
+    let stored: Partial<GeoJSON.FeatureCollection>;
+    try {
+      stored = JSON.parse(text) as Partial<GeoJSON.FeatureCollection>;
+    } catch (err) {
+      console.error('[ZoneStore] locations.geojson is not valid JSON', err);
+      stored = {};
+    }
+    const collection = Array.isArray(stored.features)
+      ? (stored as GeoJSON.FeatureCollection)
+      : { type: 'FeatureCollection' as const, features: [] };
+    parsed = { text, collection };
+  }
+  return parsed.collection;
 }
 
 /**
@@ -74,8 +64,8 @@ export function getZoneCollection(
  * this list, so anything skipped here would be deleted from the file by the
  * next unrelated edit. Use `listZones` to list or draw zones.
  */
-export function getZoneFeatures(parser: GTFSParser): ZoneFeature[] {
-  return getZoneCollection(parser).features as ZoneFeature[];
+export function getZoneFeatures(feed: EditorFeed): ZoneFeature[] {
+  return getZoneCollection(feed).features as ZoneFeature[];
 }
 
 /** Whether the feature carries a polygonal geometry with coordinates. */
@@ -94,9 +84,9 @@ export function hasZoneGeometry(feature: ZoneFeature): boolean {
  * reported by the validator and stays reachable from the On-Demand modal's
  * Zones pane, which reads the raw collection.
  */
-export function listZones(parser: GTFSParser): DrawnZoneFeature[] {
+export function listZones(feed: EditorFeed): DrawnZoneFeature[] {
   const features: DrawnZoneFeature[] = [];
-  for (const feature of getZoneFeatures(parser)) {
+  for (const feature of getZoneFeatures(feed)) {
     if (feature.id === undefined || feature.id === null || feature.id === '') {
       console.warn('[ZoneStore] Skipping locations.geojson feature with no id');
       continue;
@@ -117,11 +107,11 @@ export function listZones(parser: GTFSParser): DrawnZoneFeature[] {
  * be opened and repaired on its zone page.
  */
 export function getZoneFeature(
-  parser: GTFSParser,
+  feed: EditorFeed,
   location_id: string
 ): ZoneFeature | null {
   return (
-    getZoneFeatures(parser).find((f) => String(f.id ?? '') === location_id) ??
+    getZoneFeatures(feed).find((f) => String(f.id ?? '') === location_id) ??
     null
   );
 }
@@ -256,94 +246,35 @@ export function mergeZoneFeatures(
   return { features: result, added, updated, removed };
 }
 
-/** The before/after payloads of a zone write, for the caller's patch. */
-export interface ZoneWritePayloads {
-  before: { features: ZoneFeature[] };
-  after: { features: ZoneFeature[] };
-}
-
 /**
- * Write a new zone feature array to the database and memory, recording nothing.
- *
- * For callers that fold the zone write into a batch patch of their own. Anything
- * else wants `writeZoneFeatures`, which records the patch too.
+ * The file change that replaces the zone features with `features`, for a
+ * caller's own batch. Keeps the collection's other members.
  */
-export async function applyZoneFeatures(
-  parser: GTFSParser,
+export function zoneFileChange(
+  feed: EditorFeed,
   features: ZoneFeature[]
-): Promise<ZoneWritePayloads> {
-  const collection = getZoneCollection(parser);
-  const before = collection.features as ZoneFeature[];
-
-  await parser.gtfsDatabase.updateRow(LOCATIONS_TABLE, LOCATIONS_ROW_KEY, {
-    features,
-  } as unknown as Partial<GTFSDatabaseRecord>);
-
-  parser.setInMemoryFileData(GTFS_TABLES.LOCATIONS_GEOJSON, [
-    { ...collection, type: 'FeatureCollection', features },
-  ] as unknown as GTFSDatabaseRecord[]);
-
-  console.log(
-    `[ZoneStore] Wrote ${features.length} zone features (was ${before.length})`
-  );
-  return { before: { features: before }, after: { features } };
+): FileChange {
+  const collection = getZoneCollection(feed);
+  return {
+    name: LOCATIONS_GEOJSON,
+    before: feed.file(LOCATIONS_GEOJSON),
+    after: JSON.stringify({
+      ...collection,
+      type: 'FeatureCollection',
+      features,
+    }),
+  };
 }
 
-/**
- * Create the locations.geojson row if the feed has none, as its own patch.
- *
- * A feed imported without the file has no row to update, so the update that
- * follows needs a target and undo needs both steps to walk back through.
- */
-export async function ensureLocationsRow(
-  parser: GTFSParser,
-  patchManager: ZonePatchRecorder | null
-): Promise<void> {
-  const existing = await parser.gtfsDatabase.getRow(
-    LOCATIONS_TABLE,
-    LOCATIONS_ROW_KEY
-  );
-  if (existing) {
-    return;
-  }
-  const empty = { type: 'FeatureCollection', features: [] };
-  await parser.gtfsDatabase.insertRows(LOCATIONS_TABLE, [
-    empty as unknown as GTFSDatabaseRecord,
-  ]);
-  await patchManager?.recordInsert(LOCATIONS_TABLE, LOCATIONS_ROW_KEY, empty);
-}
-
-/**
- * Persist a new zone feature array as a single recorded patch.
- *
- * The whole feature array is the patched value: the row is one FeatureCollection,
- * so there is no per-feature key to address.
- */
+/** Replace the zone features as one patch. */
 export async function writeZoneFeatures(
-  parser: GTFSParser,
-  patchManager: ZonePatchRecorder | null,
+  feed: EditorFeed,
   features: ZoneFeature[]
 ): Promise<void> {
-  await ensureLocationsRow(parser, patchManager);
-
-  const collection = getZoneCollection(parser);
-  const before = collection.features;
-
-  await patchUpdate(
-    parser.gtfsDatabase,
-    patchManager,
-    LOCATIONS_TABLE,
-    LOCATIONS_ROW_KEY,
-    { features: before },
-    { features }
-  );
-
-  parser.setInMemoryFileData(GTFS_TABLES.LOCATIONS_GEOJSON, [
-    { ...collection, type: 'FeatureCollection', features },
-  ] as unknown as GTFSDatabaseRecord[]);
-
+  const before = getZoneFeatures(feed).length;
+  await feed.editFile(LOCATIONS_GEOJSON, zoneFileChange(feed, features).after);
   console.log(
-    `[ZoneStore] Wrote ${features.length} zone features (was ${before.length})`
+    `[ZoneStore] Wrote ${features.length} zone features (was ${before})`
   );
 }
 
@@ -354,12 +285,11 @@ export async function writeZoneFeatures(
  * locations.geojson should carry a `stop_desc` only when there is one.
  */
 export async function setZoneProperties(
-  parser: GTFSParser,
-  patchManager: ZonePatchRecorder | null,
+  feed: EditorFeed,
   location_id: string,
   properties: Record<string, string>
 ): Promise<void> {
-  const features = getZoneFeatures(parser);
+  const features = getZoneFeatures(feed);
   const target = features.find((f) => String(f.id ?? '') === location_id);
   if (!target) {
     throw new Error(t('geo.zoneGone', { id: location_id }));
@@ -377,6 +307,6 @@ export async function setZoneProperties(
   const next = features.map((feature) =>
     feature === target ? { ...feature, properties: merged } : feature
   );
-  await writeZoneFeatures(parser, patchManager, next);
+  await writeZoneFeatures(feed, next);
   console.log(`[ZoneStore] Updated properties of zone ${location_id}`);
 }

@@ -9,7 +9,7 @@
  * (`removeMissing=false`), so a round trip can never delete another zone.
  */
 
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
 import { encodeGeojsonIoUrl } from '../utils/geojson-io';
 import {
   attachGeojsonExchangeHandlers,
@@ -23,7 +23,6 @@ import {
   writeZoneFeatures,
   zoneBounds,
   zoneVertexCount,
-  type ZonePatchRecorder,
 } from './zone-store';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
@@ -31,8 +30,7 @@ import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 
 export interface ZoneGeometryDependencies {
-  gtfsParser: GTFSParser;
-  patchManager: ZonePatchRecorder | null;
+  feed: EditorFeed;
   /** Called after a successful write, so the page can re-render. */
   onGeometryChanged?: (location_id: string) => void;
 }
@@ -83,10 +81,10 @@ export function pickZoneFeature(
 
 /** Summary, GeoJSON editor and geojson.io handoff for one zone. */
 export async function renderZoneGeometrySection(
-  parser: GTFSParser,
+  feed: EditorFeed,
   location_id: string
 ): Promise<string> {
-  const feature = getZoneFeature(parser, location_id);
+  const feature = getZoneFeature(feed, location_id);
   if (!feature) {
     return `
       <div class="alert alert-warning">
@@ -156,7 +154,7 @@ export function attachZoneGeometryHandlers(
     pick: (collection) => pickZoneFeature(collection, location_id),
     prepare: (feature) => ({ ...feature, id: location_id }),
     onApply: async (edited) => {
-      const current = getZoneFeatures(deps.gtfsParser);
+      const current = getZoneFeatures(deps.feed);
       if (!current.some((f) => String(f.id ?? '') === location_id)) {
         throw new Error(t('geo.zoneGone', { id: location_id }));
       }
@@ -166,11 +164,7 @@ export function attachZoneGeometryHandlers(
         [{ ...edited, id: location_id }],
         false
       );
-      await writeZoneFeatures(
-        deps.gtfsParser,
-        deps.patchManager,
-        merged.features
-      );
+      await writeZoneFeatures(deps.feed, merged.features);
       notify.success(t('geo.zoneUpdated', { id: location_id }));
       deps.onGeometryChanged?.(location_id);
     },

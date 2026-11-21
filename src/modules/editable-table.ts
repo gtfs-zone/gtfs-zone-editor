@@ -49,7 +49,8 @@ import {
   renderRenameTrigger,
   setRenameAfter,
 } from '../utils/rename-action';
-import { patchUpdate } from '../utils/patch-utils';
+import type { EditorFeed } from '../feed/editor-feed';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import {
   generateFieldConfigsFromSchema,
   renderFieldLabelContent,
@@ -82,71 +83,8 @@ import type { GTFSFieldSpec } from '../gtfs-spec/types';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';
 
-export interface EditableTableDatabase {
-  getAllRows(tableName: string): Promise<Record<string, unknown>[]>;
-  getRow(
-    tableName: string,
-    key: string
-  ): Promise<Record<string, unknown> | undefined>;
-  queryRows(
-    tableName: string,
-    filter: Record<string, string>
-  ): Promise<Record<string, unknown>[]>;
-  insertRows(tableName: string, rows: Record<string, unknown>[]): Promise<void>;
-  updateRow(
-    tableName: string,
-    key: string,
-    data: Record<string, unknown>
-  ): Promise<void>;
-  deleteRow(tableName: string, key: string): Promise<void>;
-}
-
-export interface EditableTablePatchManager {
-  recordInsert(
-    table: string,
-    id: string,
-    record: Record<string, unknown>
-  ): Promise<void>;
-  recordUpdate(
-    table: string,
-    id: string,
-    before: Record<string, unknown>,
-    after: Record<string, unknown>
-  ): Promise<void>;
-  recordDelete(
-    table: string,
-    id: string,
-    record: Record<string, unknown>
-  ): Promise<void>;
-  recordBatchMixed(
-    ops: Array<
-      | {
-          op: 'insert';
-          table: string;
-          id: string;
-          record: Record<string, unknown>;
-        }
-      | {
-          op: 'delete';
-          table: string;
-          id: string;
-          record: Record<string, unknown>;
-        }
-      | {
-          op: 'update';
-          table: string;
-          id: string;
-          before: Record<string, unknown>;
-          after: Record<string, unknown>;
-        }
-    >,
-    label?: string
-  ): Promise<void>;
-}
-
 export interface EditableTableDeps {
-  gtfsDatabase: EditableTableDatabase;
-  patchManager: EditableTablePatchManager;
+  feed: EditorFeed;
 }
 
 export interface EditableTableColumnOverride {
@@ -223,6 +161,8 @@ export interface EditableTableConfig {
    */
   joinColumns?: EditableTableJoinColumn[];
   deps: EditableTableDeps;
+  /** The table is the page's `.scroll-rows` region, under a pinned header. */
+  scrollRows?: boolean;
   /**
    * Values every new row carries but no column shows, for a table rendering
    * rows that all share them (one service's removed dates). They are merged
@@ -491,7 +431,7 @@ async function foreignOptions(
   if (override) {
     return override();
   }
-  return buildForeignKeyOptions(config.deps.gtfsDatabase, spec);
+  return buildForeignKeyOptions(config.deps.feed, spec);
 }
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
@@ -541,11 +481,7 @@ async function foreignLabelMaps(
     }
   }
   for (const { spec, fields, values } of byTargets.values()) {
-    const labels = await buildForeignKeyLabels(
-      config.deps.gtfsDatabase,
-      spec,
-      values
-    );
+    const labels = await buildForeignKeyLabels(config.deps.feed, spec, values);
     for (const field of fields) {
       maps.set(field, labels);
     }
@@ -879,7 +815,7 @@ export async function renderEditableTable(
   );
 
   return `
-    <div class="overflow-x-auto">
+    <div class="${config.scrollRows ? 'scroll-rows' : 'overflow-x-auto'}">
       <table class="table table-xs table-pin-rows">
         <thead><tr>${headerHtml}${joinHeaderHtml}<th class="align-bottom text-right">${addFieldHtml}</th></tr></thead>
         <tbody>${emptyHtml}${bodyHtml}${newRowHtml}</tbody>
@@ -1517,32 +1453,10 @@ async function commitUpdate(
     console.log(
       `[EditableTable] update ${table} ${key}.${field} (${edits.length} row(s))`
     );
-    if (edits.length === 1) {
-      await patchUpdate(
-        config.deps.gtfsDatabase,
-        config.deps.patchManager,
-        table,
-        key,
-        { [field]: edits[0].before[field] ?? '' },
-        { [field]: value }
-      );
-    } else {
-      for (const edit of edits) {
-        await config.deps.gtfsDatabase.updateRow(table, edit.key, {
-          [field]: value,
-        });
-      }
-      await config.deps.patchManager.recordBatchMixed(
-        edits.map((edit) => ({
-          op: 'update' as const,
-          table,
-          id: edit.key,
-          before: { [field]: edit.before[field] ?? '' },
-          after: { [field]: value },
-        })),
-        `Edit ${field} on ${table}`
-      );
-    }
+    await config.deps.feed.apply(
+      edits.map((edit) => updateOp(table, edit.before, edit.after)),
+      `Edit ${field} on ${table}`
+    );
     edits.forEach((edit) => replaceRow(config, edit.key, edit.after));
     config.onUpdate?.(key, edits[0].after);
     return;
@@ -1565,27 +1479,10 @@ async function commitUpdate(
   );
   // Every delete lands before any insert, so a key moving onto one that is
   // still occupied by another row of the same group cannot collide.
-  for (const edit of edits) {
-    await config.deps.gtfsDatabase.deleteRow(table, edit.key);
-  }
-  await config.deps.gtfsDatabase.insertRows(
-    table,
-    edits.map((edit) => edit.after)
-  );
-  await config.deps.patchManager.recordBatchMixed(
+  await config.deps.feed.apply(
     [
-      ...edits.map((edit) => ({
-        op: 'delete' as const,
-        table,
-        id: edit.key,
-        record: edit.before,
-      })),
-      ...edits.map((edit, i) => ({
-        op: 'insert' as const,
-        table,
-        id: newKeys[i],
-        record: edit.after,
-      })),
+      ...edits.map((edit) => deleteOp(table, edit.before)),
+      ...edits.map((edit) => insertOp(table, edit.after)),
     ],
     `Edit ${field} on ${table}`
   );
@@ -1715,29 +1612,10 @@ async function commitListCell(
   console.log(
     `[EditableTable] list edit ${table} ${group.key}.${field} (-${deletes.length} +${inserts.length})`
   );
-  for (const entry of deletes) {
-    await config.deps.gtfsDatabase.deleteRow(table, entry.key);
-  }
-  if (inserts.length > 0) {
-    await config.deps.gtfsDatabase.insertRows(
-      table,
-      inserts.map((entry) => entry.record)
-    );
-  }
-  await config.deps.patchManager.recordBatchMixed(
+  await config.deps.feed.apply(
     [
-      ...deletes.map((entry) => ({
-        op: 'delete' as const,
-        table,
-        id: entry.key,
-        record: entry.record,
-      })),
-      ...inserts.map((entry) => ({
-        op: 'insert' as const,
-        table,
-        id: entry.key,
-        record: entry.record,
-      })),
+      ...deletes.map((entry) => deleteOp(table, entry.record)),
+      ...inserts.map((entry) => insertOp(table, entry.record)),
     ],
     `Edit ${field} on ${table}`
   );
@@ -1880,7 +1758,7 @@ async function commitNewRow(
   const exists =
     config.primaryKey || config.insertRow
       ? config.rows.some((r) => rowKey(config, r) === key)
-      : (await config.deps.gtfsDatabase.getRow(table, key)) !== undefined;
+      : (await config.deps.feed.byKeys(table, [key]))[0] !== null;
   if (exists) {
     markCellError(span, t('table.rowExists'));
     return;
@@ -1898,8 +1776,7 @@ async function commitNewRow(
   }
 
   console.log(`[EditableTable] insert ${table} ${key}`);
-  await config.deps.gtfsDatabase.insertRows(table, [record]);
-  await config.deps.patchManager.recordInsert(table, key, record);
+  await config.deps.feed.apply([insertOp(table, record)]);
   state.pending = {};
   config.onInsert?.(key, record);
 }
@@ -1936,26 +1813,10 @@ async function deleteRow(button: HTMLElement): Promise<void> {
         label: t('common.delete'),
         className: 'btn-error',
         onClick: async () => {
-          for (const groupKey of group.keys) {
-            await config.deps.gtfsDatabase.deleteRow(table, groupKey);
-          }
-          if (count === 1) {
-            await config.deps.patchManager.recordDelete(
-              table,
-              key,
-              group.rows[0]
-            );
-          } else {
-            await config.deps.patchManager.recordBatchMixed(
-              group.rows.map((record, i) => ({
-                op: 'delete' as const,
-                table,
-                id: group.keys[i],
-                record,
-              })),
-              t('table.labelDeleteRows', { count, table })
-            );
-          }
+          await config.deps.feed.apply(
+            group.rows.map((record) => deleteOp(table, record)),
+            t('table.labelDeleteRows', { count, table })
+          );
           console.log(
             `[EditableTable] delete ${table} ${key} (${count} row(s))`
           );

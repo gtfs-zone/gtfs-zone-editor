@@ -17,7 +17,7 @@
  */
 
 import type { ScheduleController } from './schedule-controller';
-import type { PatchManager } from './patch-manager';
+import type { EditorFeed } from '../feed/editor-feed';
 import type { NavigationEvent } from 'gtfs-zone-web-common/ui/page-state-manager';
 import { PageState, TimetableModalState } from '../types/page-state';
 import { getPageStateManager } from './page-state-manager';
@@ -27,14 +27,11 @@ import { t } from '../i18n/messages';
 
 export interface TimetableModalDeps {
   scheduleController: ScheduleController;
-  patchManager: PatchManager;
+  feed: EditorFeed;
 }
 
 /** Room for a wide grid: the modal is the timetable, not a dialog about it. */
 const BOX_CLASS = 'max-w-none w-[98vw] h-[95vh] max-h-none';
-
-/** Patch events that change what the timetable shows. */
-const PATCH_EVENTS = ['change', 'undo', 'redo', 'jump'] as const;
 
 /**
  * Open the timetable modal and resolve once it closes.
@@ -46,7 +43,7 @@ export async function showTimetableModal(
   deps: TimetableModalDeps,
   modal: TimetableModalState
 ): Promise<void> {
-  const { scheduleController, patchManager } = deps;
+  const { scheduleController, feed } = deps;
 
   const target = await scheduleController.resolveTimetableTarget(modal);
   if (!target) {
@@ -86,8 +83,7 @@ export async function showTimetableModal(
   };
   getPageStateManager().addNavigationHandler(onNavigate);
 
-  const onPatch = () => rebuild();
-  PATCH_EVENTS.forEach((event) => patchManager.on(event, onPatch));
+  const offEdit = feed.onEdit(() => rebuild());
 
   try {
     await showModal({
@@ -101,6 +97,6 @@ export async function showTimetableModal(
   } finally {
     scheduleController.closeStopTimePopover();
     getPageStateManager().removeNavigationHandler(onNavigate);
-    PATCH_EVENTS.forEach((event) => patchManager.off(event, onPatch));
+    offEdit();
   }
 }

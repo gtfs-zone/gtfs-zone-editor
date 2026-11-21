@@ -5,8 +5,8 @@
  * Provides a single-column layout showing stop properties and timetable relationships.
  */
 
-import type { Routes, Stops, Trips, StopTimes, Pathways } from '../types/gtfs';
-import type { QueryOnlyDatabase } from '../utils/field-component';
+import type { Routes, Stops, Pathways } from '../types/gtfs';
+import type { EditorFeed } from '../feed/editor-feed';
 import { renderInlineEntityFields } from '../utils/inline-editable-field';
 import { GTFS_TABLES } from '../types/gtfs';
 import {
@@ -69,16 +69,7 @@ interface StopRelations {
 }
 
 export interface StopViewDependencies {
-  gtfsDatabase?: QueryOnlyDatabase;
-  gtfsRelationships?: {
-    getAgenciesServingStop?: (stop_id: string) => Promise<unknown[]>;
-    getRoutesServingStop?: (stop_id: string) => Promise<unknown[]>;
-  };
-  /**
-   * Writing handle for the transfers section, which edits rows rather than
-   * only listing them. Absent, the section is skipped.
-   */
-  editableDeps?: EditableTableDeps;
+  feed: EditorFeed;
   onStopClick?: (stop_id: string) => void;
   /** Light a stop on the map from a hovered row. Null clears. */
   onStopHover?: (stop_id: string | null) => void;
@@ -111,10 +102,7 @@ export class StopViewController {
         return this.renderError(t('view.stopNotFound'));
       }
 
-      const locationType =
-        typeof stop.location_type === 'number'
-          ? stop.location_type
-          : parseInt(stop.location_type ?? '0', 10) || 0;
+      const locationType = parseInt(stop.location_type ?? '0', 10) || 0;
       const isStation = locationType === 1;
 
       const { routes, timetableKeys } = await this.fetchStopRelations(stop_id);
@@ -122,12 +110,11 @@ export class StopViewController {
       // Loaded over the whole feed so a service keeps the same timeline color
       // here as on the home and route pages; scoped per route below.
       let serviceData: ServiceDataMap = new Map();
-      if (this.dependencies.gtfsDatabase && timetableKeys.length > 0) {
-        const db = this.dependencies.gtfsDatabase;
-        serviceData = await loadServiceData({
-          getAllRows: (tableName: string) =>
-            db.queryRows(tableName) as Promise<Record<string, unknown>[]>,
-        });
+      if (timetableKeys.length > 0) {
+        serviceData = await loadServiceData(
+          this.dependencies.feed,
+          timetableKeys.map((k) => k.service_id)
+        );
       }
 
       const [childStops, connectedPathways] = await Promise.all([
@@ -153,15 +140,10 @@ export class StopViewController {
           otherStopIds.add(String(p.to_stop_id));
         }
         otherStopIds.delete(stop_id);
-        if (this.dependencies.gtfsDatabase) {
-          for (const sid of otherStopIds) {
-            const rows = await this.dependencies.gtfsDatabase.queryRows(
-              'stops',
-              { stop_id: sid }
-            );
-            if (rows.length > 0) {
-              otherStopLookup.set(sid, rows[0] as Stops);
-            }
+        for (const sid of otherStopIds) {
+          const row = this.dependencies.feed.byKey('stops', sid);
+          if (row) {
+            otherStopLookup.set(sid, row);
           }
         }
         if (locationType === 0) {
@@ -201,7 +183,7 @@ export class StopViewController {
     );
     // Area membership lives in stop_areas.txt, not on the stop, and a platform
     // may inherit it from its station, so it is not an ordinary property row.
-    const areasHtml = await renderStopAreasField(
+    const areasHtml = renderStopAreasField(
       stop as unknown as Record<string, unknown>
     );
 
@@ -334,41 +316,19 @@ export class StopViewController {
   }
 
   private async getChildStops(station_id: string): Promise<Stops[]> {
-    if (!this.dependencies.gtfsDatabase) {
-      return [];
-    }
-    try {
-      const rows = await this.dependencies.gtfsDatabase.queryRows('stops', {
-        parent_station: station_id,
-      });
-      return rows as Stops[];
-    } catch {
-      return [];
-    }
+    return this.dependencies.feed
+      .table('stops')
+      .filter((s) => s.parent_station === station_id);
   }
 
   private async getConnectedPathways(
     stop_id: string
   ): Promise<{ out: Pathways[]; in: Pathways[] }> {
-    if (!this.dependencies.gtfsDatabase) {
-      return { out: [], in: [] };
-    }
-    try {
-      const [fromRows, toRows] = await Promise.all([
-        this.dependencies.gtfsDatabase.queryRows('pathways', {
-          from_stop_id: stop_id,
-        }),
-        this.dependencies.gtfsDatabase.queryRows('pathways', {
-          to_stop_id: stop_id,
-        }),
-      ]);
-      return {
-        out: fromRows as Pathways[],
-        in: toRows as Pathways[],
-      };
-    } catch {
-      return { out: [], in: [] };
-    }
+    const pathways = this.dependencies.feed.table('pathways');
+    return {
+      out: pathways.filter((p) => p.from_stop_id === stop_id),
+      in: pathways.filter((p) => p.to_stop_id === stop_id),
+    };
   }
 
   private renderPathwaySection(
@@ -417,18 +377,14 @@ export class StopViewController {
    * are counted in the note so the section does not look empty by accident.
    */
   private async renderTransfersSection(stop_id: string): Promise<string> {
-    const deps = this.dependencies.editableDeps;
-    if (!deps) {
-      return '';
-    }
+    const feed = this.dependencies.feed;
+    const deps: EditableTableDeps = { feed };
 
     const table = specStoreName(GTFS_TABLES.TRANSFERS);
-    const fromRows = await deps.gtfsDatabase.queryRows(table, {
-      from_stop_id: stop_id,
-    });
-    const toRows = await deps.gtfsDatabase.queryRows(table, {
-      to_stop_id: stop_id,
-    });
+    const [fromRows, toRows] = await Promise.all([
+      feed.where(table, [{ col: 'from_stop_id', eq: stop_id }]),
+      feed.where(table, [{ col: 'to_stop_id', eq: stop_id }]),
+    ]);
     // A transfer from the stop to itself comes back from both queries.
     const naming = [
       ...fromRows,
@@ -503,20 +459,14 @@ export class StopViewController {
   private async renderBoardingAreasSection(
     platformId: string
   ): Promise<string> {
-    if (!this.dependencies.gtfsDatabase) {
-      return '';
-    }
     try {
-      const rows = await this.dependencies.gtfsDatabase.queryRows('stops', {
-        parent_station: platformId,
-      });
-      const boardingAreas = (rows as Stops[]).filter((s) => {
-        const lt =
-          typeof s.location_type === 'number'
-            ? s.location_type
-            : parseInt(s.location_type ?? '0', 10) || 0;
-        return lt === 4;
-      });
+      const boardingAreas = this.dependencies.feed
+        .table('stops')
+        .filter(
+          (s) =>
+            s.parent_station === platformId &&
+            (parseInt(s.location_type ?? '0', 10) || 0) === 4
+        );
       if (boardingAreas.length === 0) {
         return '';
       }
@@ -549,10 +499,7 @@ export class StopViewController {
     const platforms: Stops[] = [];
     const genericNodes: Stops[] = [];
     for (const child of children) {
-      const locType =
-        typeof child.location_type === 'number'
-          ? child.location_type
-          : parseInt(child.location_type ?? '0', 10) || 0;
+      const locType = parseInt(child.location_type ?? '0', 10) || 0;
       if (locType === 2) {
         entrances.push(child);
       } else if (locType === 0) {
@@ -619,36 +566,15 @@ export class StopViewController {
   }
 
   private async getStopData(stop_id: string): Promise<Stops | null> {
-    if (!this.dependencies.gtfsDatabase) {
-      return { stop_id, stop_name: stop_id, parent_station: '' } as Stops;
-    }
-
-    try {
-      const stops = await this.dependencies.gtfsDatabase.queryRows('stops', {
-        stop_id,
-      });
-      if (stops.length === 0) {
-        return null;
-      }
-      return stops[0] as Stops;
-    } catch (error) {
-      console.error('Error getting stop data:', error);
-      return null;
-    }
+    return this.dependencies.feed.byKey('stops', stop_id);
   }
 
   private async fetchStopRelations(stop_id: string): Promise<StopRelations> {
-    if (!this.dependencies.gtfsDatabase) {
-      return { routes: [], timetableKeys: [] };
-    }
-
+    const feed = this.dependencies.feed;
     try {
       // A station carries no stop_times of its own, so the lookup has to run
       // over its whole platform subtree or it looks like nothing serves it.
-      const hierarchy = await collectDescendantStops(
-        this.dependencies.gtfsDatabase,
-        stop_id
-      );
+      const hierarchy = collectDescendantStops(feed, stop_id);
       const stopById = new Map(hierarchy.map((s) => [String(s.stop_id), s]));
       const lookupIds = stopById.has(stop_id)
         ? Array.from(stopById.keys())
@@ -658,12 +584,7 @@ export class StopViewController {
       // rows can say which platform they came from.
       const viaIdsByTrip = new Map<string, Set<string>>();
       for (const id of lookupIds) {
-        const stopTimes = (await this.dependencies.gtfsDatabase.queryRows(
-          'stop_times',
-          { stop_id: id }
-        )) as StopTimes[];
-        for (const st of stopTimes) {
-          const trip_id = String(st.trip_id);
+        for (const trip_id of await feed.read('tripsAtStop', id)) {
           let via = viaIdsByTrip.get(trip_id);
           if (!via) {
             via = new Set();
@@ -679,12 +600,9 @@ export class StopViewController {
         return { routes: [], timetableKeys: [] };
       }
 
-      const allTrips = (await this.dependencies.gtfsDatabase.queryRows(
-        'trips'
-      )) as Trips[];
-      const relevantTrips = allTrips.filter((trip) =>
-        viaIdsByTrip.has(String(trip.trip_id))
-      );
+      const relevantTrips = await feed.where('trips', [
+        { col: 'trip_id', in: [...viaIdsByTrip.keys()] },
+      ]);
 
       const routeIdSet = new Set(relevantTrips.map((trip) => trip.route_id));
       const byKey = new Map<
@@ -720,12 +638,9 @@ export class StopViewController {
         timetableKeys.push(key);
       }
 
-      const allRoutes = (await this.dependencies.gtfsDatabase.queryRows(
-        'routes'
-      )) as Routes[];
-      const routes = allRoutes.filter((route) =>
-        routeIdSet.has(route.route_id)
-      );
+      const routes = feed
+        .table('routes')
+        .filter((route) => routeIdSet.has(route.route_id));
 
       return { routes, timetableKeys };
     } catch (error) {

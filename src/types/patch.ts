@@ -36,26 +36,37 @@ export interface PatchRename {
 export interface BatchGTFSPatch {
   op: 'batch';
   ops: SingleGTFSPatch[];
+  /** Non-table entries the batch replaces, after its row ops. */
+  files?: FileChange[];
   label?: string;
   rename?: PatchRename;
+}
+
+/** A non-table entry's text before and after; null means absent. */
+export interface FileChange {
+  name: string;
+  before: string | null;
+  after: string | null;
 }
 
 /** A patch is either a single-record operation or a batch of them. */
 export type GTFSPatch = SingleGTFSPatch | BatchGTFSPatch;
 
-/** Persisted patch entry in IndexedDB (version is the autoIncrement key). */
-export interface PatchRecord {
-  version?: number; // absent on write, assigned by autoIncrement on read
-  patch: GTFSPatch;
-  timestamp: number; // Date.now()
+/**
+ * A non-table archive entry (e.g. `locations.geojson`) replaced as a whole.
+ * `null` means the entry is absent on that side.
+ */
+export interface FilePatch extends FileChange {
+  op: 'file';
+  label?: string;
 }
 
-/** Compressed full-state checkpoint. */
-export interface SnapshotRecord {
-  version: number; // version of the last patch included in this snapshot
-  state: string; // base64-encoded gzip-compressed JSON of GTFSState
-  timestamp: number; // Date.now()
-}
+/** What the feed worker's patch log holds. */
+export type FeedPatch = GTFSPatch | FilePatch;
 
-/** Full GTFS state: table name -> array of row objects. */
-export type GTFSState = Record<string, Record<string, unknown>[]>;
+/** One entry of the feed worker's patch log (IndexedDB key: `version`). */
+export interface FeedPatchRecord {
+  version: number;
+  patch: FeedPatch;
+  timestamp: number;
+}

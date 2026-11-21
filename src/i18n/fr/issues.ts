@@ -64,6 +64,8 @@ export const issues: Translation<typeof en> = {
   'issues.frequencyOverlap':
     'avec des périodes de fréquence qui se chevauchent',
   'issues.frequencyEnd': 'dont end_time tombe sur un départ',
+  'issues.unknownFile': "{file} n'est pas un fichier GTFS",
+  'issues.unknownFileNote': "Non chargé pour l'édition ; exporté tel quel.",
   'issues.recordTitle': 'Problèmes de cet enregistrement',
   'issues.danglingRef':
     "{field} fait référence à « {value} », qui n'existe pas",
@@ -72,5 +74,4 @@ export const issues: Translation<typeof en> = {
   'issues.gone': 'Ce problème a déjà disparu',
   'issues.unknownAction': 'Action inconnue {id}',
   'issues.confirmTitle': '{label} ?',
-  'issues.title': 'Problèmes du flux',
 };

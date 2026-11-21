@@ -14,8 +14,6 @@ export const fields: Translation<typeof en> = {
   'field.selectTitle': '{field} wählen',
   'field.currentValue': 'aktueller Wert',
   'field.customValue': 'Eigenen Wert eingeben...',
-  'field.historyNotReady':
-    'Speichern nicht möglich: Der Änderungsverlauf ist noch nicht bereit',
   'field.recordGone':
     'Speichern nicht möglich: Dieser Datensatz existiert nicht mehr',
   'field.extensionDescription':
@@ -31,6 +29,7 @@ export const fields: Translation<typeof en> = {
   'patch.created': '{type} „{name}“ angelegt',
   'patch.deleted': '{type} „{name}“ gelöscht',
   'patch.updated': '{type} „{name}“ geändert ({fields})',
+  'patch.fileEdited': '{name} bearbeitet',
   'patch.type.agency': 'Verkehrsunternehmen',
   'patch.type.stops': 'Haltestelle',
   'patch.type.routes': 'Linie',
@@ -149,8 +148,6 @@ export const fields: Translation<typeof en> = {
     'Insgesamt {count} Zeilen, erfasst als eine Änderung, die sich rückgängig machen lässt.',
   'renameModal.heavy':
     'Diese Umbenennung schreibt {count} Zeilen um. Das dauert einen Moment, und die Seite reagiert währenddessen nicht.',
-  'renameModal.historyNotReady':
-    'Umbenennen nicht möglich: Der Änderungsverlauf ist noch nicht bereit',
   'renameModal.couldNotPlan': 'Die Umbenennung konnte nicht geplant werden.',
   'renameModal.newLabel': '{field} (neu)',
   'renameModal.setTitle': '{field} festlegen',

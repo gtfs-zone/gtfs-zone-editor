@@ -3,9 +3,11 @@
  * Provides sensible defaults for creating new GTFS entities
  */
 
-import type { Agency, Routes, Calendar } from '../types/gtfs';
+import type { EditorFeed } from '../feed/editor-feed';
 import { toGtfsDateLocal, todayGtfsDate } from './gtfs-date';
-import { feedBounds, type FeedBoundsSource } from './feed-bounds';
+import { feedBounds } from './feed-bounds';
+
+type Values = Record<string, string>;
 
 /**
  * Get date one year from now in YYYYMMDD format
@@ -23,7 +25,7 @@ function getOneYearFromNowYYYYMMDD(): string {
 export function createDefaultAgency(
   agency_id: string,
   timezone: string
-): Agency {
+): Values {
   return {
     agency_id,
     agency_name: '',
@@ -43,10 +45,8 @@ export interface ServiceRange {
  * The date range a new service starts with: the feed_info bounds, each
  * falling back to today and today +1 year.
  */
-export async function defaultServiceRange(
-  db: FeedBoundsSource
-): Promise<ServiceRange> {
-  const bounds = await feedBounds(db);
+export function defaultServiceRange(feed: EditorFeed): ServiceRange {
+  const bounds = feedBounds(feed);
   return {
     start: bounds.start ?? todayGtfsDate(),
     end: bounds.end ?? getOneYearFromNowYYYYMMDD(),
@@ -59,16 +59,16 @@ export async function defaultServiceRange(
 export function createDefaultService(
   service_id: string,
   range: ServiceRange
-): Calendar {
+): Values {
   return {
     service_id,
-    monday: 0,
-    tuesday: 0,
-    wednesday: 0,
-    thursday: 0,
-    friday: 0,
-    saturday: 0,
-    sunday: 0,
+    monday: '0',
+    tuesday: '0',
+    wednesday: '0',
+    thursday: '0',
+    friday: '0',
+    saturday: '0',
+    sunday: '0',
     start_date: range.start,
     end_date: range.end,
   };
@@ -80,17 +80,17 @@ export function createDefaultService(
 export function createDefaultRoute(
   route_id: string,
   agency_id?: string
-): Routes {
-  const route: Partial<Routes> = {
+): Values {
+  const route: Values = {
     route_id,
     route_short_name: '',
     route_long_name: '',
-    route_type: 3, // Bus
+    route_type: '3', // Bus
   };
 
   if (agency_id) {
     route.agency_id = agency_id;
   }
 
-  return route as Routes;
+  return route;
 }

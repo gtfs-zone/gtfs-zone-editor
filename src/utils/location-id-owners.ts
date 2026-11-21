@@ -3,37 +3,20 @@
  * location_groups.txt share
  */
 
-import { GTFS_TABLES } from '../types/gtfs';
-import { LOCATIONS_TABLE } from '../modules/zone-store';
-import { specStoreName } from './spec-field-edit';
+import type { EditorFeed } from '../feed/editor-feed';
+import { getZoneFeatures } from '../modules/zone-store';
 import { t } from '../i18n/messages';
 
-interface RowSource {
-  getAllRows(tableName: string): Promise<Record<string, unknown>[]>;
-}
-
-/** The stored FeatureCollection's features, or an empty list. */
-export async function readZoneFeatures(
-  database: RowSource
-): Promise<GeoJSON.Feature[]> {
-  const rows = await database.getAllRows(LOCATIONS_TABLE);
-  const stored = rows[0] as Partial<GeoJSON.FeatureCollection> | undefined;
-  return Array.isArray(stored?.features) ? stored.features : [];
-}
-
 /** Every id already claimed by stops.txt or locations.geojson, and by which. */
-export async function readIdOwners(
-  database: RowSource
-): Promise<Map<string, string>> {
+export function readIdOwners(feed: EditorFeed): Map<string, string> {
   const owners = new Map<string, string>();
-  const stops = await database.getAllRows(specStoreName(GTFS_TABLES.STOPS));
-  for (const stop of stops) {
-    const id = String(stop.stop_id ?? '').trim();
+  for (const stop of feed.table('stops')) {
+    const id = (stop.stop_id ?? '').trim();
     if (id !== '') {
       owners.set(id, t('ids.ownerStop'));
     }
   }
-  for (const feature of await readZoneFeatures(database)) {
+  for (const feature of getZoneFeatures(feed)) {
     const id = String(feature.id ?? '').trim();
     if (id !== '') {
       owners.set(id, t('ids.ownerZone'));
@@ -50,15 +33,10 @@ export async function readIdOwners(
  * stop or zone is checked against the whole namespace, so the location groups
  * go on top.
  */
-export async function readNewLocationIdOwners(
-  database: RowSource
-): Promise<Map<string, string>> {
-  const owners = await readIdOwners(database);
-  const groups = await database.getAllRows(
-    specStoreName(GTFS_TABLES.LOCATION_GROUPS)
-  );
-  for (const group of groups) {
-    const id = String(group.location_group_id ?? '').trim();
+export function readNewLocationIdOwners(feed: EditorFeed): Map<string, string> {
+  const owners = readIdOwners(feed);
+  for (const group of feed.table('location_groups')) {
+    const id = (group.location_group_id ?? '').trim();
     if (id !== '' && !owners.has(id)) {
       owners.set(id, t('ids.ownerGroup'));
     }

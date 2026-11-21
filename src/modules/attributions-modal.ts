@@ -53,6 +53,7 @@ export async function showAttributionsModal(
 
   const config: EditableTableConfig = {
     instanceId: INSTANCE_ID,
+    scrollRows: true,
     tableName: GTFS_TABLES.ATTRIBUTIONS,
     rows: [],
     deps,
@@ -71,9 +72,7 @@ export async function showAttributionsModal(
     if (!panel) {
       return;
     }
-    config.rows = await deps.gtfsDatabase.getAllRows(
-      specStoreName(GTFS_TABLES.ATTRIBUTIONS)
-    );
+    config.rows = [...deps.feed.table(specStoreName(GTFS_TABLES.ATTRIBUTIONS))];
     panel.innerHTML = await renderEditableTable(config);
 
     if (!pendingRowKey) {

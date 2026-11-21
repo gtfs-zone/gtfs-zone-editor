@@ -62,6 +62,9 @@ export const issues: Translation<typeof en> = {
   'issues.duplicateKey': 'mit demselben Primärschlüssel wie eine andere Zeile',
   'issues.frequencyOverlap': 'mit überlappenden Taktzeiträumen',
   'issues.frequencyEnd': 'deren end_time auf eine Abfahrt fällt',
+  'issues.unknownFile': '{file} ist keine GTFS-Datei',
+  'issues.unknownFileNote':
+    'Wird nicht zum Bearbeiten geladen und unverändert exportiert.',
   'issues.recordTitle': 'Probleme mit diesem Datensatz',
   'issues.danglingRef': '{field} verweist auf „{value}“, das nicht existiert',
   'issues.danglingNote':
@@ -69,5 +72,4 @@ export const issues: Translation<typeof en> = {
   'issues.gone': 'Dieses Problem ist bereits behoben',
   'issues.unknownAction': 'Unbekannte Aktion {id}',
   'issues.confirmTitle': '{label}?',
-  'issues.title': 'Feed-Probleme',
 };

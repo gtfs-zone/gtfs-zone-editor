@@ -36,13 +36,17 @@ import {
   renderInlineEntityFields,
 } from '../utils/inline-editable-field';
 import { installStopAreasField } from '../utils/stop-areas-field';
-import type {
-  EditableTableDeps,
-  EditableTablePatchManager,
-} from './editable-table';
-import { renderIssueCard } from 'gtfs-zone-web-common/ui/issue-card';
+import type { EditableTableDeps } from './editable-table';
+import {
+  attachIssueCard,
+  renderIssueCard,
+} from 'gtfs-zone-web-common/ui/issue-card';
 import { installGuideButtons } from 'gtfs-zone-web-common/ui/help-modal';
-import { getFeedIssues, refreshFeedIssuesIfStale } from './feed-issues';
+import {
+  feedIssuesNeedRefresh,
+  getFeedIssues,
+  refreshFeedIssuesIfStale,
+} from './feed-issues';
 import { navigateToIssueItem, runFeedIssueAction } from './feed-issues-modal';
 import { GTFS_TABLES } from '../types/gtfs';
 import { nextEntityId } from '../utils/inline-entity-creator';
@@ -65,10 +69,6 @@ import {
 import { renderNavIcon } from 'gtfs-zone-web-common/ui/nav-icons';
 import { promptNewEntity } from './entity-form-modal';
 import { showNewServiceModal } from './new-service-modal';
-import type {
-  RenameDatabase,
-  RenamePatchManager,
-} from '../utils/rename-entity';
 import { installRenameAction } from '../utils/rename-action';
 import { showOptionPickerModal } from './option-picker-modal';
 import {
@@ -80,27 +80,37 @@ import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import {
   getCurrentPageState,
   navigateToHome,
-  openModal,
   navigateToLocationGroup,
   navigateToZone,
 } from './navigation-actions';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import { renderRouteDiagram, ROUTE_DIAGRAM_ROW } from './route-diagram';
-import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
-import {
-  applyZoneFeatures,
-  getZoneFeatures,
-  LOCATIONS_ROW_KEY,
-  LOCATIONS_TABLE,
-} from './zone-store';
+import { getZoneFeatures, zoneFileChange } from './zone-store';
 import {
   attachServiceTimelineListeners,
   filterServiceDataMap,
+  isServiceActive,
   loadServiceData,
   loadTripCounts,
+  renderNoTimeline,
   renderServiceTimeline,
-  type ServiceTimelineSource,
+  renderServiceTimelineFrame,
+  renderServiceTimelineRows,
+  serviceDateBounds,
+  sortServiceEntries,
+  timelineFrame,
+  timelineSpan,
+  type ServiceData,
+  type TimelineFrame,
 } from './service-timeline';
+import {
+  bindListSearch,
+  mountLazyList,
+  type LazyList,
+} from 'gtfs-zone-web-common/ui/lazy-list';
+import { formatGtfsDateRange, todayGtfsDate } from '../utils/gtfs-date';
+import { CONFIG } from '../config';
 import { normalizeAgencyId } from '../utils/agency-helpers';
 import { feedBounds, trimOrExtendServices } from '../utils/feed-bounds';
 import {
@@ -115,6 +125,24 @@ import {
 import { introHtml } from '../intro';
 import { t } from '../i18n/messages';
 
+/** The home panel's issues section; `data-pending` until validation lands. */
+const HOME_ISSUES_ID = 'home-issues';
+const HOME_SERVICES_LIST_ID = 'home-services-list';
+const HOME_SERVICES_FILTER_ID = 'home-services-filter';
+
+/** The home services list: every service, and what the list shows of it. */
+interface HomeServices {
+  /** Running today first, then `sortServiceEntries` order. */
+  entries: Array<[string, ServiceData]>;
+  tripCounts: Map<string, number>;
+  /** Null when no service has a date. */
+  frame: TimelineFrame | null;
+  filter: string;
+  /** Rows the last list drew, redrawn after an edit's re-render. */
+  shown: number;
+  list: LazyList<[string, ServiceData]> | null;
+}
+
 /** Marks the route page's network picker. */
 const ROUTE_NETWORK_FIELD = 'route-network-field';
 
@@ -125,46 +153,7 @@ const CREATE_NETWORK = '\0create-network';
  * Interface for injected dependencies
  */
 export interface ContentRendererDependencies {
-  // GTFS data relationships
-  relationships: {
-    getAgenciesAsync: () => Promise<unknown[]>;
-    getRoutesForAgencyAsync: (agency_id: string) => Promise<unknown[]>;
-    getTripsForRouteAsync: (route_id: string) => Promise<unknown[]>;
-    getStopTimesForTripAsync: (trip_id: string) => Promise<unknown[]>;
-    getStopAsync: (stop_id: string) => Promise<unknown>;
-    getAgencyAsync: (agency_id: string) => Promise<unknown>;
-    getRouteAsync: (route_id: string) => Promise<unknown>;
-    // Flex lookups: synchronous, they read the parser's in-memory tables.
-    getTripsForZone?: (location_id: string) => Array<Record<string, unknown>>;
-    getTripsForLocationGroup?: (
-      location_group_id: string
-    ) => Array<Record<string, unknown>>;
-  };
-
-  // GTFS database access for stop controller
-  gtfsDatabase: {
-    queryRows: (
-      tableName: string,
-      filter?: Record<string, unknown>
-    ) => Promise<unknown[]>;
-    getRow: (tableName: string, key: string) => Promise<unknown | undefined>;
-    getAllRows: (tableName: string) => Promise<unknown[]>;
-    insertRows: (tableName: string, rows: unknown[]) => Promise<void>;
-    updateRow?: (
-      tableName: string,
-      key: string,
-      data: Record<string, unknown>
-    ) => Promise<void>;
-    deleteRow?: (tableName: string, key: string) => Promise<void>;
-  };
-
-  // GTFS relationships for stop controller (optional)
-  gtfsRelationships?: {
-    getAgenciesServingStop?: (stop_id: string) => Promise<unknown[]>;
-    getRoutesServingStop?: (stop_id: string) => Promise<unknown[]>;
-    getRoutesForService?: (service_id: string) => Promise<unknown[]>;
-    getTripsForService?: (service_id: string) => Promise<unknown[]>;
-  };
+  feed: EditorFeed;
 
   // Service days controller for calendar editing
   serviceDaysController: {
@@ -201,49 +190,6 @@ export interface ContentRendererDependencies {
     direction_id?: string
   ) => void;
   onEntityCreated?: () => void;
-
-  // Parser access, for the route page's diagram (GTFSRouteSource reads the
-  // virtual tables directly). Absent, the diagram section is skipped.
-  gtfsParser?: GTFSParser;
-
-  // Patch manager for recording edits
-  patchManager?: {
-    recordUpdate: (
-      table: string,
-      id: string,
-      before: Record<string, unknown>,
-      after: Record<string, unknown>
-    ) => Promise<void>;
-    recordInsert: (
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ) => Promise<void>;
-    recordDelete: (
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ) => Promise<void>;
-    recordBatchInsert: (
-      ops: Array<{
-        table: string;
-        id: string;
-        record: Record<string, unknown>;
-      }>,
-      label?: string
-    ) => Promise<void>;
-    recordBatchDelete: (
-      ops: Array<{
-        table: string;
-        id: string;
-        record: Record<string, unknown>;
-      }>,
-      label?: string
-    ) => Promise<void>;
-    // Editing a key field of a composite-key table (the stop page's transfers)
-    // re-keys the row, which the editable table records as delete plus insert.
-    recordBatchMixed: EditableTablePatchManager['recordBatchMixed'];
-  };
 }
 
 /**
@@ -258,17 +204,19 @@ export class PageContentRenderer {
   private zoneViewController: ZoneViewController;
   private locationGroupViewController: LocationGroupViewController;
 
-  // Time the last applyMapFocus took, folded into the renderHome timing line.
+  // Time the last focusMap took, folded into the renderHome timing line.
   private lastMapFocusMs = 0;
+
+  // The services list of the last home render, filtered and paged in place.
+  private homeServices: HomeServices | null = null;
 
   constructor(dependencies: ContentRendererDependencies) {
     this.dependencies = dependencies;
 
     // Initialize StopViewController with current dependencies
+    const feed = dependencies.feed;
     const stopViewDependencies: StopViewDependencies = {
-      gtfsDatabase: dependencies.gtfsDatabase,
-      gtfsRelationships: dependencies.gtfsRelationships || {},
-      editableDeps: this.editableDeps(),
+      feed,
       onStopClick: dependencies.onStopClick,
       onStopHover: (stop_id) => dependencies.mapController.hoverStop(stop_id),
       onTransferHover: (edge) => dependencies.mapController.hoverTransfer(edge),
@@ -280,7 +228,7 @@ export class PageContentRenderer {
 
     // Initialize PathwayViewController
     const pathwayViewDependencies: PathwayViewDependencies = {
-      gtfsDatabase: dependencies.gtfsDatabase,
+      feed,
       onDeletePathway: (pathway_id) => this.handleDeletePathway(pathway_id),
     };
     this.pathwayViewController = new PathwayViewController(
@@ -289,10 +237,7 @@ export class PageContentRenderer {
 
     // Initialize ZoneViewController (on-demand zones, locations.geojson)
     const zoneViewDependencies: ZoneViewDependencies = {
-      gtfsParser: dependencies.gtfsParser,
-      patchManager: dependencies.patchManager ?? null,
-      getTripsForZone: dependencies.relationships.getTripsForZone,
-      getRouteAsync: dependencies.relationships.getRouteAsync,
+      feed,
       onRouteClick: dependencies.onRouteClick,
       onGeometryChanged: () => {
         // The page re-render does not touch the map, so refresh the polygons too.
@@ -311,11 +256,7 @@ export class PageContentRenderer {
 
     // Initialize LocationGroupViewController
     const locationGroupViewDependencies: LocationGroupViewDependencies = {
-      gtfsDatabase: dependencies.gtfsDatabase,
-      patchManager: dependencies.patchManager ?? null,
-      getTripsForLocationGroup:
-        dependencies.relationships.getTripsForLocationGroup,
-      getRouteAsync: dependencies.relationships.getRouteAsync,
+      feed,
       onStopClick: dependencies.onStopClick,
       onRouteClick: dependencies.onRouteClick,
       onMembersChanged: () => dependencies.onEntityCreated?.(),
@@ -326,7 +267,7 @@ export class PageContentRenderer {
 
     // Initialize AgencyViewController with current dependencies
     const agencyViewDependencies: AgencyViewDependencies = {
-      gtfsDatabase: dependencies.gtfsDatabase,
+      feed,
       onRouteClick: dependencies.onRouteClick,
       onDeleteAgency: (agency_id) => this.handleDeleteAgency(agency_id),
     };
@@ -336,10 +277,8 @@ export class PageContentRenderer {
 
     // Initialize ServiceViewController with current dependencies
     const serviceViewDependencies: ServiceViewDependencies = {
-      gtfsDatabase: dependencies.gtfsDatabase,
-      gtfsRelationships: dependencies.gtfsRelationships || {},
+      feed,
       serviceDaysController: dependencies.serviceDaysController,
-      patchManager: dependencies.patchManager ?? null,
       onAgencyClick: dependencies.onAgencyClick,
       onRouteClick: dependencies.onRouteClick,
       onTimetableClick: dependencies.onTimetableClick,
@@ -354,73 +293,22 @@ export class PageContentRenderer {
     // need the same dependencies this renderer holds. Installing here rather
     // than in addEventListeners keeps it to once per renderer, and the fields
     // are rendered before any listener pass runs anyway.
-    installInlineEditableFields({
-      gtfsDatabase: {
-        getRow: (table, key) =>
-          dependencies.gtfsDatabase.getRow(table, key) as Promise<
-            Record<string, unknown> | undefined
-          >,
-        getAllRows: (table) =>
-          dependencies.gtfsDatabase.getAllRows(table) as Promise<
-            Record<string, unknown>[]
-          >,
-        insertRows: (table, rows) =>
-          dependencies.gtfsDatabase.insertRows(table, rows),
-      },
-      patchManager: dependencies.patchManager ?? null,
-    });
+    installInlineEditableFields({ feed });
 
-    // The stop page's area chips write stop_areas.txt, which the stop view
-    // controller's query-only handle cannot do.
-    installStopAreasField({
-      gtfsDatabase: dependencies.gtfsDatabase,
-      patchManager: dependencies.patchManager ?? null,
-    });
+    // The stop page's area chips write stop_areas.txt.
+    installStopAreasField({ feed });
 
     // ID triggers open the impact modal from wherever they were rendered,
-    // including inside a modal, so the listeners are document-level. A
-    // read-only database handle installs nothing, and the trigger then reports
-    // that it cannot write.
-    const renameDeps = this.renameDeps();
-    if (renameDeps) {
-      installRenameAction({
-        ...renameDeps,
-        onRenamed: () => dependencies.onEntityCreated?.(),
-      });
-    }
+    // including inside a modal, so the listeners are document-level.
+    installRenameAction({
+      feed,
+      onRenamed: () => dependencies.onEntityCreated?.(),
+    });
   }
 
-  /**
-   * The writing handle an embedded editable table needs.
-   *
-   * Null when the page has no patch manager or a read-only database handle: a
-   * table that cannot record its edits must not be rendered at all.
-   */
-  private editableDeps(): EditableTableDeps | undefined {
-    const db = this.dependencies.gtfsDatabase;
-    const patchManager = this.dependencies.patchManager;
-    if (!patchManager || !db.updateRow || !db.deleteRow) {
-      console.warn(
-        '[PageContentRenderer] no editable database handle, embedded tables are skipped'
-      );
-      return undefined;
-    }
-    const updateRow = db.updateRow;
-    const deleteRow = db.deleteRow;
-    return {
-      gtfsDatabase: {
-        getAllRows: (table) =>
-          db.getAllRows(table) as Promise<Record<string, unknown>[]>,
-        getRow: (table, key) =>
-          db.getRow(table, key) as Promise<Record<string, unknown> | undefined>,
-        queryRows: (table, filter) =>
-          db.queryRows(table, filter) as Promise<Record<string, unknown>[]>,
-        insertRows: (table, rows) => db.insertRows(table, rows),
-        updateRow: (table, key, data) => updateRow(table, key, data),
-        deleteRow: (table, key) => deleteRow(table, key),
-      },
-      patchManager,
-    };
+  /** The writing handle an embedded editable table needs. */
+  private editableDeps(): EditableTableDeps {
+    return { feed: this.dependencies.feed };
   }
 
   /**
@@ -432,10 +320,6 @@ export class PageContentRenderer {
    */
   private async runIssueAction(button: HTMLButtonElement): Promise<void> {
     const deps = this.editableDeps();
-    if (!deps) {
-      notify.error(t('page.readOnly'));
-      return;
-    }
     const key = button.getAttribute('data-issue-key') ?? '';
     const actionId = button.getAttribute('data-issue-action') ?? '';
     button.disabled = true;
@@ -457,7 +341,10 @@ export class PageContentRenderer {
    * map back to the old object. Skipped outright when page state has moved on
    * since this render was requested.
    */
-  private applyMapFocus(pageState: PageState): void {
+  focusMap(pageState: PageState): void {
+    if (!this.dependencies.feed.isOpen) {
+      return;
+    }
     if (JSON.stringify(getCurrentPageState()) !== JSON.stringify(pageState)) {
       console.log(
         `[PageContentRenderer] stale render for ${pageState.type}, skipping map focus`
@@ -501,7 +388,7 @@ export class PageContentRenderer {
     const focusStart = performance.now();
     // A camera error must not take the sidebar render down with it.
     try {
-      this.applyMapFocus(pageState);
+      this.focusMap(pageState);
     } catch (error) {
       console.error(
         `[PageContentRenderer] map focus failed for ${pageState.type}:`,
@@ -585,50 +472,37 @@ export class PageContentRenderer {
    * Render home page (feed info and agencies list)
    */
   private async renderHome(): Promise<string> {
+    const feed = this.dependencies.feed;
+    // Fresh boot renders home before any feed is open.
+    if (!feed.isOpen) {
+      console.log('[PageContentRenderer] renderHome: no feed open');
+      this.homeServices = null;
+      return `<div class="p-4"><div class="text-center py-6 opacity-70">${t('page.noFeedOpen')}</div></div>`;
+    }
     const t0 = performance.now();
-
-    // Edits since the last pass are not reflected in the published issues.
-    await refreshFeedIssuesIfStale();
-    const tIssues = performance.now();
-
-    const agencies =
-      (await this.dependencies.relationships.getAgenciesAsync()) as Array<
-        Record<string, string>
-      >;
+    const agencies = feed.table('agency');
 
     // Get feed_info data
-    const feedInfo = await this.getFeedInfo();
+    const feedInfo = this.getFeedInfo();
     const tMeta = performance.now();
 
-    // Every service in the feed, rendered as the shared timeline
-    const timelineSource = this.serviceTimelineSource();
-    const serviceData = await loadServiceData(timelineSource);
+    const serviceData = await loadServiceData(feed);
     const serviceCount = serviceData.size;
     const tServices = performance.now();
-    const tripCounts = await loadTripCounts(timelineSource);
+    const tripCounts = await loadTripCounts(feed);
     const tTripCounts = performance.now();
-    const bounds = await feedBounds(this.dependencies.gtfsDatabase);
-    const canBulkTrimExtend = Boolean(
-      this.dependencies.gtfsDatabase.updateRow && this.dependencies.patchManager
-    );
-    const bulkTrimTitle = !canBulkTrimExtend
-      ? t('page.noPatchManager')
-      : bounds.start
-        ? t('page.trimAllTitle', { date: bounds.start })
-        : t('page.noFeedStart');
-    const bulkExtendTitle = !canBulkTrimExtend
-      ? t('page.noPatchManager')
-      : bounds.end
-        ? t('page.extendAllTitle', { date: bounds.end })
-        : t('page.noFeedEnd');
+    const bounds = feedBounds(feed);
+    const bulkTrimTitle = bounds.start
+      ? t('page.trimAllTitle', { date: bounds.start })
+      : t('page.noFeedStart');
+    const bulkExtendTitle = bounds.end
+      ? t('page.extendAllTitle', { date: bounds.end })
+      : t('page.noFeedEnd');
 
     // Routes without agency_id belong to the agency when there is only one
     const routeCounts = new Map<string, number>();
-    const routeRows = (await this.dependencies.gtfsDatabase.getAllRows(
-      'routes'
-    )) as Array<Record<string, unknown>>;
-    for (const route of routeRows) {
-      let agency_id = normalizeAgencyId(route.agency_id as string);
+    for (const route of feed.table('routes')) {
+      let agency_id = normalizeAgencyId(route.agency_id);
       if (agency_id === '' && agencies.length === 1) {
         agency_id = normalizeAgencyId(agencies[0].agency_id);
       }
@@ -645,31 +519,28 @@ export class PageContentRenderer {
       .join('');
 
     const tTimelineStart = performance.now();
-    const timelineHtml =
+    const servicesHtml =
       serviceCount === 0
         ? ''
-        : renderServiceTimeline(serviceData, { tripCounts });
+        : this.renderHomeServices(serviceData, tripCounts);
     const tTimeline = performance.now();
 
-    const feedIssues = getFeedIssues();
-    // Only worth encouraging export once there is something to export, and
-    // nothing left to clean up first.
-    const feedIsEmpty = !this.dependencies.gtfsParser
-      ?.getAllFileNames()
-      .some(
-        (f) =>
-          (this.dependencies.gtfsParser!.getFileDataSync(f)?.length ?? 0) > 0
-      );
-    const cleanFeedEncouragement =
-      !feedIsEmpty && feedIssues.every((row) => row.count === 0);
+    const feedIsEmpty = !Object.values(await feed.read('counts')).some(
+      (n) => n > 0
+    );
+    // Validation of a large feed takes seconds to minutes, so the issues
+    // section fills in on its own once the pass lands (fillHomeIssues).
+    const issuesPending = feedIssuesNeedRefresh();
+    const issuesHtml = issuesPending
+      ? `<div class="flex items-center gap-2 text-sm opacity-70"><span class="loading loading-spinner loading-sm"></span>${t('page.issuesChecking')}</div>`
+      : this.renderHomeIssues(feedIsEmpty);
 
     const html = `
       <div class="p-4 space-y-4">
         ${feedIsEmpty ? `<div class="card bg-base-100 shadow-lg"><div class="card-body p-4">${introHtml()}</div></div>` : ''}
         ${await this.renderFeedInfoProperties(feedInfo)}
 
-        ${renderIssueCard(t('page.feedIssues'), feedIssues)}
-        ${cleanFeedEncouragement ? this.renderCleanFeedEncouragement() : ''}
+        <div id="${HOME_ISSUES_ID}" class="space-y-4"${issuesPending ? ` data-pending="${feedIsEmpty ? 'empty' : 'data'}"` : ''}>${issuesHtml}</div>
 
         <div class="space-y-4">
           <div class="flex items-center justify-between gap-4">
@@ -710,14 +581,14 @@ export class PageContentRenderer {
                 class="btn btn-xs btn-outline"
                 id="bulk-trim-all-btn"
                 title="${escapeHtml(bulkTrimTitle)}"
-                ${bounds.start && canBulkTrimExtend ? '' : 'disabled'}
+                ${bounds.start ? '' : 'disabled'}
               >${t('page.trimAll')}</button>
               <button
                 type="button"
                 class="btn btn-xs btn-outline"
                 id="bulk-extend-all-btn"
                 title="${escapeHtml(bulkExtendTitle)}"
-                ${bounds.end && canBulkTrimExtend ? '' : 'disabled'}
+                ${bounds.end ? '' : 'disabled'}
               >${t('page.extendAll')}</button>
               <button
                 type="button"
@@ -737,7 +608,7 @@ export class PageContentRenderer {
                 </div>`
               : `<div class="card bg-base-100 shadow-lg">
                   <div class="card-body p-4">
-                    ${timelineHtml}
+                    ${servicesHtml}
                   </div>
                 </div>`
           }
@@ -747,44 +618,185 @@ export class PageContentRenderer {
     `;
 
     console.log(
-      `[PageContentRenderer] renderHome: issues=${Math.round(tIssues - t0)}ms ` +
-        `meta=${Math.round(tMeta - tIssues)}ms ` +
+      `[PageContentRenderer] renderHome: ` +
+        `meta=${Math.round(tMeta - t0)}ms ` +
         `services=${Math.round(tServices - tMeta)}ms ` +
         `tripCounts=${Math.round(tTripCounts - tServices)}ms ` +
         `timeline=${Math.round(tTimeline - tTimelineStart)}ms ` +
         `mapFocus=${Math.round(this.lastMapFocusMs)}ms ` +
-        `total=${Math.round(tTimeline - t0)}ms ` +
+        `total=${Math.round(performance.now() - t0)}ms ` +
         `services=${serviceCount} agencies=${agencies.length} ` +
+        `issues=${issuesPending ? 'pending' : 'current'} ` +
         `html=${Math.round(html.length / 1024)}kb`
     );
 
     return html;
   }
 
+  /** The issue card, or the clean-feed note when there is nothing to fix. */
+  private renderHomeIssues(feedIsEmpty: boolean): string {
+    const feedIssues = getFeedIssues();
+    // Only worth encouraging export once there is something to export, and
+    // nothing left to clean up first.
+    const clean = !feedIsEmpty && feedIssues.every((row) => row.count === 0);
+    return `
+      ${renderIssueCard(t('page.feedIssues'), feedIssues)}
+      ${clean ? this.renderCleanFeedEncouragement() : ''}
+    `;
+  }
+
+  /**
+   * Fill a pending home issues section once validation has caught up with the
+   * feed. A section the page has since re-rendered away is left alone: its
+   * replacement fills itself.
+   */
+  private async fillHomeIssues(slot: HTMLElement): Promise<void> {
+    const feedIsEmpty = slot.dataset.pending === 'empty';
+    try {
+      // A pass discarded because the feed moved on leaves the issues stale.
+      do {
+        await refreshFeedIssuesIfStale();
+      } while (slot.isConnected && feedIssuesNeedRefresh());
+    } catch (error) {
+      console.error('[PageContentRenderer] home issues failed:', error);
+      if (slot.isConnected) {
+        slot.innerHTML = this.renderError(t('page.loadFailed'));
+      }
+      return;
+    }
+    if (!slot.isConnected) {
+      console.log('[PageContentRenderer] home re-rendered before its issues');
+      return;
+    }
+    slot.innerHTML = this.renderHomeIssues(feedIsEmpty);
+    delete slot.dataset.pending;
+    installGuideButtons(slot);
+    this.attachIssueCardListeners(slot);
+    console.log('[PageContentRenderer] home issues filled in');
+  }
+
+  /**
+   * The services summary, filter and the timeline frame whose rows
+   * `attachHomeServicesListeners` appends a page at a time.
+   */
+  private renderHomeServices(
+    data: Map<string, ServiceData>,
+    tripCounts: Map<string, number>
+  ): string {
+    const today = todayGtfsDate();
+    const sorted = sortServiceEntries(data, tripCounts);
+    const active = sorted.filter(([, sd]) =>
+      isServiceActive(sd.calendar, sd.exceptions, today)
+    );
+    const activeIds = new Set(active.map(([sid]) => sid));
+    const entries = [
+      ...active,
+      ...sorted.filter(([sid]) => !activeIds.has(sid)),
+    ];
+
+    let first = '';
+    let last = '';
+    for (const [, sd] of entries) {
+      const b = serviceDateBounds(sd);
+      if (b.first !== '99999999' && (first === '' || b.first < first)) {
+        first = b.first;
+      }
+      if (b.last !== '99999999' && b.last > last) {
+        last = b.last;
+      }
+    }
+
+    // A filter typed before an edit's re-render carries over to the new list,
+    // and so do the rows it had drawn.
+    const previous = this.homeServices;
+    previous?.list?.destroy();
+    const span = timelineSpan(data);
+    this.homeServices = {
+      entries,
+      tripCounts,
+      frame: span ? timelineFrame(span, data.keys()) : null,
+      filter: previous?.filter ?? '',
+      shown: previous?.list?.shown() ?? previous?.shown ?? 0,
+      list: null,
+    };
+
+    const summary = [
+      t('count.services', { count: entries.length }),
+      t('page.servicesActiveToday', { count: active.length }),
+      ...(first && last ? [formatGtfsDateRange(first, last)] : []),
+    ].join(', ');
+
+    const timeline =
+      entries.length === 0
+        ? renderNoTimeline('noData')
+        : this.homeServices.frame
+          ? renderServiceTimelineFrame(this.homeServices.frame, {
+              tripCounts,
+            })
+          : renderNoTimeline('noDates');
+
+    return `
+      <div class="space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="text-sm opacity-70">${escapeHtml(summary)}</div>
+          <input
+            type="search"
+            id="${HOME_SERVICES_FILTER_ID}"
+            class="input input-sm w-56"
+            placeholder="${escapeHtml(t('page.filterServices'))}"
+            value="${escapeHtml(this.homeServices.filter)}"
+          />
+        </div>
+        <div id="${HOME_SERVICES_LIST_ID}">${timeline}</div>
+      </div>
+    `;
+  }
+
+  /** The home services lazy list and its filter, after a home render. */
+  private attachHomeServicesListeners(container: HTMLElement): void {
+    const state = this.homeServices;
+    const tbody = container.querySelector<HTMLElement>(
+      `#${HOME_SERVICES_LIST_ID} [data-timeline-rows]`
+    );
+    const input = container.querySelector<HTMLInputElement>(
+      `#${HOME_SERVICES_FILTER_ID}`
+    );
+    if (!state?.frame || !tbody || !input) {
+      return;
+    }
+    const frame = state.frame;
+    const list = mountLazyList<[string, ServiceData]>(tbody, {
+      name: 'home services',
+      items: [],
+      pageSize: CONFIG.MODAL_LIST_ROWS,
+      renderPage: (slice) =>
+        renderServiceTimelineRows(frame, slice, {
+          tripCounts: state.tripCounts,
+        }),
+      afterAppend: (nodes) => {
+        for (const node of nodes) {
+          attachServiceTimelineListeners(node, (service_id) => {
+            this.dependencies.onServiceClick?.(service_id);
+          });
+        }
+      },
+      match: ([sid], needle) => sid.toLowerCase().includes(needle),
+      noMatch: (needle) => t('page.noServiceMatch', { filter: needle }),
+    });
+    state.list = list;
+    list.setNeedle(state.filter);
+    list.setItems(state.entries, { through: state.shown - 1 });
+    bindListSearch(input, (needle) => {
+      state.filter = needle;
+      list.setNeedle(needle);
+    });
+  }
+
   /**
    * Get feed_info data
    */
-  private async getFeedInfo(): Promise<Record<string, unknown>> {
-    try {
-      const feedInfoRows =
-        await this.dependencies.gtfsDatabase.queryRows('feed_info');
-      return feedInfoRows.length > 0
-        ? (feedInfoRows[0] as Record<string, unknown>)
-        : {};
-    } catch (error) {
-      console.error('Error getting feed_info:', error);
-      return {};
-    }
-  }
-
-  /** Adapter over the injected database for the shared services timeline. */
-  private serviceTimelineSource(): ServiceTimelineSource {
-    return {
-      getAllRows: (tableName: string) =>
-        this.dependencies.gtfsDatabase.getAllRows(tableName) as Promise<
-          Record<string, unknown>[]
-        >,
-    };
+  private getFeedInfo(): Record<string, unknown> {
+    return this.dependencies.feed.table('feed_info')[0] ?? {};
   }
 
   /**
@@ -827,30 +839,22 @@ export class PageContentRenderer {
    * Render route page (route properties + services list)
    */
   private async renderRoute(route_id: string): Promise<string> {
-    const trips =
-      await this.dependencies.relationships.getTripsForRouteAsync(route_id);
+    const feed = this.dependencies.feed;
+    const trips = await feed.find('trips', 'route_id', route_id);
 
     // Fetch route data for the header
-    const routeRows = await this.dependencies.gtfsDatabase.queryRows('routes', {
+    const routeData: Record<string, string> = feed.byKey(
+      'routes',
+      route_id
+    ) ?? {
       route_id,
-    });
-    const routeData = (
-      routeRows.length > 0 ? routeRows[0] : { route_id }
-    ) as Record<string, string>;
+    };
 
     // Group trips by service_id for service list
-    const serviceGroups = trips.reduce(
-      (groups: Record<string, unknown[]>, trip: unknown) => {
-        const tripData = trip as Record<string, unknown>;
-        const service_id = tripData.service_id as string;
-        if (!groups[service_id]) {
-          groups[service_id] = [];
-        }
-        groups[service_id].push(trip);
-        return groups;
-      },
-      {}
-    );
+    const serviceGroups: Record<string, FeedRow[]> = {};
+    for (const trip of trips) {
+      (serviceGroups[trip.service_id] ??= []).push(trip);
+    }
 
     // network_id is not edited here: network membership is held in
     // route_networks.txt and only written back onto routes.txt at export.
@@ -863,17 +867,11 @@ export class PageContentRenderer {
     const networkFieldHtml = await this.renderRouteNetworkField(route_id);
 
     // Get all available services from calendar, then merge in calendar_dates-only services
-    const allServices = (await this.dependencies.gtfsDatabase.getAllRows(
-      'calendar'
-    )) as Record<string, unknown>[];
+    const allServices: Record<string, unknown>[] = [...feed.table('calendar')];
     const calendarServiceIds = new Set(
       allServices.map((s) => s.service_id as string)
     );
-    const calendarDatesRows = (await this.dependencies.gtfsDatabase.getAllRows(
-      'calendar_dates'
-    )) as Record<string, unknown>[];
-    for (const row of calendarDatesRows) {
-      const sid = row.service_id as string;
+    for (const sid of await feed.distinct('calendar_dates', 'service_id')) {
       if (!calendarServiceIds.has(sid)) {
         calendarServiceIds.add(sid);
         allServices.push({ service_id: sid });
@@ -938,7 +936,7 @@ export class PageContentRenderer {
     // Timeline scoped to the services this route actually runs. The fixed
     // route context makes a row click land on that route's timetable.
     const routeServiceData = filterServiceDataMap(
-      await loadServiceData(this.serviceTimelineSource()),
+      await loadServiceData(feed, Object.keys(serviceGroups)),
       Object.keys(serviceGroups)
     );
 
@@ -964,7 +962,7 @@ export class PageContentRenderer {
                   ? `<div class="text-center py-6 opacity-70 mt-4">
                     ${t('page.noTimetables')}
                   </div>`
-                  : `<div class="max-h-96 overflow-y-auto mt-4">
+                  : `<div class="mt-4">
                     ${renderServiceTimeline(routeServiceData, { route_id, tripCounts: routeTripCounts })}
                   </div>`
             }
@@ -975,9 +973,7 @@ export class PageContentRenderer {
 
     // Covers every trip of the route, not one service, so branches that only a
     // few timetables run are visible from the route page.
-    const diagramHTML = this.dependencies.gtfsParser
-      ? renderRouteDiagram(this.dependencies.gtfsParser, routeData)
-      : '';
+    const diagramHTML = await renderRouteDiagram(feed, routeData);
 
     return `
       <div class="p-4 space-y-4">
@@ -1016,12 +1012,9 @@ export class PageContentRenderer {
    * is why this is one value rather than a list.
    */
   private async renderRouteNetworkField(route_id: string): Promise<string> {
-    const assignment = (await this.dependencies.gtfsDatabase.getRow(
-      'route_networks',
-      route_id
-    )) as Record<string, unknown> | undefined;
-    const network_id = String(assignment?.network_id ?? '');
-    const label = network_id === '' ? '' : await this.networkLabel(network_id);
+    const assignment = this.dependencies.feed.byKey('route_networks', route_id);
+    const network_id = assignment?.network_id ?? '';
+    const label = network_id === '' ? '' : this.networkLabel(network_id);
 
     return `
       <fieldset class="fieldset">
@@ -1041,11 +1034,8 @@ export class PageContentRenderer {
   }
 
   /** A network's display label, falling back to the raw id. */
-  private async networkLabel(network_id: string): Promise<string> {
-    const row = (await this.dependencies.gtfsDatabase.getRow(
-      'networks',
-      network_id
-    )) as Record<string, string> | undefined;
+  private networkLabel(network_id: string): string {
+    const row = this.dependencies.feed.byKey('networks', network_id);
     return row
       ? renderOptionLabel(getEntityDisplay('networks', row))
       : network_id;
@@ -1063,9 +1053,7 @@ export class PageContentRenderer {
       return;
     }
 
-    const networks = (await this.dependencies.gtfsDatabase.getAllRows(
-      'networks'
-    )) as Record<string, string>[];
+    const networks = this.dependencies.feed.table('networks');
     const picked = await showOptionPickerModal({
       title: t('page.selectNetwork'),
       options: [
@@ -1096,31 +1084,20 @@ export class PageContentRenderer {
       return;
     }
 
-    const db = this.dependencies.gtfsDatabase;
-    const pm = this.dependencies.patchManager;
-    const existing = (await db.getRow('route_networks', route_id)) as
-      Record<string, unknown> | undefined;
+    const feed = this.dependencies.feed;
+    const existing = feed.byKey('route_networks', route_id);
 
     if (network_id === '') {
       if (existing) {
         console.log(`[Networks] unassign route ${route_id}`);
-        await db.deleteRow?.('route_networks', route_id);
-        await pm?.recordDelete('route_networks', route_id, existing);
+        await feed.apply([deleteOp('route_networks', existing)]);
       }
     } else if (existing) {
       console.log(`[Networks] move route ${route_id} to ${network_id}`);
-      // recordUpdate applies the write itself.
-      await pm?.recordUpdate(
-        'route_networks',
-        route_id,
-        { network_id: existing.network_id ?? '' },
-        { network_id }
-      );
+      await feed.apply([updateOp('route_networks', existing, { network_id })]);
     } else {
       console.log(`[Networks] assign route ${route_id} to ${network_id}`);
-      const record = { network_id, route_id };
-      await db.insertRows('route_networks', [record]);
-      await pm?.recordInsert('route_networks', route_id, record);
+      await feed.apply([insertOp('route_networks', { network_id, route_id })]);
     }
 
     span.dataset.networkId = network_id;
@@ -1128,7 +1105,7 @@ export class PageContentRenderer {
       span,
       network_id === ''
         ? `<span class="opacity-40">${t('page.notInNetwork')}</span>`
-        : escapeHtml(await this.networkLabel(network_id))
+        : escapeHtml(this.networkLabel(network_id))
     );
   }
 
@@ -1136,13 +1113,13 @@ export class PageContentRenderer {
    * Ask for a new network's ID and name and write it. Returns its ID.
    */
   private async createNetwork(): Promise<string | null> {
-    const db = this.dependencies.gtfsDatabase;
+    const feed = this.dependencies.feed;
     let network_id: string | null = null;
     const values = await promptNewEntity({
       title: t('page.newNetwork'),
       id: {
         table: 'networks',
-        suggested: await nextEntityId(db, 'networks', 'network'),
+        suggested: await nextEntityId(feed, 'networks', 'network'),
       },
       fields: [
         {
@@ -1154,19 +1131,46 @@ export class PageContentRenderer {
       validate: () => null,
       onCreate: async (v) => {
         const id = v.network_id;
-        const record = { network_id: id, network_name: v.network_name };
-        await db.insertRows('networks', [record]);
-        await this.dependencies.patchManager?.recordInsert(
-          'networks',
-          id,
-          record
-        );
+        await feed.apply([
+          insertOp('networks', {
+            network_id: id,
+            network_name: v.network_name,
+          }),
+        ]);
         network_id = id;
         console.log(`[Networks] created ${id}`);
       },
     });
 
     return values ? network_id : null;
+  }
+
+  /** The feed issue card's item lists, item links and row actions. */
+  private attachIssueCardListeners(root: HTMLElement): void {
+    // Each row mounts its lazy item list when opened, from the rows the card
+    // was just rendered from.
+    attachIssueCard(root, getFeedIssues());
+
+    // Feed issue card items: navigate to the offending object's own page.
+    // Delegated per list, since pages of items are appended on scroll.
+    root.querySelectorAll('[data-issue-list]').forEach((list) => {
+      list.addEventListener('click', (event) => {
+        const item = (event.target as Element).closest('[data-issue-nav]');
+        if (item) {
+          navigateToIssueItem(item);
+        }
+      });
+    });
+
+    // Feed issue card row actions: a fix for that row's group only.
+    root.querySelectorAll('[data-issue-action]').forEach((button) => {
+      button.addEventListener('click', (event) => {
+        // The button sits inside a <summary>, which would otherwise toggle.
+        event.preventDefault();
+        event.stopPropagation();
+        void this.runIssueAction(button as HTMLButtonElement);
+      });
+    });
   }
 
   addEventListeners(container: HTMLElement): void {
@@ -1296,36 +1300,16 @@ export class PageContentRenderer {
       });
     });
 
-    // Feed issue card items: navigate to the offending object's own page.
-    container.querySelectorAll('[data-issue-nav]').forEach((item) => {
-      item.addEventListener('click', () => navigateToIssueItem(item));
-    });
+    this.attachIssueCardListeners(container);
+    this.attachHomeServicesListeners(container);
 
-    // Feed issue card row actions: a fix for that row's group only.
-    container.querySelectorAll('[data-issue-action]').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        // The button sits inside a <summary>, which would otherwise toggle.
-        event.preventDefault();
-        event.stopPropagation();
-        void this.runIssueAction(button as HTMLButtonElement);
-      });
-    });
-
-    // Feed issue card "Show all n": the group's full list in a modal.
-    container.querySelectorAll('[data-issue-show-all]').forEach((button) => {
-      button.addEventListener('click', () => {
-        void openModal(
-          {
-            type: 'feed_issues',
-            table: button.getAttribute('data-issue-key') ?? undefined,
-          },
-          {
-            // An action run from the modal changes what the card shows.
-            onClosed: () => this.dependencies.onEntityCreated?.(),
-          }
-        );
-      });
-    });
+    // The home issues section renders before validation and fills in after.
+    const issuesSlot = container.querySelector<HTMLElement>(
+      `#${HOME_ISSUES_ID}[data-pending]`
+    );
+    if (issuesSlot) {
+      void this.fillHomeIssues(issuesSlot);
+    }
 
     // Route header timetable button
     const openTimetableBtn = container.querySelector('.open-timetable-btn');
@@ -1413,10 +1397,7 @@ export class PageContentRenderer {
 
   /** Create a service from the route page's "no services" empty state. */
   private async createServiceFromEmptyState(): Promise<void> {
-    const service_id = await showNewServiceModal({
-      database: this.dependencies.gtfsDatabase,
-      patchManager: this.dependencies.patchManager ?? null,
-    });
+    const service_id = await showNewServiceModal(this.dependencies.feed);
     if (service_id !== null) {
       this.dependencies.onEntityCreated?.();
     }
@@ -1424,10 +1405,7 @@ export class PageContentRenderer {
 
   /** Create a service from the route page's service select, then open its timetable. */
   private async createServiceForRoute(routeId: string): Promise<void> {
-    const service_id = await showNewServiceModal({
-      database: this.dependencies.gtfsDatabase,
-      patchManager: this.dependencies.patchManager ?? null,
-    });
+    const service_id = await showNewServiceModal(this.dependencies.feed);
     if (service_id === null) {
       return;
     }
@@ -1468,10 +1446,7 @@ export class PageContentRenderer {
     }
 
     if (entityType === 'service') {
-      const service_id = await showNewServiceModal({
-        database: this.dependencies.gtfsDatabase,
-        patchManager: this.dependencies.patchManager ?? null,
-      });
+      const service_id = await showNewServiceModal(this.dependencies.feed);
       if (service_id !== null) {
         this.dependencies.onEntityCreated?.();
         this.dependencies.onServiceClick?.(service_id);
@@ -1500,31 +1475,23 @@ export class PageContentRenderer {
    * its ID, or null when cancelled.
    */
   private async createAgency(): Promise<string | null> {
-    const db = this.dependencies.gtfsDatabase;
+    const feed = this.dependencies.feed;
     let agency_id: string | null = null;
     const values = await promptNewEntity({
       title: t('page.newAgencyTitle'),
       id: {
         table: 'agency',
-        suggested: await nextEntityId(db, 'agency', 'agency'),
+        suggested: await nextEntityId(feed, 'agency', 'agency'),
       },
       fields: [],
       validate: () => null,
       onCreate: async (v) => {
-        const agencies = (await db.getAllRows('agency')) as Record<
-          string,
-          unknown
-        >[];
+        const agencies = feed.table('agency');
         const record = createDefaultAgency(
           v.agency_id,
-          agencies[0] ? String(agencies[0].agency_timezone ?? '') : ''
-        ) as unknown as Record<string, unknown>;
-        await db.insertRows('agency', [record]);
-        await this.dependencies.patchManager?.recordInsert(
-          'agency',
-          v.agency_id,
-          record
+          agencies[0]?.agency_timezone ?? ''
         );
+        await feed.apply([insertOp('agency', record)]);
         agency_id = v.agency_id;
         console.log(`[PageContentRenderer] created agency ${agency_id}`);
       },
@@ -1538,36 +1505,20 @@ export class PageContentRenderer {
    * agency or the first one. Returns its ID, or null when cancelled.
    */
   private async createRoute(agencyId?: string): Promise<string | null> {
-    const db = this.dependencies.gtfsDatabase;
+    const feed = this.dependencies.feed;
     let route_id: string | null = null;
     const values = await promptNewEntity({
       title: t('page.newRouteTitle'),
       id: {
         table: 'routes',
-        suggested: await nextEntityId(db, 'routes', 'route'),
+        suggested: await nextEntityId(feed, 'routes', 'route'),
       },
       fields: [],
       validate: () => null,
       onCreate: async (v) => {
-        let agency = agencyId;
-        if (!agency) {
-          const agencies = await db.getAllRows('agency');
-          if (agencies.length > 0) {
-            agency = String(
-              (agencies[0] as Record<string, unknown>).agency_id ?? ''
-            );
-          }
-        }
-        const record = createDefaultRoute(
-          v.route_id,
-          agency || undefined
-        ) as unknown as Record<string, unknown>;
-        await db.insertRows('routes', [record]);
-        await this.dependencies.patchManager?.recordInsert(
-          'routes',
-          v.route_id,
-          record
-        );
+        const agency = agencyId || feed.table('agency')[0]?.agency_id;
+        const record = createDefaultRoute(v.route_id, agency || undefined);
+        await feed.apply([insertOp('routes', record)]);
         route_id = v.route_id;
         console.log(
           `[PageContentRenderer] created route ${route_id} on agency ${agency ?? '(none)'}`
@@ -1587,19 +1538,14 @@ export class PageContentRenderer {
   private async handleBulkTrimOrExtend(
     field: 'start_date' | 'end_date'
   ): Promise<void> {
-    const db = this.dependencies.gtfsDatabase;
-    const patchManager = this.dependencies.patchManager;
-    if (!db.updateRow || !patchManager) {
-      return;
-    }
-    const bounds = await feedBounds(db);
+    const feed = this.dependencies.feed;
+    const bounds = feedBounds(feed);
     const value = field === 'start_date' ? bounds.start : bounds.end;
     if (!value) {
       return;
     }
     const { services, exceptions } = await trimOrExtendServices(
-      db as Parameters<typeof trimOrExtendServices>[0],
-      patchManager,
+      feed,
       field,
       value
     );
@@ -1659,34 +1605,16 @@ export class PageContentRenderer {
     });
   }
 
-  /**
-   * The writing handle the rename engine needs, or null when this page's
-   * database handle cannot write.
-   */
-  private renameDeps(): {
-    database: RenameDatabase;
-    patchManager: RenamePatchManager | null;
-  } | null {
-    const db = this.dependencies.gtfsDatabase;
-    if (!db.updateRow || !db.deleteRow) {
-      return null;
+  /** The stop_times of the given trips. */
+  private async stopTimesOf(
+    trips: readonly Record<string, unknown>[]
+  ): Promise<FeedRow[]> {
+    if (trips.length === 0) {
+      return [];
     }
-    const updateRow = db.updateRow;
-    const deleteRow = db.deleteRow;
-    return {
-      database: {
-        getRow: (table, key) =>
-          db.getRow(table, key) as ReturnType<RenameDatabase['getRow']>,
-        queryRows: (table, filter) =>
-          db.queryRows(table, filter) as ReturnType<
-            RenameDatabase['queryRows']
-          >,
-        insertRows: (table, rows) => db.insertRows(table, rows),
-        updateRow: (table, key, data) => updateRow(table, key, data),
-        deleteRow: (table, key) => deleteRow(table, key),
-      },
-      patchManager: this.dependencies.patchManager ?? null,
-    };
+    return this.dependencies.feed.where('stop_times', [
+      { col: 'trip_id', in: trips.map((trip) => String(trip.trip_id)) },
+    ]);
   }
 
   private async handleDeleteRoute(route_id: string): Promise<void> {
@@ -1694,17 +1622,8 @@ export class PageContentRenderer {
       '[PageContentRenderer] handleDeleteRoute called, route_id:',
       route_id
     );
-    const db = this.dependencies.gtfsDatabase;
-    const pm = this.dependencies.patchManager;
-    if (!db || !pm || !db.deleteRow) {
-      console.warn(
-        '[PageContentRenderer] handleDeleteRoute: missing db/pm/deleteRow'
-      );
-      return;
-    }
-
-    const routeRows = await db.queryRows('routes', { route_id });
-    const route = routeRows[0] as Record<string, unknown> | undefined;
+    const feed = this.dependencies.feed;
+    const route = feed.byKey('routes', route_id);
     if (!route) {
       console.warn(
         '[PageContentRenderer] handleDeleteRoute: route not found for id',
@@ -1713,43 +1632,14 @@ export class PageContentRenderer {
       return;
     }
 
-    const trips = (await db.queryRows('trips', {
-      route_id,
-    })) as Record<string, unknown>[];
-
-    const stopTimesPerTrip: Array<Record<string, unknown>[]> =
-      await Promise.all(
-        trips.map(
-          (trip) =>
-            db.queryRows('stop_times', {
-              trip_id: trip.trip_id as string,
-            }) as Promise<Record<string, unknown>[]>
-        )
-      );
-    const allStopTimes = stopTimesPerTrip.flat();
+    const trips = await feed.find('trips', 'route_id', route_id);
+    const allStopTimes = await this.stopTimesOf(trips);
 
     const doDelete = async () => {
-      for (const st of allStopTimes) {
-        const key = generateCompositeKeyFromRecord('stop_times', st);
-        await db.deleteRow!('stop_times', key);
-      }
-      for (const trip of trips) {
-        await db.deleteRow!('trips', trip.trip_id as string);
-      }
-      await db.deleteRow!('routes', route_id);
-
       const deleteOps = [
-        ...allStopTimes.map((st) => ({
-          table: 'stop_times',
-          id: generateCompositeKeyFromRecord('stop_times', st),
-          record: st,
-        })),
-        ...trips.map((trip) => ({
-          table: 'trips',
-          id: trip.trip_id as string,
-          record: trip,
-        })),
-        { table: 'routes', id: route_id, record: route },
+        ...allStopTimes.map((st) => deleteOp('stop_times', st)),
+        ...trips.map((trip) => deleteOp('trips', trip)),
+        deleteOp('routes', route),
       ];
       const label =
         trips.length === 0
@@ -1761,7 +1651,7 @@ export class PageContentRenderer {
                 t('count.stopTimes', { count: allStopTimes.length }),
               ].join(' + '),
             });
-      await pm.recordBatchDelete(deleteOps, label);
+      await feed.apply(deleteOps, label);
 
       console.log(
         `[PageContentRenderer] Deleted route ${route_id} + ${trips.length} trips + ${allStopTimes.length} stop_times`
@@ -1826,72 +1716,22 @@ export class PageContentRenderer {
       '[PageContentRenderer] handleDeleteService called, service_id:',
       service_id
     );
-    const db = this.dependencies.gtfsDatabase;
-    const pm = this.dependencies.patchManager;
-    if (!db || !pm || !db.deleteRow) {
-      console.warn(
-        '[PageContentRenderer] handleDeleteService: missing db/pm/deleteRow'
-      );
-      return;
-    }
-
-    const trips = (await db.queryRows('trips', {
-      service_id,
-    })) as Record<string, unknown>[];
-
-    const stopTimesPerTrip: Array<Record<string, unknown>[]> =
-      await Promise.all(
-        trips.map(
-          (trip) =>
-            db.queryRows('stop_times', {
-              trip_id: trip.trip_id as string,
-            }) as Promise<Record<string, unknown>[]>
-        )
-      );
-    const allStopTimes = stopTimesPerTrip.flat();
-
-    const calendarDates = (await db.queryRows('calendar_dates', {
-      service_id,
-    })) as Record<string, unknown>[];
-
-    const calendarRow = (await db.getRow('calendar', service_id)) as
-      Record<string, unknown> | undefined;
+    const feed = this.dependencies.feed;
+    const trips = await feed.find('trips', 'service_id', service_id);
+    const allStopTimes = await this.stopTimesOf(trips);
+    const calendarDates = await feed.find(
+      'calendar_dates',
+      'service_id',
+      service_id
+    );
+    const calendarRow = feed.byKey('calendar', service_id);
 
     const doDelete = async () => {
-      for (const st of allStopTimes) {
-        const key = generateCompositeKeyFromRecord('stop_times', st);
-        await db.deleteRow!('stop_times', key);
-      }
-      for (const trip of trips) {
-        await db.deleteRow!('trips', trip.trip_id as string);
-      }
-      for (const cd of calendarDates) {
-        const key = generateCompositeKeyFromRecord('calendar_dates', cd);
-        await db.deleteRow!('calendar_dates', key);
-      }
-      if (calendarRow) {
-        await db.deleteRow!('calendar', service_id);
-      }
-
       const deleteOps = [
-        ...allStopTimes.map((st) => ({
-          table: 'stop_times',
-          id: generateCompositeKeyFromRecord('stop_times', st),
-          record: st,
-        })),
-        ...trips.map((trip) => ({
-          table: 'trips',
-          id: trip.trip_id as string,
-          record: trip,
-        })),
-        ...calendarDates.map((cd) => ({
-          table: 'calendar_dates',
-          id: generateCompositeKeyFromRecord('calendar_dates', cd),
-          record: cd,
-        })),
-        ...(calendarRow
-          ? [{ table: 'calendar', id: service_id, record: calendarRow }]
-          : []),
+        ...allStopTimes.map((st) => deleteOp('stop_times', st)),
+        ...trips.map((trip) => deleteOp('trips', trip)),
+        ...calendarDates.map((cd) => deleteOp('calendar_dates', cd)),
+        ...(calendarRow ? [deleteOp('calendar', calendarRow)] : []),
       ];
 
       const parts = serviceDependentParts();
@@ -1902,7 +1742,7 @@ export class PageContentRenderer {
               label: t('delete.service'),
               parts: parts.join(' + '),
             });
-      await pm.recordBatchDelete(deleteOps, label);
+      await feed.apply(deleteOps, label);
 
       console.log(
         `[PageContentRenderer] Deleted service ${service_id} + ${trips.length} trips + ${allStopTimes.length} stop_times + ${calendarDates.length} calendar_dates`
@@ -1982,17 +1822,8 @@ export class PageContentRenderer {
       '[PageContentRenderer] handleDeleteAgency called, agency_id:',
       agency_id
     );
-    const db = this.dependencies.gtfsDatabase;
-    const pm = this.dependencies.patchManager;
-    if (!db || !pm || !db.deleteRow) {
-      console.warn(
-        '[PageContentRenderer] handleDeleteAgency: missing db/pm/deleteRow'
-      );
-      return;
-    }
-
-    const agencyRows = await db.queryRows('agency', { agency_id });
-    const agency = agencyRows[0] as Record<string, unknown> | undefined;
+    const feed = this.dependencies.feed;
+    const agency = feed.byKey('agency', agency_id);
     if (!agency) {
       console.warn(
         '[PageContentRenderer] handleDeleteAgency: agency not found for id',
@@ -2001,30 +1832,16 @@ export class PageContentRenderer {
       return;
     }
 
-    const routes = (await db.queryRows('routes', {
-      agency_id,
-    })) as Record<string, unknown>[];
-
-    const tripsPerRoute: Array<Record<string, unknown>[]> = await Promise.all(
-      routes.map(
-        (route) =>
-          db.queryRows('trips', {
-            route_id: route.route_id as string,
-          }) as Promise<Record<string, unknown>[]>
-      )
-    );
-    const allTrips = tripsPerRoute.flat();
-
-    const stopTimesPerTrip: Array<Record<string, unknown>[]> =
-      await Promise.all(
-        allTrips.map(
-          (trip) =>
-            db.queryRows('stop_times', {
-              trip_id: trip.trip_id as string,
-            }) as Promise<Record<string, unknown>[]>
-        )
-      );
-    const allStopTimes = stopTimesPerTrip.flat();
+    const routes = feed
+      .table('routes')
+      .filter((route) => route.agency_id === agency_id);
+    const allTrips =
+      routes.length > 0
+        ? await feed.where('trips', [
+            { col: 'route_id', in: routes.map((r) => r.route_id) },
+          ])
+        : [];
+    const allStopTimes = await this.stopTimesOf(allTrips);
     const agencyParts = (): string[] => [
       t('count.routes', { count: routes.length }),
       t('count.trips', { count: allTrips.length }),
@@ -2032,35 +1849,11 @@ export class PageContentRenderer {
     ];
 
     const doDelete = async () => {
-      for (const st of allStopTimes) {
-        const key = generateCompositeKeyFromRecord('stop_times', st);
-        await db.deleteRow!('stop_times', key);
-      }
-      for (const trip of allTrips) {
-        await db.deleteRow!('trips', trip.trip_id as string);
-      }
-      for (const route of routes) {
-        await db.deleteRow!('routes', route.route_id as string);
-      }
-      await db.deleteRow!('agency', agency_id);
-
       const deleteOps = [
-        ...allStopTimes.map((st) => ({
-          table: 'stop_times',
-          id: generateCompositeKeyFromRecord('stop_times', st),
-          record: st,
-        })),
-        ...allTrips.map((trip) => ({
-          table: 'trips',
-          id: trip.trip_id as string,
-          record: trip,
-        })),
-        ...routes.map((route) => ({
-          table: 'routes',
-          id: route.route_id as string,
-          record: route,
-        })),
-        { table: 'agency', id: agency_id, record: agency },
+        ...allStopTimes.map((st) => deleteOp('stop_times', st)),
+        ...allTrips.map((trip) => deleteOp('trips', trip)),
+        ...routes.map((route) => deleteOp('routes', route)),
+        deleteOp('agency', agency),
       ];
 
       const label =
@@ -2070,7 +1863,7 @@ export class PageContentRenderer {
               label: t('delete.agency'),
               parts: agencyParts().join(' + '),
             });
-      await pm.recordBatchDelete(deleteOps, label);
+      await feed.apply(deleteOps, label);
 
       console.log(
         `[PageContentRenderer] Deleted agency ${agency_id} + ${routes.length} routes + ${allTrips.length} trips + ${allStopTimes.length} stop_times`
@@ -2133,18 +1926,8 @@ export class PageContentRenderer {
       '[PageContentRenderer] handleDeleteStop called, stop_id:',
       stop_id
     );
-    const db = this.dependencies.gtfsDatabase;
-    const pm = this.dependencies.patchManager;
-    if (!db || !pm || !db.deleteRow) {
-      console.warn(
-        '[PageContentRenderer] handleDeleteStop: missing db/pm/deleteRow',
-        { db: !!db, pm: !!pm, deleteRow: !!db?.deleteRow }
-      );
-      return;
-    }
-
-    const stops = await db.queryRows('stops', { stop_id });
-    const stop = stops[0] as Record<string, unknown> | undefined;
+    const feed = this.dependencies.feed;
+    const stop = feed.byKey('stops', stop_id);
     if (!stop) {
       console.warn(
         '[PageContentRenderer] handleDeleteStop: stop not found for id',
@@ -2153,30 +1936,15 @@ export class PageContentRenderer {
       return;
     }
 
-    const stopTimes = (await db.queryRows('stop_times', {
-      stop_id,
-    })) as Record<string, unknown>[];
+    const stopTimes = await feed.where('stop_times', [
+      { col: 'stop_id', eq: stop_id },
+    ]);
 
     const doDelete = async (cascade: boolean) => {
-      // Do all DB deletions first, no 'change' events fire during this phase
-      if (cascade) {
-        for (const st of stopTimes) {
-          const key = generateCompositeKeyFromRecord('stop_times', st);
-          await db.deleteRow!('stop_times', key);
-        }
-      }
-      await db.deleteRow!('stops', stop_id);
-
-      // Record as one atomic batch patch: one 'change' event, one notification
+      // One patch: one undo step, one notification.
       const deleteOps = [
-        ...(cascade
-          ? stopTimes.map((st) => ({
-              table: 'stop_times',
-              id: generateCompositeKeyFromRecord('stop_times', st),
-              record: st,
-            }))
-          : []),
-        { table: 'stops', id: stop_id, record: stop },
+        ...(cascade ? stopTimes.map((st) => deleteOp('stop_times', st)) : []),
+        deleteOp('stops', stop),
       ];
       const label = cascade
         ? t('delete.cascade', {
@@ -2184,7 +1952,7 @@ export class PageContentRenderer {
             parts: t('count.stopTimes', { count: stopTimes.length }),
           })
         : t('delete.stop');
-      await pm.recordBatchDelete(deleteOps, label);
+      await feed.apply(deleteOps, label);
 
       console.log(
         `[PageContentRenderer] Deleted stop ${stop_id}${cascade ? ` and ${stopTimes.length} stop_times` : ''}`
@@ -2257,20 +2025,8 @@ export class PageContentRenderer {
    * and that update land as one patch and undo restores them together.
    */
   private async handleDeleteZone(location_id: string): Promise<void> {
-    const db = this.dependencies.gtfsDatabase;
-    const pm = this.dependencies.patchManager;
-    const parser = this.dependencies.gtfsParser;
-    if (!db || !pm || !db.deleteRow || !parser) {
-      console.warn('[PageContentRenderer] handleDeleteZone: missing deps', {
-        db: !!db,
-        pm: !!pm,
-        deleteRow: !!db?.deleteRow,
-        parser: !!parser,
-      });
-      return;
-    }
-
-    const features = getZoneFeatures(parser);
+    const feed = this.dependencies.feed;
+    const features = getZoneFeatures(feed);
     if (!features.some((f) => String(f.id ?? '') === location_id)) {
       console.warn(
         `[PageContentRenderer] handleDeleteZone: zone ${location_id} not in locations.geojson`
@@ -2278,42 +2034,26 @@ export class PageContentRenderer {
       return;
     }
 
-    const stopTimes = (await db.queryRows('stop_times', {
-      location_id,
-    })) as Record<string, unknown>[];
+    const stopTimes = await feed.where('stop_times', [
+      { col: 'location_id', eq: location_id },
+    ]);
 
     const doDelete = async (): Promise<void> => {
-      for (const st of stopTimes) {
-        const key = generateCompositeKeyFromRecord('stop_times', st);
-        await db.deleteRow!('stop_times', key);
-      }
-      const { before, after } = await applyZoneFeatures(
-        parser,
-        features.filter((f) => String(f.id ?? '') !== location_id)
-      );
-
-      await pm.recordBatchMixed(
-        [
-          ...stopTimes.map((st) => ({
-            op: 'delete' as const,
-            table: 'stop_times',
-            id: generateCompositeKeyFromRecord('stop_times', st),
-            record: st,
-          })),
-          {
-            op: 'update' as const,
-            table: LOCATIONS_TABLE,
-            id: LOCATIONS_ROW_KEY,
-            before,
-            after,
-          },
-        ],
+      await feed.apply(
+        stopTimes.map((st) => deleteOp('stop_times', st)),
         stopTimes.length > 0
           ? t('delete.cascade', {
               label: t('delete.zone'),
               parts: t('count.stopTimes', { count: stopTimes.length }),
             })
-          : t('delete.zone')
+          : t('delete.zone'),
+        undefined,
+        [
+          zoneFileChange(
+            feed,
+            features.filter((f) => String(f.id ?? '') !== location_id)
+          ),
+        ]
       );
 
       console.log(
@@ -2363,20 +2103,13 @@ export class PageContentRenderer {
   }
 
   private async handleDeletePathway(pathway_id: string): Promise<void> {
-    const db = this.dependencies.gtfsDatabase;
-    const pm = this.dependencies.patchManager;
-    if (!db || !pm || !db.deleteRow) {
-      return;
-    }
-
-    const rows = await db.queryRows('pathways', { pathway_id });
-    const pathway = rows[0] as Record<string, unknown> | undefined;
+    const feed = this.dependencies.feed;
+    const pathway = feed.byKey('pathways', pathway_id);
     if (!pathway) {
       return;
     }
 
-    await db.deleteRow('pathways', pathway_id);
-    await pm.recordDelete('pathways', pathway_id, pathway);
+    await feed.apply([deleteOp('pathways', pathway)]);
 
     console.log(`[PageContentRenderer] Deleted pathway ${pathway_id}`);
     await navigateToHome();

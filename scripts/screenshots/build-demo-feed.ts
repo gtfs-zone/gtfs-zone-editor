@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import JSZip from 'jszip';
+import { strFromU8, strToU8, unzipSync, zipSync, type Unzipped } from 'fflate';
 import Papa from 'papaparse';
 
 const SOURCE_URL = 'https://cdn.mbta.com/MBTA_GTFS.zip';
@@ -75,14 +75,14 @@ async function download(): Promise<void> {
   writeFileSync(SOURCE_PATH, Buffer.from(await res.arrayBuffer()));
 }
 
-async function readText(zip: JSZip, name: string): Promise<string | null> {
-  const file = zip.file(name);
-  return file ? file.async('string') : null;
+async function readText(zip: Unzipped, name: string): Promise<string | null> {
+  const file = zip[name];
+  return file ? strFromU8(file) : null;
 }
 
 // Streams rows through `keep` so large files never materialize in full
 async function readTable(
-  zip: JSZip,
+  zip: Unzipped,
   name: string,
   keep: (row: Row) => boolean = () => true
 ): Promise<Table | null> {
@@ -109,7 +109,7 @@ async function readTable(
 }
 
 async function requireTable(
-  zip: JSZip,
+  zip: Unzipped,
   name: string,
   keep?: (row: Row) => boolean
 ): Promise<Table> {
@@ -217,7 +217,7 @@ function toCsv(table: Table): string {
 
 async function main(): Promise<void> {
   await download();
-  const source = await JSZip.loadAsync(readFileSync(SOURCE_PATH));
+  const source = unzipSync(readFileSync(SOURCE_PATH));
   const out: Record<string, Table> = {};
 
   // Typical-pattern trips. MBTA's canonical_route_pattern flag mostly marks
@@ -471,16 +471,12 @@ async function main(): Promise<void> {
   }
 
   // Write the zip
-  const zip = new JSZip();
+  const entries: Record<string, Uint8Array> = {};
   for (const [name, table] of Object.entries(out)) {
-    zip.file(name, toCsv(table));
+    entries[name] = strToU8(toCsv(table));
     console.log(`[demo-feed] ${name}: ${table.rows.length} rows`);
   }
-  const buffer = await zip.generateAsync({
-    type: 'nodebuffer',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 9 },
-  });
+  const buffer = zipSync(entries, { level: 9 });
   writeFileSync(OUTPUT_PATH, buffer);
   console.log(
     `[demo-feed] Wrote ${OUTPUT_PATH} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`

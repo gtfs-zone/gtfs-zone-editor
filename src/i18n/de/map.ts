@@ -25,7 +25,6 @@ export const map: Translation<typeof en> = {
   'map.ok': 'OK',
   'map.coordsFailed':
     'Die Koordinaten der Haltestelle konnten nicht aktualisiert werden: {message}',
-  'map.unnamedStop': 'Unbenannte Haltestelle',
   'map.servedBy': '{serves} von {total} Fahrten',
   'map.servedByTitle': 'Bedient von {serves} von {total} Fahrten',
   'map.routeDiagram': 'Linienschema',
@@ -68,4 +67,9 @@ export const map: Translation<typeof en> = {
     'Zone {id} kam mit der Geometrie {type} zurück, erwartet war ein Polygon oder MultiPolygon. Zeichnen Sie die Zone zuerst in geojson.io, dann „Share“ und den Link einfügen.',
   'search.zoneTerms': 'zone bedarfszone bedarf on-demand',
   'search.groupTerms': 'ortsgruppe gruppe location group',
+  'search.stops': 'Haltestellen',
+  'search.routes': 'Linien',
+  'search.agencies': 'Verkehrsunternehmen',
+  'search.zones': 'Zonen',
+  'search.locationGroups': 'Ortsgruppen',
 };

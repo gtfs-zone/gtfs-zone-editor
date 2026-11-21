@@ -6,9 +6,8 @@
  * inherited from its station (see `utils/area-hierarchy`). Inherited chips are
  * shown greyed and are not removable here: they belong to the station's row.
  *
- * Like the click-to-edit fields, this lives outside the view controllers
- * because those hold a query-only database handle, and writes here have to go
- * through the patch log.
+ * Like the click-to-edit fields, this lives outside the view controllers,
+ * which only read; writes here go in as patches.
  */
 
 import { showOptionPickerModal } from '../modules/option-picker-modal';
@@ -18,7 +17,8 @@ import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { isOutsideTopModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { GTFS_TABLES } from '../types/gtfs';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
-import { generateCompositeKeyFromRecord } from './gtfs-primary-keys';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
+import { deleteOp, insertOp } from '../feed/patch-build';
 import { getEntityDisplay, renderOptionLabel } from './entity-display';
 import {
   canStopHaveAreas,
@@ -38,27 +38,7 @@ const CREATE_AREA = '\0create-area';
 const STORE = 'stop_areas';
 
 export interface StopAreasFieldDeps {
-  gtfsDatabase: {
-    queryRows: (
-      tableName: string,
-      filter?: Record<string, unknown>
-    ) => Promise<unknown[]>;
-    getAllRows: (tableName: string) => Promise<unknown[]>;
-    insertRows: (tableName: string, rows: unknown[]) => Promise<void>;
-    deleteRow?: (tableName: string, key: string) => Promise<void>;
-  };
-  patchManager: {
-    recordInsert: (
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ) => Promise<void>;
-    recordDelete: (
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ) => Promise<void>;
-  } | null;
+  feed: EditorFeed;
 }
 
 let deps: StopAreasFieldDeps | null = null;
@@ -111,16 +91,12 @@ export function installStopAreasField(newDeps: StopAreasFieldDeps): void {
 // ─── Rendering ────────────────────────────────────────────────────────────────
 
 /** Every area's display label, keyed by `area_id`. */
-async function areaLabels(): Promise<Map<string, string>> {
+function areaLabels(): Map<string, string> {
   const labels = new Map<string, string>();
   if (!deps) {
     return labels;
   }
-  const rows = (await deps.gtfsDatabase.getAllRows('areas')) as Record<
-    string,
-    string
-  >[];
-  for (const row of rows) {
+  for (const row of deps.feed.table('areas')) {
     labels.set(
       String(row.area_id ?? ''),
       renderOptionLabel(getEntityDisplay('areas', row))
@@ -129,30 +105,18 @@ async function areaLabels(): Promise<Map<string, string>> {
   return labels;
 }
 
-async function stopRow(
-  stop_id: string
-): Promise<Record<string, unknown> | undefined> {
-  if (!deps) {
-    return undefined;
-  }
-  const rows = (await deps.gtfsDatabase.queryRows('stops', {
-    stop_id,
-  })) as Record<string, unknown>[];
-  return rows[0];
+function stopRow(stop_id: string): FeedRow | null {
+  return deps?.feed.byKey('stops', stop_id) ?? null;
 }
 
 /** A station's label, for the "from ..." text on an inherited chip. */
-async function stationLabel(stop_id: string): Promise<string> {
-  const row = await stopRow(stop_id);
-  return row
-    ? renderOptionLabel(
-        getEntityDisplay('stops', row as Record<string, string>)
-      )
-    : stop_id;
+function stationLabel(stop_id: string): string {
+  const row = stopRow(stop_id);
+  return row ? renderOptionLabel(getEntityDisplay('stops', row)) : stop_id;
 }
 
 /** The chips, the add button and the inheritance note. */
-async function renderContent(stop: Record<string, unknown>): Promise<string> {
+function renderContent(stop: Record<string, unknown>): string {
   const stop_id = String(stop.stop_id ?? '');
   if (!canStopHaveAreas(stop)) {
     return `<p class="px-1 py-1.5 text-sm opacity-60">${t('areas.notAllowed', { type: String(stopLocationType(stop)) })}</p>`;
@@ -161,8 +125,8 @@ async function renderContent(stop: Record<string, unknown>): Promise<string> {
     return '';
   }
 
-  const areas = await getEffectiveAreasForStop(deps.gtfsDatabase, stop_id);
-  const labels = await areaLabels();
+  const areas = getEffectiveAreasForStop(deps.feed, stop_id);
+  const labels = areaLabels();
   const inheritedFrom = areas.find((a) => a.inheritedFrom)?.inheritedFrom;
 
   const chips = areas
@@ -192,12 +156,12 @@ async function renderContent(stop: Record<string, unknown>): Promise<string> {
 
   let note = '';
   if (inheritedFrom) {
-    const station = await stationLabel(inheritedFrom);
+    const station = stationLabel(inheritedFrom);
     note = t('areas.inherited', { station });
   } else if (areas.length > 0 && stopLocationType(stop) === 0) {
     const parent_station = String(stop.parent_station ?? '').trim();
     if (parent_station !== '') {
-      const station = await stationLabel(parent_station);
+      const station = stationLabel(parent_station);
       note = t('areas.direct', { station });
     }
   }
@@ -209,14 +173,12 @@ async function renderContent(stop: Record<string, unknown>): Promise<string> {
 }
 
 /** The stop page's Areas fieldset. */
-export async function renderStopAreasField(
-  stop: Record<string, unknown>
-): Promise<string> {
+export function renderStopAreasField(stop: Record<string, unknown>): string {
   const stop_id = String(stop.stop_id ?? '');
   return `
     <fieldset class="fieldset isolate">
       <legend class="fieldset-legend">${t('areas.legend')}</legend>
-      <div class="${FIELD_CLASS}" data-stop-id="${escapeHtml(stop_id)}">${await renderContent(stop)}</div>
+      <div class="${FIELD_CLASS}" data-stop-id="${escapeHtml(stop_id)}">${renderContent(stop)}</div>
     </fieldset>
   `;
 }
@@ -226,11 +188,11 @@ async function refresh(stop_id: string): Promise<void> {
   const container = document.querySelector<HTMLElement>(
     `.${FIELD_CLASS}[data-stop-id="${CSS.escape(stop_id)}"]`
   );
-  const stop = await stopRow(stop_id);
+  const stop = stopRow(stop_id);
   if (!container || !stop) {
     return;
   }
-  container.innerHTML = await renderContent(stop);
+  container.innerHTML = renderContent(stop);
 }
 
 // ─── Editing ──────────────────────────────────────────────────────────────────
@@ -240,7 +202,7 @@ async function addArea(stop_id: string): Promise<void> {
   if (!deps || stop_id === '') {
     return;
   }
-  const stop = await stopRow(stop_id);
+  const stop = stopRow(stop_id);
   if (!stop) {
     return;
   }
@@ -252,15 +214,12 @@ async function addArea(stop_id: string): Promise<void> {
     return;
   }
 
-  const existing = (
-    await getEffectiveAreasForStop(deps.gtfsDatabase, stop_id)
-  ).filter((a) => !a.inheritedFrom);
+  const existing = getEffectiveAreasForStop(deps.feed, stop_id).filter(
+    (a) => !a.inheritedFrom
+  );
   const wasInheriting = existing.length === 0;
 
-  const areas = (await deps.gtfsDatabase.getAllRows('areas')) as Record<
-    string,
-    string
-  >[];
+  const areas = deps.feed.table('areas');
   const assigned = new Set(existing.map((a) => a.area_id));
   const picked = await showOptionPickerModal({
     title: t('areas.addTitle'),
@@ -298,16 +257,13 @@ async function addArea(stop_id: string): Promise<void> {
     return;
   }
 
-  const record = { area_id, stop_id };
-  const key = generateCompositeKeyFromRecord(STORE, record);
   console.log(`[Areas] assign ${stop_id} to ${area_id}`);
-  await deps.gtfsDatabase.insertRows(STORE, [record]);
-  await deps.patchManager?.recordInsert(STORE, key, record);
+  await deps.feed.apply([insertOp(STORE, { area_id, stop_id })]);
 
   if (wasInheriting && stopLocationType(stop) === 0) {
-    const inherited = await getEffectiveAreasForStop(
-      deps.gtfsDatabase,
-      String(stop.parent_station ?? '')
+    const inherited = getEffectiveAreasForStop(
+      deps.feed,
+      stop.parent_station ?? ''
     );
     if (inherited.length > 0) {
       notify.info(t('areas.ownNow'));
@@ -322,29 +278,20 @@ async function removeArea(stop_id: string, area_id: string): Promise<void> {
   if (!deps || stop_id === '' || area_id === '') {
     return;
   }
-  const rows = (await deps.gtfsDatabase.queryRows(STORE, {
-    stop_id,
-    area_id,
-  })) as Record<string, unknown>[];
-  const record = rows[0];
+  const record = deps.feed
+    .table(STORE)
+    .find((row) => row.stop_id === stop_id && row.area_id === area_id);
   if (!record) {
     console.warn(`[Areas] no stop_areas row for ${stop_id} in ${area_id}`);
     return;
   }
 
-  if (!deps.gtfsDatabase.deleteRow) {
-    console.warn('[Areas] database cannot delete rows, removal dropped');
-    return;
-  }
-
-  const key = generateCompositeKeyFromRecord(STORE, record);
   console.log(`[Areas] remove ${stop_id} from ${area_id}`);
-  await deps.gtfsDatabase.deleteRow(STORE, key);
-  await deps.patchManager?.recordDelete(STORE, key, record);
+  await deps.feed.apply([deleteOp(STORE, record)]);
 
   await refresh(stop_id);
 
-  const remaining = await getEffectiveAreasForStop(deps.gtfsDatabase, stop_id);
+  const remaining = getEffectiveAreasForStop(deps.feed, stop_id);
   if (remaining.some((a) => a.inheritedFrom)) {
     notify.info(t('areas.inheritsAgain'));
   }
@@ -361,15 +308,15 @@ async function createArea(
     title: t('areas.newTitle'),
     id: {
       table: 'areas',
-      suggested: await nextEntityId(areaDeps.gtfsDatabase, 'areas', 'area'),
+      suggested: await nextEntityId(areaDeps.feed, 'areas', 'area'),
     },
     fields: [{ field: 'area_name', tableName: GTFS_TABLES.AREAS }],
     validate: () => null,
     onCreate: async (v) => {
-      const id = v.area_id;
-      const record = { area_id: id, area_name: v.area_name };
-      await areaDeps.gtfsDatabase.insertRows('areas', [record]);
-      await areaDeps.patchManager?.recordInsert('areas', id, record);
+      const id = String(v.area_id);
+      await areaDeps.feed.apply([
+        insertOp('areas', { area_id: id, area_name: String(v.area_name) }),
+      ]);
       area_id = id;
       console.log(`[Areas] created ${id}`);
     },

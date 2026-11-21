@@ -1,8 +1,9 @@
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
+import { t as commonT } from 'gtfs-zone-web-common/i18n/messages';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { showLoadModal } from 'gtfs-zone-web-common/ui/load-modal';
 import { showFilesModal } from './files-modal';
-import type { ContinueOffer } from 'gtfs-zone-web-common/ui/load-modal';
+import type { FeedLibrary } from 'gtfs-zone-web-common/ui/load-modal';
 import type { FeedSelection } from 'gtfs-zone-web-common/gtfs/feed-selection';
 import { resolvedScheduledUrl } from 'gtfs-zone-web-common/gtfs/feed-selection';
 import { navigateToHome, openModal } from './navigation-actions';
@@ -15,14 +16,25 @@ import {
   syncAutoZoomControl,
   wireAutoZoomControl,
 } from 'gtfs-zone-web-common/map/auto-zoom';
-import { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
+import { createEmptyFeed, loadFeed, restoreFeed } from '../feed/feed-loader';
+import {
+  deleteStoredFeed,
+  listStoredFeeds,
+  readActiveFeedState,
+} from '../feed/feed-boot';
+import { updateOp } from '../feed/patch-build';
+import { GTFS_FILES } from '../types/gtfs';
+import { ALL_GTFS_FILES } from './gtfs-file-registry';
+import { getZoneFeatures } from './zone-store';
 import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { Editor } from './editor';
 import { BrowseNavigation } from './browse-navigation';
 import { buildExportFilename } from '../utils/export-filename';
+import { downloadBlob } from '../utils/download-blob';
+import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicator';
 import { runWhenIdle } from '../utils/run-when-idle';
 import { showHelpPageOnce } from 'gtfs-zone-web-common/ui/help-modal';
-import type { PatchManager } from './patch-manager';
 import { GTFSSchemas } from '../types/gtfs';
 import { generateFieldConfigsFromSchema } from '../utils/field-component';
 import {
@@ -41,6 +53,12 @@ import {
 import { googleExtension } from '../gtfs-spec/extensions/google';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
+
+/** Row count of a table file, or line count of a non-spec entry. */
+interface FileCounts {
+  rows?: number;
+  lines?: number;
+}
 
 function escapeHtml(text: string): string {
   return text
@@ -64,8 +82,49 @@ function showURLErrorModal(url: string, error: Error) {
   });
 }
 
+/** The open feed's files, grouped as the Files list shows them. */
+interface FileCategories {
+  required: string[];
+  optional: string[];
+  extensions: string[];
+  /** Non-spec entries, carried through as text. */
+  additional: string[];
+  /** Row count per table file. */
+  rows: Map<string, number>;
+}
+
+async function categorizeFiles(feed: EditorFeed): Promise<FileCategories> {
+  const counts = await feed.read('counts');
+  const entries = await feed.fileNames();
+  const rows = new Map(
+    Object.entries(counts).map(([table, n]) => [`${table}.txt`, n])
+  );
+  const allFiles = [
+    ...rows.keys(),
+    ...entries.filter((f) => ALL_GTFS_FILES.includes(f)),
+  ];
+  const requiredFiles = GTFS_FILES.filter((f) => f.presence === 'Required').map(
+    (f) => f.filename
+  );
+  const overlayFiles = new Set(overlayFileNames());
+  return {
+    required: allFiles.filter((f) => requiredFiles.includes(f)),
+    optional: allFiles.filter(
+      (f) =>
+        !requiredFiles.includes(f) &&
+        !overlayFiles.has(f) &&
+        ALL_GTFS_FILES.includes(f)
+    ),
+    extensions: allFiles.filter(
+      (f) => overlayFiles.has(f) && (rows.get(f) ?? 0) > 0
+    ),
+    additional: entries.filter((f) => !ALL_GTFS_FILES.includes(f)),
+    rows,
+  };
+}
+
 export class UIController {
-  gtfsParser: GTFSParser | null;
+  feed: EditorFeed | null;
   editor: Editor | null;
   mapController: MapController | null;
   browseNavigation: BrowseNavigation | null;
@@ -76,7 +135,6 @@ export class UIController {
   currentSelection: FeedSelection | null;
   /** Cancels a map update scheduled for a feed that has since been replaced. */
   private cancelPendingMapUpdate: (() => void) | null = null;
-  private patchManager: PatchManager | null = null;
   /** Overlay files the user added to the Files list, for one feed generation. */
   /** The file the Files modal is showing, null on the list. */
   private shownFile: string | null = null;
@@ -86,7 +144,7 @@ export class UIController {
   };
 
   constructor() {
-    this.gtfsParser = null;
+    this.feed = null;
     this.editor = null;
     this.mapController = null;
     this.browseNavigation = null;
@@ -94,12 +152,12 @@ export class UIController {
   }
 
   initialize(
-    gtfsParser: GTFSParser,
+    feed: EditorFeed,
     editor: Editor,
     mapController: MapController,
     browseNavigation: BrowseNavigation
   ) {
-    this.gtfsParser = gtfsParser;
+    this.feed = feed;
     this.editor = editor;
     this.mapController = mapController;
     this.browseNavigation = browseNavigation;
@@ -108,10 +166,6 @@ export class UIController {
     // Boot paths other than a fresh load never touch the tool buttons, so the
     // persisted auto-zoom state has to be applied here.
     this.updateMapToolButtonState();
-  }
-
-  setPatchManager(pm: PatchManager): void {
-    this.patchManager = pm;
   }
 
   setupEventListeners() {
@@ -240,8 +294,8 @@ export class UIController {
    * Build the map for the feed just loaded, off the load's critical path.
    *
    * The route build walks every shape point and every trip, so awaiting it
-   * inline keeps the progress bar up long after the feed is usable. The
-   * navigation refresh follows it because updateMap clears map focus.
+   * inline keeps the progress bar up long after the feed is usable. The page's
+   * map focus is re-applied after it because updateMap clears it.
    */
   private scheduleMapUpdate(): void {
     // A pending update belongs to the feed that scheduled it. Drop it rather
@@ -251,8 +305,8 @@ export class UIController {
       this.cancelPendingMapUpdate = null;
       console.time('[GTFS] updateMap');
       this.mapController!.updateMap()
-        .then(async () => {
-          await this.browseNavigation?.refresh();
+        .then(() => {
+          this.browseNavigation?.refocusMap();
           console.timeEnd('[GTFS] updateMap');
         })
         .catch((error: unknown) =>
@@ -276,9 +330,7 @@ export class UIController {
   async refreshAfterFeedSwap(
     options: { navigateHome?: boolean } = {}
   ): Promise<void> {
-    console.time('[GTFS] updateFileList');
-    this.updateFileList();
-    console.timeEnd('[GTFS] updateFileList');
+    await this.updateFileList();
 
     this.scheduleMapUpdate();
 
@@ -292,7 +344,8 @@ export class UIController {
     this.updateMapToolButtonState();
   }
 
-  async loadGTFSFile(file: File, { navigateHome = true } = {}) {
+  /** `refresh: false` leaves the post-load refresh to the caller (boot). */
+  async loadGTFSFile(file: File, { navigateHome = true, refresh = true } = {}) {
     try {
       console.log('Loading GTFS file:', file.name);
 
@@ -303,8 +356,8 @@ export class UIController {
         throw new Error(t('load.notZip'));
       }
 
-      // Parse the file
-      const { unknownFiles } = await this.gtfsParser!.parseFile(file);
+      await loadFeed(this.feed!, { file }, file.name);
+      const unknownFiles = (await categorizeFiles(this.feed!)).additional;
       if (unknownFiles.length > 0) {
         notify.warning(
           t('load.preservingUnknown', {
@@ -314,7 +367,9 @@ export class UIController {
         );
       }
 
-      await this.refreshAfterFeedSwap({ navigateHome });
+      if (refresh) {
+        await this.refreshAfterFeedSwap({ navigateHome });
+      }
 
       // Populate the file list without opening the Files modal
       this.showFileList();
@@ -351,73 +406,156 @@ export class UIController {
   }
 
   /**
-   * The single entry point into a feed.
-   *
-   * `initialUrl` seeds the scheduled field, which is how `#load=<url>` arrives:
-   * the URL is offered for review rather than fetched behind the user's back.
-   * Otherwise the modal opens on whatever is currently loaded, so reopening it
-   * is also how you edit a feed's URL.
+   * "Your feeds" for the load modal. `onDeleted` hears each delete; deleting
+   * the open feed releases it first, and the caller opens another after.
+   */
+  private async feedLibrary(
+    onDeleted: (id: string) => void
+  ): Promise<FeedLibrary | undefined> {
+    const feeds = await listStoredFeeds();
+    if (feeds.length === 0) {
+      return undefined;
+    }
+    const openId = this.feed?.feedId ?? null;
+    return {
+      feeds: feeds.map((s) => ({
+        id: s.id,
+        name: s.label,
+        ...s.counts,
+        edits: s.currentVersion,
+        bytes: s.baseBytes || undefined,
+        lastOpened: s.lastOpened,
+        active: s.id === openId,
+        sourceUrl: s.sourceUrl ?? undefined,
+        sourceModified: s.sourceModified ?? undefined,
+      })),
+      onDelete: async (id) => {
+        if (id === this.feed?.feedId) {
+          console.log(`[UIController] deleting the open feed ${id}`);
+          this.feed.release();
+        }
+        await deleteStoredFeed(id);
+        onDeleted(id);
+      },
+    };
+  }
+
+  private static linkedOffer(url: string) {
+    return {
+      label: t('load.linkedFeed'),
+      scheduledUrl: url,
+      canRetryWithCors: false,
+    };
+  }
+
+  /**
+   * The single entry point into a feed: "Your feeds", the catalog, a URL or
+   * an upload. `initialUrl` is a `#load=` link, offered as the top card.
+   * Otherwise the modal opens on whatever is currently loaded, so reopening
+   * it is also how you edit a feed's URL.
    */
   async openLoadModal(initialUrl?: string) {
-    const seed: FeedSelection | null = initialUrl
-      ? {
-          scheduled: {
-            kind: 'url',
-            url: initialUrl,
-            useCors: true,
-            label: t('load.linkedFeed'),
+    const openId = this.feed?.feedId ?? null;
+    let openDeleted = false;
+    const result = await showLoadModal(
+      initialUrl ? null : this.currentSelection,
+      {
+        realtime: false,
+        library: await this.feedLibrary((id) => {
+          openDeleted ||= id === openId;
+        }),
+        linkedWith: initialUrl
+          ? UIController.linkedOffer(initialUrl)
+          : undefined,
+        extraActions: [
+          {
+            label: t('load.newEmpty'),
+            className: 'btn-ghost',
+            onClick: () => {
+              void this.createNewFeed();
+            },
           },
-          realtime: null,
-        }
-      : this.currentSelection;
+        ],
+      }
+    );
 
-    const result = await showLoadModal(seed, {
-      realtime: false,
-      extraActions: [
-        {
-          label: t('load.newEmpty'),
-          className: 'btn-ghost',
-          onClick: () => {
-            void this.createNewFeed();
-          },
-        },
-      ],
-    });
-
-    if (result?.kind === 'selection' && (await this.confirmReplaceFeed())) {
+    if (result?.kind === 'offer') {
+      throw new Error(`[UIController] unexpected load offer ${result.id}`);
+    }
+    if (result?.kind === 'stored') {
+      if (result.id !== openId || openDeleted) {
+        await this.switchToStoredFeed(result.id);
+      }
+    } else if (result && (await this.confirmReplaceFeed())) {
       await this.loadSelection(result.selection);
+    } else if (openDeleted && !this.feed?.isOpen) {
+      // The open feed is gone and nothing replaced it.
+      await this.openFallbackFeed();
     }
   }
 
   /**
-   * The boot screen: the same modal, led by the stored feed.
+   * Open stored feed `id` in place of the current one. On a failure or a
+   * cancel, the active feed is reopened, or an empty one started.
+   */
+  async switchToStoredFeed(id: string, { navigateHome = true } = {}) {
+    try {
+      await restoreFeed(this.feed!, id);
+      await this.refreshAfterFeedSwap({ navigateHome });
+      notify.success(t('load.openedStored', { name: this.feed!.label }));
+    } catch (error) {
+      if (error instanceof LoadCancelledError) {
+        notify.info(t('common.loadCancelled'));
+      } else {
+        console.error(`[UIController] could not open stored feed ${id}`, error);
+        notify.error(
+          t('load.openStoredFailed', {
+            message: error instanceof Error ? error.message : String(error),
+          }),
+          { autoHide: false }
+        );
+      }
+      await this.openFallbackFeed();
+    }
+  }
+
+  /** Reopen the active feed, or start an empty one when that fails. */
+  private async openFallbackFeed() {
+    try {
+      if (await restoreFeed(this.feed!)) {
+        await this.refreshAfterFeedSwap({ navigateHome: true });
+        return;
+      }
+    } catch (error) {
+      console.error('[UIController] could not reopen the active feed', error);
+    }
+    console.log(
+      '[UIController] no feed to fall back to; starting an empty one'
+    );
+    await createEmptyFeed(this.feed!, t('load.newEmpty'));
+    await this.refreshAfterFeedSwap({ navigateHome: true });
+  }
+
+  /**
+   * The boot screen: the same modal, led by "Your feeds".
    *
    * Returns what the caller has to do next, because only boot knows how to
-   * hydrate the stored feed. Cancelling falls back to the stored feed when
+   * hydrate a stored feed. Cancelling falls back to the active feed when
    * there is one, and to a fresh empty feed when there is not: closing the
    * boot screen must never leave the app without a feed.
    *
-   * `linkedUrl` is a `#load=` link held back because loading it would drop the
-   * stored feed's edits: it is offered as a card next to the continue card.
+   * `linkedUrl` is a `#load=` link, offered as the top card.
    */
   async openBootLoadModal(
-    continueWith?: ContinueOffer,
     linkedUrl?: string
-  ): Promise<'continue' | 'empty' | 'loaded'> {
+  ): Promise<{ stored: string } | 'empty' | 'loaded'> {
+    const activeId = (await readActiveFeedState())?.id ?? null;
+    const deleted = new Set<string>();
     let emptyChosen = false;
     const result = await showLoadModal(null, {
       realtime: false,
-      continueWith,
-      linkedWith: linkedUrl
-        ? {
-            label: t('load.linkedFeed'),
-            scheduledUrl: linkedUrl,
-            canRetryWithCors: false,
-          }
-        : undefined,
-      notice: linkedUrl
-        ? t('load.linkedOverEdits', { count: continueWith?.edits ?? 0 })
-        : undefined,
+      library: await this.feedLibrary((id) => deleted.add(id)),
+      linkedWith: linkedUrl ? UIController.linkedOffer(linkedUrl) : undefined,
       extraActions: [
         {
           label: t('load.newEmpty'),
@@ -429,17 +567,24 @@ export class UIController {
       ],
     });
 
-    if (result?.kind === 'continue') {
-      return 'continue';
+    if (result?.kind === 'offer') {
+      throw new Error(`[UIController] unexpected load offer ${result.id}`);
+    }
+    if (result?.kind === 'stored') {
+      return { stored: result.id };
     }
     if (emptyChosen) {
       return 'empty';
     }
-    if (result?.kind === 'selection') {
-      await this.loadSelection(result.selection, { navigateHome: false });
+    if (result) {
+      // Boot runs the one post-load refresh once the URL's page state is in.
+      await this.loadSelection(result.selection, {
+        navigateHome: false,
+        refresh: false,
+      });
       return 'loaded';
     }
-    return continueWith ? 'continue' : 'empty';
+    return activeId && !deleted.has(activeId) ? { stored: activeId } : 'empty';
   }
 
   /**
@@ -448,7 +593,7 @@ export class UIController {
    */
   async loadSelection(
     selection: FeedSelection,
-    options: { navigateHome?: boolean } = {}
+    options: { navigateHome?: boolean; refresh?: boolean } = {}
   ) {
     this.currentSelection = selection;
     const src = selection.scheduled;
@@ -458,15 +603,40 @@ export class UIController {
     if (src.kind === 'file') {
       await this.loadGTFSFile(src.file, options);
     } else {
-      await this.loadGTFSFromURL(resolvedScheduledUrl(src), options);
+      // A catalog row's label is the feed's name; the form's own labels
+      // ("Custom scheduled feed", "Linked feed") say nothing, so the URL
+      // names those.
+      const generic = [
+        commonT('load.customScheduledLabel'),
+        t('load.linkedFeed'),
+      ].includes(src.label);
+      await this.loadGTFSFromURL(resolvedScheduledUrl(src), {
+        ...options,
+        sourceUrl: src.url,
+        label: generic ? src.url : src.label,
+      });
     }
   }
 
-  async loadGTFSFromURL(url: string, { navigateHome = true } = {}) {
+  async loadGTFSFromURL(
+    url: string,
+    {
+      navigateHome = true,
+      refresh = true,
+      sourceUrl = url,
+      label = url,
+    }: {
+      navigateHome?: boolean;
+      refresh?: boolean;
+      sourceUrl?: string;
+      label?: string;
+    } = {}
+  ) {
     try {
       console.log('Loading GTFS from URL:', url);
 
-      const { unknownFiles } = await this.gtfsParser!.parseFromURL(url);
+      await loadFeed(this.feed!, { url }, label, sourceUrl);
+      const unknownFiles = (await categorizeFiles(this.feed!)).additional;
       if (unknownFiles.length > 0) {
         notify.warning(
           t('load.preservingUnknown', {
@@ -476,7 +646,9 @@ export class UIController {
         );
       }
 
-      await this.refreshAfterFeedSwap({ navigateHome });
+      if (refresh) {
+        await this.refreshAfterFeedSwap({ navigateHome });
+      }
 
       notify.success(t('load.loadedUrl'));
     } catch (error) {
@@ -520,7 +692,7 @@ export class UIController {
     try {
       await showFilesModal({
         onMount: () => {
-          this.updateFileList();
+          void this.updateFileList();
           // Always open on the list, never a stale editor view from last time
           this.showFileList();
 
@@ -557,7 +729,7 @@ export class UIController {
       this.showFileList();
       return;
     }
-    if (!this.isListedFile(fileName)) {
+    if (!(await this.isListedFile(fileName))) {
       console.warn(
         `[UI] Files: ${fileName} is not in the list, showing the list`
       );
@@ -576,35 +748,42 @@ export class UIController {
   }
 
   /** Whether the Files list shows the file, so a hash may name it. */
-  private isListedFile(fileName: string): boolean {
-    if (this.gtfsParser!.getPassthroughContent(fileName) !== undefined) {
-      return true;
-    }
+  private async isListedFile(fileName: string): Promise<boolean> {
+    const files = await categorizeFiles(this.feed!);
     if (overlayFileNames().includes(fileName)) {
-      const gen = this.gtfsParser!.feedGeneration;
+      const gen = this.feed!.feedGeneration;
       const added =
         this.addedExtensionFiles.gen === gen &&
         this.addedExtensionFiles.files.has(fileName);
-      return (
-        added ||
-        this.gtfsParser!.categorizeFiles().extensions.includes(fileName)
-      );
+      return added || files.extensions.includes(fileName);
     }
-    return this.gtfsParser!.getAllFileNames().includes(fileName);
+    return [...files.required, ...files.optional, ...files.additional].includes(
+      fileName
+    );
   }
 
-  updateFileList() {
+  async updateFileList(): Promise<void> {
     // Skipped while the Files modal is closed: a feed swap refreshes the list
     // too, and the list only exists inside the open modal.
+    if (!document.getElementById('file-list') || !this.feed?.isOpen) {
+      return;
+    }
+    const files = await categorizeFiles(this.feed);
+    const { required, optional, extensions, additional } = files;
+    const lineCounts = new Map<string, number>();
+    for (const fileName of additional) {
+      lineCounts.set(fileName, (await this.feed.fileLines(fileName)) ?? 0);
+    }
     const fileList = document.getElementById('file-list');
     if (!fileList) {
       return;
     }
     fileList.innerHTML = '';
+    const counts = (fileName: string) => ({
+      rows: files.rows.get(fileName),
+      lines: lineCounts.get(fileName),
+    });
 
-    // Get categorized files
-    const { required, optional, extensions, additional } =
-      this.gtfsParser!.categorizeFiles();
     // Create DaisyUI menu structure
     const menu = document.createElement('ul');
     menu.className = 'menu w-full';
@@ -618,7 +797,7 @@ export class UIController {
 
     const requiredList = document.createElement('ul');
     required.forEach((fileName) => {
-      this.addFileItem(requiredList, fileName, true);
+      this.addFileItem(requiredList, fileName, true, counts(fileName));
     });
     requiredSection.appendChild(requiredList);
     menu.appendChild(requiredSection);
@@ -632,12 +811,12 @@ export class UIController {
 
     const optionalList = document.createElement('ul');
     optional.forEach((fileName) => {
-      this.addFileItem(optionalList, fileName, false);
+      this.addFileItem(optionalList, fileName, false, counts(fileName));
     });
     optionalSection.appendChild(optionalList);
     menu.appendChild(optionalSection);
 
-    menu.appendChild(this.extensionFilesSection(extensions));
+    menu.appendChild(this.extensionFilesSection(extensions, counts));
 
     // Non-spec files carried through from the imported ZIP, if any
     if (additional.length > 0) {
@@ -649,7 +828,7 @@ export class UIController {
 
       const additionalList = document.createElement('ul');
       additional.forEach((fileName) => {
-        this.addFileItem(additionalList, fileName, false);
+        this.addFileItem(additionalList, fileName, false, counts(fileName));
       });
       additionalSection.appendChild(additionalList);
       menu.appendChild(additionalSection);
@@ -662,8 +841,11 @@ export class UIController {
    * Overlay files: the ones holding rows or added this feed generation, then
    * an "Add" submenu offering the rest.
    */
-  private extensionFilesSection(withRows: string[]): HTMLElement {
-    const gen = this.gtfsParser!.feedGeneration;
+  private extensionFilesSection(
+    withRows: string[],
+    counts: (fileName: string) => FileCounts
+  ): HTMLElement {
+    const gen = this.feed!.feedGeneration;
     if (this.addedExtensionFiles.gen !== gen) {
       this.addedExtensionFiles = { gen, files: new Set() };
     }
@@ -682,7 +864,7 @@ export class UIController {
 
     const list = document.createElement('ul');
     shown.forEach((fileName) => {
-      this.addFileItem(list, fileName, false);
+      this.addFileItem(list, fileName, false, counts(fileName));
     });
 
     if (addable.length > 0) {
@@ -701,7 +883,7 @@ export class UIController {
           event.preventDefault();
           added.add(fileName);
           console.log('[UI] extension file added to the Files list:', fileName);
-          this.updateFileList();
+          void this.updateFileList();
           void this.navigateFiles(fileName);
         });
         li.appendChild(link);
@@ -716,7 +898,12 @@ export class UIController {
     return section;
   }
 
-  addFileItem(container: HTMLElement, fileName: string, isRequired: boolean) {
+  addFileItem(
+    container: HTMLElement,
+    fileName: string,
+    isRequired: boolean,
+    counts: FileCounts
+  ) {
     const listItem = document.createElement('li');
 
     const link = document.createElement('a');
@@ -734,20 +921,18 @@ export class UIController {
     link.appendChild(nameSpan);
 
     // Passthrough files have no table, so count lines instead of records
-    const passthrough = this.gtfsParser!.getPassthroughContent(fileName);
-    if (passthrough !== undefined) {
-      const lines = passthrough
-        .split('\n')
-        .filter((l) => l.trim() !== '').length;
+    if (counts.lines !== undefined) {
       const lineSpan = document.createElement('span');
       lineSpan.className = 'badge badge-ghost badge-sm';
-      lineSpan.textContent = t('files.lines', { count: lines });
+      lineSpan.textContent = t('files.lines', { count: counts.lines });
       link.appendChild(lineSpan);
     } else {
-      // Add record count if available
-      const data = this.gtfsParser!.getFileDataSync(fileName);
-      if (data) {
-        const count = Array.isArray(data) ? data.length : 1;
+      const count =
+        counts.rows ??
+        (fileName === 'locations.geojson'
+          ? getZoneFeatures(this.feed!).length
+          : undefined);
+      if (count !== undefined) {
         const countSpan = document.createElement('span');
         countSpan.className = 'badge badge-neutral badge-sm';
         countSpan.textContent = formatNumber(count);
@@ -765,15 +950,6 @@ export class UIController {
   }
 
   private async openFile(fileName: string) {
-    const isPassthrough =
-      this.gtfsParser!.getPassthroughContent(fileName) !== undefined;
-    if (
-      !isPassthrough &&
-      !this.gtfsParser!.getAllFileNames().includes(fileName)
-    ) {
-      return;
-    }
-
     // Show file editor view
     this.shownFile = fileName;
     await this.showFileEditor(fileName);
@@ -837,22 +1013,10 @@ export class UIController {
       return;
     }
     try {
-      // Reset to empty GTFS feed
-      await this.gtfsParser!.initializeEmpty();
-      this.updateFileList();
-      await this.mapController!.updateMap();
-
-      // Show files tab
-      this.showFileList();
-
-      // Clear editor
+      await createEmptyFeed(this.feed!, t('load.newEmpty'));
       this.editor!.clearEditor();
-
-      // Refresh Objects navigation if available
-      if (this.browseNavigation) {
-        await navigateToHome();
-        this.browseNavigation.refresh();
-      }
+      await this.refreshAfterFeedSwap({ navigateHome: true });
+      this.showFileList();
 
       notify.success(t('load.emptyCreated'));
 
@@ -869,18 +1033,12 @@ export class UIController {
 
   /** Feed identity for the export filename: agency name, else feed publisher. */
   private getFeedName(): string | undefined {
-    const agencies = this.gtfsParser?.getFileDataSync(GTFS_TABLES.AGENCY) ?? [];
-    const agencyName = agencies[0]?.agency_name;
-    if (typeof agencyName === 'string' && agencyName.trim()) {
+    const agencyName = this.feed?.table('agency')[0]?.agency_name;
+    if (agencyName?.trim()) {
       return agencyName;
     }
-
-    const feedInfo =
-      this.gtfsParser?.getFileDataSync(GTFS_TABLES.FEED_INFO) ?? [];
-    const publisher = feedInfo[0]?.feed_publisher_name;
-    return typeof publisher === 'string' && publisher.trim()
-      ? publisher
-      : undefined;
+    const publisher = this.feed?.table('feed_info')[0]?.feed_publisher_name;
+    return publisher?.trim() ? publisher : undefined;
   }
 
   /**
@@ -890,13 +1048,13 @@ export class UIController {
    * no feed_info row exports without asking.
    */
   private async confirmFeedVersion(): Promise<boolean> {
-    const db = this.gtfsParser!.gtfsDatabase;
-    const feedInfo = await db.getAllRows('feed_info');
+    const feed = this.feed!;
+    const feedInfo = feed.table('feed_info');
     if (feedInfo.length === 0) {
       return true;
     }
-    const current = String(feedInfo[0].feed_version ?? '');
-    const imported = await db.getImportFeedVersion();
+    const current = feedInfo[0].feed_version ?? '';
+    const imported = feed.importFeedVersion;
     if (imported !== null && current !== imported) {
       return true;
     }
@@ -955,15 +1113,9 @@ export class UIController {
               showError(t('export.versionUnchanged'));
               return true;
             }
-            if (!this.patchManager) {
-              throw new Error('[UI] no patch manager to record feed_version');
-            }
-            await this.patchManager.recordUpdate(
-              'feed_info',
-              'feed_info',
-              { feed_version: current },
-              { feed_version: next }
-            );
+            await feed.apply([
+              updateOp('feed_info', feedInfo[0], { feed_version: next }),
+            ]);
             console.log(
               `[UI] Export: feed_version "${current}" -> "${next}", exporting`
             );
@@ -1001,7 +1153,12 @@ export class UIController {
    * resolves false, so the load is started again once the copy is saved.
    */
   private async confirmReplaceFeed(): Promise<boolean> {
-    const count = this.patchManager?.changeCount ?? 0;
+    // A stored feed keeps its edits when another is loaded; only a session
+    // without storage loses them.
+    const count =
+      this.feed?.isOpen && this.feed.persistence === 'session'
+        ? this.feed.version
+        : 0;
     if (count === 0) {
       return true;
     }
@@ -1045,60 +1202,48 @@ export class UIController {
   }
 
   async exportGTFS() {
-    let loadingNotificationId = null;
+    if (
+      !this.feed?.isOpen ||
+      !Object.values(await this.feed.read('counts')).some((n) => n > 0)
+    ) {
+      notify.warning(t('export.noData'));
+      return;
+    }
 
+    // Save current file changes
+    this.editor!.saveCurrentFileChanges();
+
+    if (!(await this.confirmFeedVersion())) {
+      return;
+    }
+
+    console.log('[UIController] export started');
+    const controller = new AbortController();
+    feedProgressIndicator.startLoading('export', t('export.preparing'), {
+      onCancel: () => controller.abort(),
+    });
     try {
-      if (
-        !this.gtfsParser ||
-        !this.gtfsParser
-          .getAllFileNames()
-          .some((f) => (this.gtfsParser!.getFileDataSync(f)?.length ?? 0) > 0)
-      ) {
-        notify.warning(t('export.noData'));
-        return;
-      }
-
-      // Save current file changes
-      this.editor!.saveCurrentFileChanges();
-
-      if (!(await this.confirmFeedVersion())) {
-        return;
-      }
-
-      console.log('Exporting GTFS data...');
-
-      // Show loading notification
-      loadingNotificationId = notify.loading(t('export.preparing'));
-
-      // Generate ZIP blob
-      const blob = await this.gtfsParser!.exportAsZip();
-
-      // Download the file
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = buildExportFilename(this.getFeedName());
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      // Remove loading notification and show success
-      if (loadingNotificationId) {
-        notify.removeNotification(loadingNotificationId);
-      }
+      const blob = await this.feed.exportZip({
+        signal: controller.signal,
+        onProgress: (p) =>
+          feedProgressIndicator.updateProgress(
+            'export',
+            p.totalRows > 0 ? Math.min(100, (100 * p.rows) / p.totalRows) : 0,
+            t('export.writing', { file: p.file })
+          ),
+      });
+      downloadBlob(blob, buildExportFilename(this.getFeedName()));
       notify.success(t('export.done'));
-
       await showHelpPageOnce('publishing');
     } catch (error) {
-      console.error('Error exporting GTFS:', error);
-
-      // Remove loading notification
-      if (loadingNotificationId) {
-        notify.removeNotification(loadingNotificationId);
+      if (error instanceof LoadCancelledError) {
+        notify.info(t('export.cancelled'));
+        return;
       }
-
+      console.error('Error exporting GTFS:', error);
       notify.error(t('export.failed', { message: (error as Error).message }));
+    } finally {
+      feedProgressIndicator.finishLoading('export');
     }
   }
 

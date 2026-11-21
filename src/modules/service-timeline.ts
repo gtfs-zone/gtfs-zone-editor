@@ -6,6 +6,7 @@
  * render the same view. The modal remains a caller like any other.
  */
 
+import type { EditorFeed } from '../feed/editor-feed';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { formatDaysOfWeek } from '../utils/entity-references';
 import {
@@ -31,10 +32,6 @@ export interface ServiceData {
 
 export type ServiceDataMap = Map<string, ServiceData>;
 
-export interface ServiceTimelineSource {
-  getAllRows: (tableName: string) => Promise<Record<string, unknown>[]>;
-}
-
 /** Per-row button that opens the service itself rather than the timetable. */
 const SERVICE_EDIT_BTN = 'timeline-service-edit-btn';
 
@@ -44,6 +41,18 @@ export interface ServiceTimelineOptions {
   route_id?: string;
   /** service_id -> trip count. When present, rows gain a trip count column. */
   tripCounts?: Map<string, number>;
+  /** Week axis to draw, instead of the span of `data` (see `timelineSpan`). */
+  span?: TimelineSpan;
+  /** Rows in the map's own order rather than `sortServiceEntries`. */
+  keepOrder?: boolean;
+  /** The table is the page's `.scroll-rows` region, with a pinned header. */
+  scrollRows?: boolean;
+}
+
+/** First and last day on a timeline's week axis, as epoch ms. */
+export interface TimelineSpan {
+  minTs: number;
+  maxTs: number;
 }
 
 const PALETTE: string[] = [
@@ -114,17 +123,27 @@ export function isServiceActive(
   return Number(calendar[WEEKDAY_KEYS[dow]]) === 1;
 }
 
+/**
+ * Every service with its calendar row, colored by its place among all the
+ * feed's service ids. Exceptions are read for `only` when given (the
+ * services a page shows), else for every service.
+ */
 export async function loadServiceData(
-  db: ServiceTimelineSource
+  feed: EditorFeed,
+  only?: Iterable<string>
 ): Promise<ServiceDataMap> {
-  const [calendarRows, calendarDatesRows] = await Promise.all([
-    db.getAllRows('calendar'),
-    db.getAllRows('calendar_dates'),
+  const wanted = only ? [...new Set(only)] : null;
+  const [exceptionIds, calendarDatesRows] = await Promise.all([
+    feed.distinct('calendar_dates', 'service_id'),
+    feed.where(
+      'calendar_dates',
+      wanted ? [{ col: 'service_id', in: wanted }] : []
+    ),
   ]);
 
   const exceptionsByService = new Map<string, Record<string, unknown>[]>();
   for (const row of calendarDatesRows) {
-    const sid = String(row.service_id);
+    const sid = row.service_id;
     if (!exceptionsByService.has(sid)) {
       exceptionsByService.set(sid, []);
     }
@@ -132,13 +151,13 @@ export async function loadServiceData(
   }
 
   const calendarByService = new Map<string, Record<string, unknown>>();
-  for (const row of calendarRows) {
-    calendarByService.set(String(row.service_id), row);
+  for (const row of feed.table('calendar')) {
+    calendarByService.set(row.service_id, row);
   }
 
   const allServiceIds = new Set<string>([
     ...calendarByService.keys(),
-    ...exceptionsByService.keys(),
+    ...exceptionIds,
   ]);
 
   const sortedIds = [...allServiceIds].sort();
@@ -157,20 +176,22 @@ export async function loadServiceData(
 }
 
 /**
- * Trip count per service, optionally scoped to a single route. One full scan of
- * trips.txt, which is the same cost the pages already pay to render.
+ * Trip count per service, optionally scoped to a single route. Counted in
+ * the worker; a route reads only its own trips.
  */
 export async function loadTripCounts(
-  db: ServiceTimelineSource,
+  feed: EditorFeed,
   route_id?: string
 ): Promise<Map<string, number>> {
-  const trips = await db.getAllRows('trips');
-  return countTripsByService(trips, route_id);
+  if (route_id === undefined) {
+    return new Map(Object.entries(await feed.countBy('trips', 'service_id')));
+  }
+  return countTripsByService(await feed.find('trips', 'route_id', route_id));
 }
 
 /** Trip count per service over an already-loaded set of trips. */
 export function countTripsByService(
-  trips: Record<string, unknown>[],
+  trips: readonly Record<string, unknown>[],
   route_id?: string
 ): Map<string, number> {
   const counts = new Map<string, number>();
@@ -215,13 +236,16 @@ export function filterServiceDataMap(
 }
 
 /** Sorts after every real date, so a service with no dates lands last. */
-const NO_DATE = '99999999';
+export const NO_DATE = '99999999';
 
 /**
  * First and last date a service runs: the calendar range widened by any added
  * exception. Removed exceptions (type 2) never extend the range.
  */
-function serviceDateBounds(sd: ServiceData): { first: string; last: string } {
+export function serviceDateBounds(sd: ServiceData): {
+  first: string;
+  last: string;
+} {
   let first = sd.calendar ? String(sd.calendar.start_date) : NO_DATE;
   let last = sd.calendar ? String(sd.calendar.end_date) : '';
   for (const ex of sd.exceptions) {
@@ -335,17 +359,10 @@ function getDaysTooltip(calendar: Record<string, unknown> | null): string {
   return formatDaysOfWeek(calendar);
 }
 
-export function renderServiceTimeline(
-  data: ServiceDataMap,
-  options: ServiceTimelineOptions = {}
-): string {
-  if (data.size === 0) {
-    return `<div class="flex items-center justify-center h-32 text-base-content/50 text-sm">${t('timeline.noData')}</div>`;
-  }
-
+/** Every date of `data`'s calendars and exceptions, or null without any. */
+export function timelineSpan(data: ServiceDataMap): TimelineSpan | null {
   let minTs = Infinity;
   let maxTs = -Infinity;
-
   for (const [, sd] of data) {
     if (sd.calendar) {
       const s = parseGTFSDate(String(sd.calendar.start_date)).getTime();
@@ -369,8 +386,40 @@ export function renderServiceTimeline(
   }
 
   if (!isFinite(minTs) || !isFinite(maxTs)) {
-    return `<div class="flex items-center justify-center h-32 text-base-content/50 text-sm">${t('timeline.noDates')}</div>`;
+    return null;
   }
+  return { minTs, maxTs };
+}
+
+/** The week axis a timeline's rows are drawn against. */
+export interface TimelineFrame {
+  /** Sunday of each week column, as GTFS dates. */
+  weeks: string[];
+  /** Column holding today, or -1 when today is off the axis. */
+  todayWeekIndex: number;
+  /** Today's day within that week, 0 for Sunday. */
+  todayDayIndex: number;
+  labelColPx: number;
+  /** The axis was cut at three years. */
+  truncated: boolean;
+}
+
+/** Placeholder for a timeline with no services, or none with any date. */
+export function renderNoTimeline(reason: 'noData' | 'noDates'): string {
+  const text =
+    reason === 'noData' ? t('timeline.noData') : t('timeline.noDates');
+  return `<div class="flex items-center justify-center h-32 text-base-content/50 text-sm">${text}</div>`;
+}
+
+/**
+ * The week axis over `span`, with the label column sized for `ids`: every id
+ * the timeline will show, so rows appended later fit the same column.
+ */
+export function timelineFrame(
+  span: TimelineSpan,
+  ids: Iterable<string>
+): TimelineFrame {
+  const { minTs, maxTs } = span;
 
   // Snap minDate back to the nearest Sunday
   const dow = new Date(minTs).getUTCDay();
@@ -392,25 +441,6 @@ export function renderServiceTimeline(
     cur += 7 * 86400000;
   }
 
-  // Group weeks into month header spans
-  const monthSpans: Array<{ label: string; colspan: number }> = [];
-  for (const week of weeks) {
-    const d = parseGTFSDate(week);
-    const label = formatDate(d, {
-      month: 'short',
-      year: 'numeric',
-      timeZone: 'UTC',
-    });
-    if (
-      monthSpans.length === 0 ||
-      monthSpans[monthSpans.length - 1].label !== label
-    ) {
-      monthSpans.push({ label, colspan: 1 });
-    } else {
-      monthSpans[monthSpans.length - 1].colspan++;
-    }
-  }
-
   // Week index containing today, or -1 when today falls outside the timeline.
   const today = todayGtfsDate();
   const todayWeekIndex = weeks.findIndex((weekStart) => {
@@ -428,33 +458,27 @@ export function renderServiceTimeline(
             86400000
         );
 
-  const maxIdLen = Math.max(0, ...[...data.keys()].map((k) => k.length));
+  let maxIdLen = 0;
+  for (const id of ids) {
+    maxIdLen = Math.max(maxIdLen, id.length);
+  }
   const labelColPx = Math.min(300, Math.max(80, maxIdLen * 7 + 32));
 
-  // The month header carries the marker too, so the line reads as continuous
-  // from the top of the table.
-  let spanStartWeek = 0;
-  const headerHtml = monthSpans
-    .map(({ label, colspan }) => {
-      const start = spanStartWeek;
-      spanStartWeek += colspan;
-      const inSpan =
-        todayWeekIndex >= start && todayWeekIndex < start + colspan;
-      const style = inSpan
-        ? todayLineStyle(
-            ((todayWeekIndex - start + (todayDayIndex + 0.5) / 7) / colspan) *
-              100
-          )
-        : '';
-      return `<th colspan="${colspan}" class="px-1 py-0.5 text-center text-base-content/60 font-medium border-b border-base-300 whitespace-nowrap" style="${style}">${label}</th>`;
-    })
-    .join('');
+  return { weeks, todayWeekIndex, todayDayIndex, labelColPx, truncated };
+}
 
+/** Timeline rows for `entries`, in the order given, against `frame`. */
+export function renderServiceTimelineRows(
+  frame: TimelineFrame,
+  entries: Array<[string, ServiceData]>,
+  options: ServiceTimelineOptions = {}
+): string {
+  const { weeks, todayWeekIndex, todayDayIndex, labelColPx } = frame;
   const routeAttr = options.route_id
     ? ` data-route-id="${escapeHtml(options.route_id)}"`
     : '';
 
-  const rowsHtml = sortServiceEntries(data, options.tripCounts)
+  return entries
     .map(([sid, sd]) => {
       const calStart = sd.calendar ? String(sd.calendar.start_date) : null;
       const calEnd = sd.calendar ? String(sd.calendar.end_date) : null;
@@ -565,8 +589,58 @@ export function renderServiceTimeline(
       return `<tr class="timeline-row cursor-pointer hover:bg-base-300/20" data-service-id="${escapeHtml(sid)}"${routeAttr}>${labelCell}${dotCell}${tripCell}${editCell}${cells}</tr>`;
     })
     .join('');
+}
 
-  const warningHtml = truncated
+/**
+ * The timeline's table with its month header and an empty `tbody`
+ * (`[data-timeline-rows]`) that `renderServiceTimelineRows` fills.
+ */
+export function renderServiceTimelineFrame(
+  frame: TimelineFrame,
+  options: ServiceTimelineOptions = {},
+  rowsHtml = ''
+): string {
+  const { weeks, todayWeekIndex, todayDayIndex, labelColPx } = frame;
+
+  // Group weeks into month header spans
+  const monthSpans: Array<{ label: string; colspan: number }> = [];
+  for (const week of weeks) {
+    const d = parseGTFSDate(week);
+    const label = formatDate(d, {
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+    if (
+      monthSpans.length === 0 ||
+      monthSpans[monthSpans.length - 1].label !== label
+    ) {
+      monthSpans.push({ label, colspan: 1 });
+    } else {
+      monthSpans[monthSpans.length - 1].colspan++;
+    }
+  }
+
+  // The month header carries the marker too, so the line reads as continuous
+  // from the top of the table.
+  let spanStartWeek = 0;
+  const headerHtml = monthSpans
+    .map(({ label, colspan }) => {
+      const start = spanStartWeek;
+      spanStartWeek += colspan;
+      const inSpan =
+        todayWeekIndex >= start && todayWeekIndex < start + colspan;
+      const style = inSpan
+        ? todayLineStyle(
+            ((todayWeekIndex - start + (todayDayIndex + 0.5) / 7) / colspan) *
+              100
+          )
+        : '';
+      return `<th colspan="${colspan}" class="px-1 py-0.5 text-center text-base-content/60 font-medium border-b border-base-300 whitespace-nowrap" style="${style}">${label}</th>`;
+    })
+    .join('');
+
+  const warningHtml = frame.truncated
     ? `<div class="text-xs text-warning mb-2">${t('timeline.truncated')}</div>`
     : '';
 
@@ -584,9 +658,9 @@ export function renderServiceTimeline(
     <div>
       ${hintHtml}
       ${warningHtml}
-      <div class="overflow-x-auto">
+      <div class="${options.scrollRows ? 'scroll-rows' : 'overflow-x-auto'}">
         <table class="text-xs border-collapse">
-          <thead>
+          <thead class="${options.scrollRows ? 'sticky top-0 z-20 bg-base-100' : ''}">
             <tr>
               <th class="sticky left-0 z-10 bg-base-200 border-b border-base-300" style="width:${labelColPx}px;min-width:${labelColPx}px"></th>
               <th class="w-14 min-w-14 px-1 py-0.5 border-b border-base-300 text-center whitespace-nowrap"><span class="font-mono tracking-tight text-base-content/50 text-xs">${WEEKDAY_INITIALS}</span></th>
@@ -595,18 +669,46 @@ export function renderServiceTimeline(
               ${headerHtml}
             </tr>
           </thead>
-          <tbody>
-            ${rowsHtml}
-          </tbody>
+          <tbody data-timeline-rows>${rowsHtml}</tbody>
         </table>
       </div>
     </div>
   `;
 }
 
+export function renderServiceTimeline(
+  data: ServiceDataMap,
+  options: ServiceTimelineOptions = {}
+): string {
+  if (data.size === 0) {
+    return renderNoTimeline('noData');
+  }
+  const span = options.span ?? timelineSpan(data);
+  if (!span) {
+    return renderNoTimeline('noDates');
+  }
+  const frame = timelineFrame(span, data.keys());
+  const entries = options.keepOrder
+    ? [...data.entries()]
+    : sortServiceEntries(data, options.tripCounts);
+  return renderServiceTimelineFrame(
+    frame,
+    options,
+    renderServiceTimelineRows(frame, entries, options)
+  );
+}
+
+/** `root` itself when it matches, then its matching descendants. */
+function selfAndBelow(root: ParentNode, selector: string): HTMLElement[] {
+  const below = [...root.querySelectorAll<HTMLElement>(selector)];
+  return root instanceof HTMLElement && root.matches(selector)
+    ? [root, ...below]
+    : below;
+}
+
 /**
- * Wire row clicks. `route_id` is only passed when the timeline was rendered
- * with a route context.
+ * Wire row clicks. `root` may be an appended row itself. `route_id` is only
+ * passed when the timeline was rendered with a route context.
  *
  * The per-row edit button calls back without a `route_id`, which is the same
  * shape as a row on a timeline that has no route context, so a caller only
@@ -617,7 +719,7 @@ export function attachServiceTimelineListeners(
   root: ParentNode,
   onRowClick: (service_id: string, route_id?: string) => void
 ): void {
-  root.querySelectorAll<HTMLElement>('.timeline-row').forEach((row) => {
+  selfAndBelow(root, '.timeline-row').forEach((row) => {
     row.addEventListener('click', () => {
       const sid = row.dataset.serviceId;
       if (sid) {
@@ -626,7 +728,7 @@ export function attachServiceTimelineListeners(
     });
   });
 
-  root.querySelectorAll<HTMLElement>(`.${SERVICE_EDIT_BTN}`).forEach((btn) => {
+  selfAndBelow(root, `.${SERVICE_EDIT_BTN}`).forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const sid = btn.dataset.serviceId;

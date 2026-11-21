@@ -9,6 +9,7 @@ import {
 import 'maplibre-gl/dist/maplibre-gl.css';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
+import { registerMapTileProtocol } from './map-tile-protocol';
 import { RouteRenderer } from './route-renderer';
 import { DEFAULT_STOPS_FILTER, LayerManager } from './layer-manager';
 import {
@@ -16,11 +17,11 @@ import {
   InteractionCallbacks,
 } from './interaction-handler';
 import { PageStateManager } from './page-state-manager';
-import { GTFSParser } from './gtfs-parser';
-import { PatchManager } from './patch-manager';
+import type { EditorFeed, FeedEditEvent } from '../feed/editor-feed';
+import type { RouteRefsIndex } from '../feed/route-refs';
+import { updateOp } from '../feed/patch-build';
 import { hasValidCoords } from '../utils/stop-coords';
 import { CONFIG } from '../config';
-import { Stops, Routes, Pathways, Agency, GTFS_TABLES } from '../types/gtfs';
 import { agencyRouteFilter, normalizeAgencyId } from '../utils/agency-helpers';
 import {
   BasemapControl,
@@ -30,9 +31,7 @@ import { AutoZoom } from 'gtfs-zone-web-common/map/auto-zoom';
 import { MAP_MAX_ZOOM } from 'gtfs-zone-web-common/map/basemap-styles';
 import { fitPadding } from 'gtfs-zone-web-common/map/fit-padding';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
-import type { PatchRecord, SingleGTFSPatch } from '../types/patch';
 import { getZoneFeature, listZones, zoneBounds } from './zone-store';
-import { stopTimeRef } from '../utils/stop-time-ref';
 import {
   SearchPlaceMarker,
   type PlacePayload,
@@ -73,6 +72,8 @@ interface MapControllerCallbacks {
  * - Public API for map operations
  * - Integration with page state management
  */
+type FeedRowList = readonly Readonly<Record<string, string>>[];
+
 export class MapController {
   private map: MapLibreMap | null = null;
   private mapElementId: string;
@@ -84,7 +85,14 @@ export class MapController {
   private basemapControl: BasemapControl | null = null;
 
   // Dependencies (injected)
-  private gtfsParser: GTFSParser | null = null;
+  private feed: EditorFeed | null = null;
+  private routeRefs: RouteRefsIndex | null = null;
+  /** Transfers of the focused stop, fetched from the worker. */
+  private focusedTransfers: { stop_id: string; rows: FeedRowList } = {
+    stop_id: '',
+    rows: [],
+  };
+  private transferSeq = 0;
   private pageStateManager: PageStateManager | null = null;
 
   // Callbacks
@@ -214,134 +222,93 @@ export class MapController {
    * Initialize the map controller with dependencies
    */
   public async initialize(
-    gtfsParser: GTFSParser,
-    patchManager: PatchManager
+    feed: EditorFeed,
+    routeRefs: RouteRefsIndex
   ): Promise<void> {
     if (this.isInitialized) {
       console.warn('MapController already initialized');
       return;
     }
 
-    this.gtfsParser = gtfsParser;
+    this.feed = feed;
+    this.routeRefs = routeRefs;
     this.initializeMap();
     this.map!.on('click', () => this.placeMarker?.clear());
     await this.initializeModules();
     this.setupModuleCallbacks();
-    this.subscribeToPatchEvents(patchManager);
+    this.subscribeToEdits(feed);
+    // A route index build landing later re-lights the current spotlight.
+    routeRefs.onChange(() => {
+      if (this.spotlightRouteIds) {
+        this.applySpotlight(this.spotlightRouteIds);
+      }
+    });
     this.isInitialized = true;
 
     console.log('MapController initialized successfully');
   }
 
   /**
-   * Subscribe to patch events for incremental map updates.
-   * - change: surgical invalidation per affected table
-   * - undo/redo/jump: hard reset (full rebuild)
+   * Follow edits: a change redraws what its tables can move, a history move
+   * rebuilds the whole map.
    */
-  private subscribeToPatchEvents(patchManager: PatchManager): void {
-    const hardReset = () => {
-      this.updateMap().catch((e: unknown) =>
-        console.error('[MapController] hard reset failed:', e)
-      );
-    };
-
-    patchManager.on('undo', hardReset);
-    patchManager.on('redo', hardReset);
-    patchManager.on('jump', hardReset);
-
-    patchManager.on('change', (record) => {
-      if (!record) {
+  private subscribeToEdits(feed: EditorFeed): void {
+    feed.onEdit((e) => {
+      if (e.kind !== 'change') {
+        this.updateMap().catch((err: unknown) =>
+          console.error('[MapController] hard reset failed:', err)
+        );
         return;
       }
-      this.handlePatchChange(record);
+      this.handleChange(e);
     });
   }
 
-  /**
-   * Dispatch a change patch to the appropriate surgical invalidation method.
-   */
-  private handlePatchChange(record: PatchRecord): void {
+  /** Redraw the layers an edit's tables and files feed. */
+  private handleChange(e: FeedEditEvent): void {
     if (!this.routeRenderer || !this.layerManager) {
       return;
     }
-
-    const patch = record.patch;
-    const ops: SingleGTFSPatch[] = patch.op === 'batch' ? patch.ops : [patch];
-
-    for (const op of ops) {
-      const { table, id } = op.source;
-      console.log(
-        `[MapController] patch ${table}:${id} op=${op.op} -> dispatching invalidation`
-      );
-
-      switch (table) {
-        case 'routes': {
-          const forwardChanges =
-            op.op === 'update'
-              ? (op.forward as { changes: Record<string, unknown> }).changes
-              : undefined;
-          this.routeRenderer.invalidateRoute(id, op.op, forwardChanges);
-          break;
-        }
-        case 'trips': {
-          let beforeShapeId: string | null = null;
-          let afterShapeId: string | null = null;
-
-          if (op.op === 'update') {
-            const fwd = (op.forward as { changes: Record<string, unknown> })
-              .changes;
-            const inv = (op.inverse as { changes: Record<string, unknown> })
-              .changes;
-            if (!('shape_id' in fwd) && !('route_id' in fwd)) {
-              break; // No map-visible change (e.g. trip_headsign edit)
-            }
-            if ('shape_id' in fwd) {
-              beforeShapeId =
-                (inv.shape_id as string | null | undefined) ?? null;
-              afterShapeId =
-                (fwd.shape_id as string | null | undefined) ?? null;
-            }
-          } else if (op.op === 'insert') {
-            const rec = (op.forward as { record: Record<string, unknown> })
-              .record;
-            afterShapeId = (rec.shape_id as string | null | undefined) ?? null;
-          } else if (op.op === 'delete') {
-            const rec = (op.inverse as { record: Record<string, unknown> })
-              .record;
-            beforeShapeId = (rec.shape_id as string | null | undefined) ?? null;
-          }
-
-          this.routeRenderer.invalidateTrip(
-            id,
-            op.op,
-            beforeShapeId,
-            afterShapeId
-          );
-          break;
-        }
-        case 'shapes': {
-          // Composite key: shape_id:shape_pt_sequence, extract shape_id
-          const shapeId = id.slice(0, id.lastIndexOf(':'));
-          this.routeRenderer.invalidateShape(shapeId, op.op);
-          break;
-        }
-        case 'stop_times': {
-          // Composite key: trip_id:stop_sequence, extract trip_id
-          const tripId = id.slice(0, id.lastIndexOf(':'));
-          this.routeRenderer.invalidateStopTimes(tripId, op.op);
-          break;
-        }
-        case 'stops':
-          this.routeRenderer.invalidateStop(id, op.op);
-          this.layerManager.invalidateCoordResolver();
-          this.layerManager.updateStopsData();
-          break;
-        case 'locations':
-          this.layerManager.updateZonesLayer();
-          break;
-        default:
-          break;
+    const touched = new Set(e.tables);
+    console.log(
+      `[MapController] edit touched ${[...e.tables, ...e.files].join(', ')}`
+    );
+    if (touched.has('stops')) {
+      this.layerManager.invalidateCoordResolver();
+      this.layerManager.updateStopsData();
+      const station = this.deriveExpandedStation();
+      if (station) {
+        this.layerManager.rebuildPathwaysSource(station);
       }
+    }
+    if (touched.has('pathways')) {
+      const station = this.deriveExpandedStation();
+      if (station) {
+        this.layerManager.invalidateCoordResolver();
+        this.layerManager.rebuildPathwaysSource(station);
+      }
+    }
+    if (
+      ['routes', 'trips', 'shapes', 'stop_times', 'stops'].some((t) =>
+        touched.has(t)
+      )
+    ) {
+      this.routeRenderer
+        .renderRoutes()
+        .then(() => {
+          if (this.spotlightRouteIds) {
+            this.routeRenderer?.highlightRoutes(this.spotlightRouteIds);
+          }
+        })
+        .catch((err: unknown) =>
+          console.error('[MapController] route redraw failed:', err)
+        );
+    }
+    if (touched.has('transfers') && this.focusedObject.type === 'stop') {
+      this.highlightStop(this.focusedObject.id);
+    }
+    if (e.files.includes('locations.geojson')) {
+      this.layerManager.updateZonesLayer();
     }
   }
 
@@ -383,22 +350,16 @@ export class MapController {
    * Initialize core modules
    */
   private async initializeModules(): Promise<void> {
-    if (!this.map || !this.gtfsParser) {
-      throw new Error(
-        'Map or gtfsParser not available for module initialization'
-      );
+    if (!this.map || !this.feed) {
+      throw new Error('Map or feed not available for module initialization');
     }
 
     // Initialize modules
-    this.layerManager = new LayerManager(this.map, this.gtfsParser);
-    this.routeRenderer = new RouteRenderer(this.map, this.gtfsParser);
-    this.interactionHandler = new InteractionHandler(this.map, this.gtfsParser);
+    registerMapTileProtocol(this.feed);
+    this.layerManager = new LayerManager(this.map, this.feed);
+    this.routeRenderer = new RouteRenderer(this.map, this.feed);
+    this.interactionHandler = new InteractionHandler(this.map, this.feed);
     this.basemapControl = new BasemapControl(this.map);
-
-    // Keep InteractionHandler's GeoJSON cache in sync with LayerManager
-    this.layerManager.onStopsDataUpdated = (data) => {
-      this.interactionHandler?.setStopsGeoJSON(data);
-    };
 
     // Let InteractionHandler read the expanded station id for contextual stop creation
     this.interactionHandler.setGetExpandedStationId(() =>
@@ -453,8 +414,8 @@ export class MapController {
       this.placeMarker?.redraw();
 
       // Check if we have GTFS data loaded
-      if (!this.gtfsParser || !this.gtfsParser.getFileDataSync('stops.txt')) {
-        console.log('⏭️ No GTFS data loaded, skipping layer re-add');
+      if (!this.feed?.isOpen) {
+        console.log('[MapController] no feed open, skipping layer re-add');
         return;
       }
 
@@ -487,6 +448,7 @@ export class MapController {
           this.focusedObject = { type: 'none' };
           const counterparts =
             obj.type === 'stop' ? this.transferCounterparts(obj.id) : [];
+          const transfers = obj.type === 'stop' ? this.transfersOf(obj.id) : [];
           this.appliedStopsFilterKey = '';
           this.applyFocusedObject(obj, counterparts);
           // Re-apply whatever spotlight was active before the basemap swap,
@@ -496,7 +458,7 @@ export class MapController {
             // The new source dropped every feature state and the transfer
             // layers went with the old style, so the additive half of the stop
             // selection has to be drawn again.
-            this.layerManager.showTransferEdges(obj.id);
+            this.layerManager.showTransferEdges(obj.id, transfers);
             const station = this.getExpandedStationId();
             this.layerManager.setKeptStops([
               ...(station ? this.stationMembers(station) : []),
@@ -537,7 +499,7 @@ export class MapController {
    * starting a competing render.
    */
   public async updateMap(): Promise<void> {
-    const gen = this.gtfsParser?.feedGeneration ?? 0;
+    const gen = this.feed?.feedGeneration ?? 0;
     if (this.mapUpdateInFlight?.gen === gen) {
       return this.mapUpdateInFlight.promise;
     }
@@ -554,7 +516,7 @@ export class MapController {
    * True once the feed this update was started for is no longer the loaded one.
    */
   private feedSuperseded(gen: number, stage: string): boolean {
-    const current = this.gtfsParser?.feedGeneration ?? 0;
+    const current = this.feed?.feedGeneration ?? 0;
     if (current === gen) {
       return false;
     }
@@ -576,6 +538,8 @@ export class MapController {
       return;
     }
     this.focusedObject = { type: 'none' };
+    this.focusedTransfers = { stop_id: '', rows: [] };
+    this.transferSeq++;
     this.spotlightRouteIds = null;
     this.appliedStopsFilterKey = '';
     this.placeMarker?.clear();
@@ -642,14 +606,7 @@ export class MapController {
    * Check if map is ready for operations
    */
   private isMapReady(): boolean {
-    if (
-      !this.gtfsParser ||
-      !this.gtfsParser.getFileDataSync('stops.txt') ||
-      !this.map
-    ) {
-      return false;
-    }
-    return true;
+    return !!this.feed?.isOpen && !!this.map;
   }
 
   public focusFeed(): void {
@@ -675,13 +632,12 @@ export class MapController {
     route_ids?: Iterable<string>;
     include_shapes?: boolean;
   }): LngLatBounds | null {
-    if (!this.gtfsParser) {
+    const feed = this.feed;
+    if (!feed?.isOpen) {
       return null;
     }
 
-    // Running min/max rather than a collected array: a feed-wide fit walks
-    // every shape point (~395k on the MBTA feed) and materializing a tuple per
-    // point would allocate hundreds of thousands of throwaway arrays.
+    // Running min/max over stop coordinates, zone bounds and route bounds.
     let west = Infinity;
     let south = Infinity;
     let east = -Infinity;
@@ -708,17 +664,15 @@ export class MapController {
       }
     }
     if (stop_ids.size > 0) {
-      for (const stop of this.gtfsParser.getFileDataSyncTyped<Stops>(
-        'stops.txt'
-      ) || []) {
+      for (const stop of feed.table('stops')) {
         if (stop_ids.has(stop.stop_id) && hasValidCoords(stop)) {
-          extend(stop.stop_lon, stop.stop_lat);
+          extend(Number(stop.stop_lon), Number(stop.stop_lat));
         }
       }
     }
 
     for (const location_id of input.zone_ids ?? []) {
-      const feature = getZoneFeature(this.gtfsParser, location_id);
+      const feature = getZoneFeature(feed, location_id);
       const bbox = feature ? zoneBounds(feature) : null;
       if (!bbox) {
         continue;
@@ -732,13 +686,13 @@ export class MapController {
       // route_ids present means "the shapes of these routes"; absent means
       // every shape in the feed, which is what a feed-wide fit wants.
       const wanted = input.route_ids ? new Set(input.route_ids) : null;
-      for (const feature of this.routeRenderer?.getRouteFeatures() ?? []) {
-        if (wanted && !wanted.has(feature.properties.route_id)) {
+      for (const [route_id, bbox] of this.routeRenderer?.getRouteBounds() ??
+        []) {
+        if (wanted && !wanted.has(route_id)) {
           continue;
         }
-        for (const [lng, lat] of feature.geometry.coordinates) {
-          extend(lng, lat);
-        }
+        extend(bbox[0], bbox[1]);
+        extend(bbox[2], bbox[3]);
       }
     }
 
@@ -749,41 +703,19 @@ export class MapController {
   }
 
   /**
-   * Every reference a route's trips make, split by kind. The flex-aware
-   * counterpart of getStopIdsForRoute, which only knows about stop_id. Walks
-   * the same indexed data that method does, so it is no more expensive.
+   * Every reference a route's trips make, split by kind. Empty until the
+   * route index has been built for the feed.
    */
   private refsForRoute(route_id: string): {
     stop_ids: string[];
     zone_ids: string[];
     location_group_ids: string[];
   } {
-    const stop_ids = new Set<string>();
-    const zone_ids = new Set<string>();
-    const location_group_ids = new Set<string>();
-
-    for (const trip of this.gtfsParser?.getTripsByRouteId(route_id) ?? []) {
-      for (const st of this.gtfsParser?.getStopTimesByTripId(
-        String(trip.trip_id)
-      ) ?? []) {
-        const ref = stopTimeRef(st);
-        if (!ref) {
-          continue;
-        }
-        if (ref.kind === 'stop') {
-          stop_ids.add(ref.id);
-        } else if (ref.kind === 'location') {
-          zone_ids.add(ref.id);
-        } else {
-          location_group_ids.add(ref.id);
-        }
-      }
-    }
-
+    const refs = this.routeRefs?.route(route_id);
     return {
-      stop_ids: [...stop_ids],
-      zone_ids: [...zone_ids],
-      location_group_ids: [...location_group_ids],
+      stop_ids: refs?.stops ?? [],
+      zone_ids: refs?.zones ?? [],
+      location_group_ids: refs?.groups ?? [],
     };
   }
 
@@ -793,9 +725,8 @@ export class MapController {
    * the hull of its stops, and a flex feed can have no stops at all.
    */
   private fitMapToData(force = false): void {
-    const stops =
-      this.gtfsParser!.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const zones = listZones(this.gtfsParser!);
+    const stops = this.feed!.table('stops');
+    const zones = listZones(this.feed!);
 
     const bounds = this.boundsFor({
       stop_ids: stops.map((stop) => stop.stop_id),
@@ -822,49 +753,36 @@ export class MapController {
    */
   private deriveExpandedStation(): string | null {
     const obj = this.focusedObject;
-    const stops =
-      this.gtfsParser?.getFileDataSyncTyped<Stops>('stops.txt') || [];
-
-    if (obj.type === 'stop') {
-      const stop = stops.find((s) => s.stop_id === obj.id);
-      if (!stop) {
-        return null;
-      }
-      const locationType =
-        typeof stop.location_type === 'number'
-          ? stop.location_type
-          : parseInt(stop.location_type ?? '0', 10) || 0;
-      if (locationType === 1) {
-        return stop.stop_id;
-      }
-      if (stop.parent_station) {
-        return stop.parent_station as string;
-      }
+    const feed = this.feed;
+    if (!feed?.isOpen) {
       return null;
     }
 
-    if (obj.type === 'pathway') {
-      const pathways =
-        this.gtfsParser?.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
-      const pathway = pathways.find((p) => p.pathway_id === obj.id);
-      if (!pathway) {
+    if (obj.type === 'stop') {
+      const stop = feed.byKey('stops', obj.id);
+      if (!stop) {
         return null;
       }
-      const fromStop = stops.find((s) => s.stop_id === pathway.from_stop_id);
+      const locationType = parseInt(stop.location_type ?? '0', 10) || 0;
+      if (locationType === 1) {
+        return stop.stop_id;
+      }
+      return stop.parent_station || null;
+    }
+
+    if (obj.type === 'pathway') {
+      const pathway = feed.byKey('pathways', obj.id);
+      const fromStop = pathway
+        ? feed.byKey('stops', pathway.from_stop_id ?? '')
+        : null;
       if (!fromStop) {
         return null;
       }
       if (fromStop.parent_station) {
-        return fromStop.parent_station as string;
+        return fromStop.parent_station;
       }
-      const lt =
-        typeof fromStop.location_type === 'number'
-          ? fromStop.location_type
-          : parseInt(fromStop.location_type ?? '0', 10) || 0;
-      if (lt === 1) {
-        return fromStop.stop_id as string;
-      }
-      return null;
+      const lt = parseInt(fromStop.location_type ?? '0', 10) || 0;
+      return lt === 1 ? fromStop.stop_id : null;
     }
 
     return null;
@@ -874,8 +792,7 @@ export class MapController {
    * Fly to the bounding box of a station and its children.
    */
   private flyToStation(stationId: string): void {
-    const stops =
-      this.gtfsParser!.getFileDataSyncTyped<Stops>('stops.txt') || [];
+    const stops = this.feed!.table('stops');
     const coords: [number, number][] = stops
       .filter(
         (s) =>
@@ -1019,8 +936,8 @@ export class MapController {
    * expanded station's platforms stay lit too.
    */
   private withAncestors(stop_ids: Set<string>): Set<string> {
-    const stops = this.gtfsParser?.getFileDataSyncTyped<Stops>('stops.txt');
-    if (!stops || stops.length === 0) {
+    const stops = this.feed?.isOpen ? this.feed.table('stops') : [];
+    if (stops.length === 0) {
       return stop_ids;
     }
     const parentOf = new Map<string, string>();
@@ -1049,20 +966,26 @@ export class MapController {
   }
 
   /**
+   * The focused stop's transfers, fetched by `highlightStop`. Empty for any
+   * other stop, or until the fetch lands.
+   */
+  private transfersOf(stop_id: string): FeedRowList {
+    return this.focusedTransfers.stop_id === stop_id
+      ? this.focusedTransfers.rows
+      : [];
+  }
+
+  /**
    * The other endpoint of every transfer naming this stop.
    *
    * Types 4 and 5 link two trips rather than two places and are not drawn, so
    * they are skipped here too, matching `LayerManager.showTransferEdges`.
    */
   private transferCounterparts(stop_id: string): string[] {
-    const transfers = this.gtfsParser?.getFileDataSync('transfers.txt') || [];
     const counterparts = new Set<string>();
-    for (const transfer of transfers) {
-      const from = String(transfer.from_stop_id ?? '');
-      const to = String(transfer.to_stop_id ?? '');
-      if (from !== stop_id && to !== stop_id) {
-        continue;
-      }
+    for (const transfer of this.transfersOf(stop_id)) {
+      const from = transfer.from_stop_id ?? '';
+      const to = transfer.to_stop_id ?? '';
       const type = Number(transfer.transfer_type ?? 0) || 0;
       if (type === 4 || type === 5) {
         continue;
@@ -1081,8 +1004,7 @@ export class MapController {
    * the route spotlight's dim, not only the platforms a route happens to serve.
    */
   private stationMembers(station_id: string): string[] {
-    const stops =
-      this.gtfsParser?.getFileDataSyncTyped<Stops>('stops.txt') || [];
+    const stops = this.feed?.isOpen ? this.feed.table('stops') : [];
     const childrenOf = new Map<string, string[]>();
     for (const stop of stops) {
       const parent = stop.parent_station ? String(stop.parent_station) : '';
@@ -1211,6 +1133,37 @@ export class MapController {
    * Highlight specific stop
    */
   public highlightStop(stop_id: string): void {
+    this.drawStop(stop_id);
+    if (this.focusedTransfers.stop_id === stop_id || !this.feed?.isOpen) {
+      return;
+    }
+    // Transfers live in the worker: draw without them, then again once
+    // they land if the stop is still the focused one.
+    const seq = ++this.transferSeq;
+    const feed = this.feed;
+    Promise.all([
+      feed.where('transfers', [{ col: 'from_stop_id', eq: stop_id }]),
+      feed.where('transfers', [{ col: 'to_stop_id', eq: stop_id }]),
+    ])
+      .then(([from, to]) => {
+        if (seq !== this.transferSeq) {
+          return;
+        }
+        this.focusedTransfers = {
+          stop_id,
+          rows: [...from, ...to.filter((r) => r.from_stop_id !== stop_id)],
+        };
+        const focused = this.focusedObject;
+        if (focused.type === 'stop' && focused.id === stop_id) {
+          this.drawStop(stop_id, false);
+        }
+      })
+      .catch((e: unknown) =>
+        console.error(`[MapController] transfers of ${stop_id} failed:`, e)
+      );
+  }
+
+  private drawStop(stop_id: string, fly = true): void {
     this.interactionHandler?.setHighlightedStop(null);
     this.layerManager?.clearHighlights();
 
@@ -1223,11 +1176,10 @@ export class MapController {
 
     // Transfers of this stop only. Cleared by layerManager.clearHighlights(),
     // which every other highlight* call runs first.
-    this.layerManager?.showTransferEdges(stop_id);
+    this.layerManager?.showTransferEdges(stop_id, this.transfersOf(stop_id));
 
     // Get routes that serve this stop and spotlight them (line + their stops)
-    const routesAtStop = this.gtfsParser?.getRoutesForStop?.(stop_id) || [];
-    const route_ids = routesAtStop.map((route) => route.route_id as string);
+    const route_ids = this.routeRefs?.routesAtStop(stop_id) ?? [];
     this.applySpotlight(route_ids.length > 0 ? route_ids : null);
 
     // Selecting a stop only adds emphasis: the station's other platforms and
@@ -1243,7 +1195,7 @@ export class MapController {
     // expanded station via flyToStation, skip the individual-stop flyTo so
     // it doesn't override the station fit. Only fly to the stop directly when
     // no station is expanded (i.e. standalone stops).
-    if (this.getExpandedStationId() === null) {
+    if (fly && this.getExpandedStationId() === null) {
       this.flyToStop(stop_id);
     }
     console.log(`Highlighted stop: ${stop_id}`);
@@ -1302,8 +1254,9 @@ export class MapController {
 
   /** Member stop ids of a location group, from location_group_stops.txt. */
   private stopIdsForLocationGroup(location_group_id: string): string[] {
-    const rows =
-      this.gtfsParser?.getFileDataSync(GTFS_TABLES.LOCATION_GROUP_STOPS) ?? [];
+    const rows = this.feed?.isOpen
+      ? this.feed.table('location_group_stops')
+      : [];
     return rows
       .filter(
         (row) => String(row.location_group_id ?? '') === location_group_id
@@ -1314,15 +1267,13 @@ export class MapController {
 
   /** Fly to a single stop. No-op when it has no coordinates. */
   private flyToStop(stop_id: string): void {
-    const stops =
-      this.gtfsParser!.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const stop = stops.find((s) => s.stop_id === stop_id);
+    const stop = this.feed?.isOpen ? this.feed.byKey('stops', stop_id) : null;
     if (!stop || !hasValidCoords(stop)) {
       return;
     }
 
     this.autoFlyTo({
-      center: [stop.stop_lon, stop.stop_lat],
+      center: [Number(stop.stop_lon), Number(stop.stop_lat)],
       zoom: CONFIG.STOP_FOCUS_ZOOM,
       duration: 1500,
       essential: true,
@@ -1381,18 +1332,14 @@ export class MapController {
    */
   private async handleEmptyClick(): Promise<void> {
     const obj = this.focusedObject;
-    const stops =
-      this.gtfsParser?.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const pathways =
-      this.gtfsParser?.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
+    const feed = this.feed?.isOpen ? this.feed : null;
 
     let parentStopId: string | null = null;
-    if (obj.type === 'stop') {
-      const stop = stops.find((s) => s.stop_id === obj.id);
-      parentStopId = stop?.parent_station ? String(stop.parent_station) : null;
-    } else if (obj.type === 'pathway') {
-      const pw = pathways.find((p) => p.pathway_id === obj.id);
-      const from = pw ? stops.find((s) => s.stop_id === pw.from_stop_id) : null;
+    if (feed && obj.type === 'stop') {
+      parentStopId = feed.byKey('stops', obj.id)?.parent_station || null;
+    } else if (feed && obj.type === 'pathway') {
+      const pw = feed.byKey('pathways', obj.id);
+      const from = pw ? feed.byKey('stops', pw.from_stop_id ?? '') : null;
       parentStopId = from?.stop_id ?? null;
     }
 
@@ -1471,10 +1418,8 @@ export class MapController {
    * Highlight all routes for a specific agency
    */
   public highlightAgencyRoutes(agency_id: string): void {
-    const routes =
-      this.gtfsParser!.getFileDataSyncTyped<Routes>('routes.txt') || [];
-    const agencies =
-      this.gtfsParser!.getFileDataSyncTyped<Agency>('agency.txt') || [];
+    const routes = this.feed!.table('routes');
+    const agencies = this.feed!.table('agency');
     const acceptedIds = agencyRouteFilter(agency_id, agencies.length);
     const agencyRoutes = routes.filter((route) =>
       acceptedIds.includes(normalizeAgencyId(route.agency_id))
@@ -1670,20 +1615,29 @@ export class MapController {
     console.log(`Stop ${stop_id} dragged to: ${lat}, ${lng}`);
 
     try {
-      if (this.gtfsParser?.updateStopCoordinates) {
-        await this.gtfsParser.updateStopCoordinates(stop_id, lat, lng);
-        console.log(`Updated coordinates for stop ${stop_id}`);
-
-        // Update layer data
-        this.layerManager?.invalidateCoordResolver();
-        this.layerManager?.updateStopsData();
-
-        // Rebuild pathways if a station is expanded (stop drag may shift endpoints)
-        const expandedStation = this.deriveExpandedStation();
-        if (expandedStation) {
-          this.layerManager?.rebuildPathwaysSource(expandedStation);
-        }
+      if (isNaN(lat) || isNaN(lng)) {
+        throw new Error(
+          t('coords.invalid', { lat: String(lat), lng: String(lng) })
+        );
       }
+      if (lat < -90 || lat > 90) {
+        throw new Error(t('coords.lat', { lat: String(lat) }));
+      }
+      if (lng < -180 || lng > 180) {
+        throw new Error(t('coords.lng', { lng: String(lng) }));
+      }
+      const stop = this.feed?.byKey('stops', stop_id);
+      if (!stop) {
+        throw new Error(`Stop ${stop_id} not found`);
+      }
+      // The edit listener redraws the stops and pathways.
+      await this.feed!.apply([
+        updateOp('stops', stop, {
+          stop_lat: lat.toString(),
+          stop_lon: lng.toString(),
+        }),
+      ]);
+      console.log(`Updated coordinates for stop ${stop_id}`);
     } catch (error) {
       console.error(`Failed to update coordinates for stop ${stop_id}:`, error);
 
@@ -1730,13 +1684,11 @@ export class MapController {
     // Below the fade band the map is usually still at the default world view
     // (an empty feed gives fitMapToData nothing to fit), so move to the stop.
     if (this.map && this.map.getZoom() < CONFIG.STOP_FADE_ZOOM_MAX) {
-      const stop = (
-        this.gtfsParser?.getFileDataSyncTyped<Stops>('stops.txt') || []
-      ).find((s) => s.stop_id === stop_id);
+      const stop = this.feed?.byKey('stops', stop_id);
       if (stop && hasValidCoords(stop)) {
         console.log(`[MapController] easing to new stop ${stop_id}`);
         this.map.easeTo({
-          center: [stop.stop_lon, stop.stop_lat],
+          center: [Number(stop.stop_lon), Number(stop.stop_lat)],
           zoom: CONFIG.STOP_FADE_ZOOM_MAX,
           duration: 800,
         });
@@ -1820,7 +1772,7 @@ export class MapController {
     this.layerManager = null;
     this.interactionHandler = null;
     this.basemapControl = null;
-    this.gtfsParser = null;
+    this.feed = null;
     this.pageStateManager = null;
     this.callbacks = {};
     this.focusedObject = { type: 'none' };
@@ -1842,13 +1794,13 @@ export class MapController {
       hasLayerManager: !!this.layerManager,
       hasInteractionHandler: !!this.interactionHandler,
       hasBasemapControl: !!this.basemapControl,
-      hasGtfsParser: !!this.gtfsParser,
+      hasFeed: !!this.feed?.isOpen,
       hasPageStateManager: !!this.pageStateManager,
       currentMode: this.getCurrentMode(),
       currentBasemap: this.basemapControl?.getCurrentBasemap(),
       mapCenter: this.map?.getCenter(),
       mapZoom: this.map?.getZoom(),
-      routeDataCount: this.routeRenderer?.getRouteFeatures().length || 0,
+      routeDataCount: this.routeRenderer?.getRouteBounds().size || 0,
       focusedObject: this.focusedObject,
     };
   }

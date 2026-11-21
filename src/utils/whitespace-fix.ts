@@ -13,7 +13,9 @@
  */
 
 import type { ValidationEntity } from '../modules/gtfs-validator';
-import type { EditableTableDeps } from '../modules/editable-table';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
+import type { SingleGTFSPatch } from '../types/patch';
 import { GTFS_FIELD_SPECS } from '../types/gtfs';
 import {
   generateCompositeKeyFromRecord,
@@ -50,17 +52,13 @@ export function cleanWhitespace(value: string): string {
 /** The changed fields of one row, plus the record they were read from. */
 interface PendingRow {
   key: string;
-  record: Record<string, unknown>;
+  record: FeedRow;
   changes: Record<string, string>;
 }
 
-type MixedOps = Parameters<
-  EditableTableDeps['patchManager']['recordBatchMixed']
->[0];
-
 export async function applyWhitespaceFix(
   entities: ValidationEntity[],
-  deps: EditableTableDeps
+  feed: EditorFeed
 ): Promise<WhitespaceFixResult> {
   const result: WhitespaceFixResult = {
     cleaned: 0,
@@ -75,27 +73,24 @@ export async function applyWhitespaceFix(
     byFile.set(entity.file, [...(byFile.get(entity.file) ?? []), entity]);
   }
 
-  const ops: MixedOps = [];
-  const deletes: Array<{ table: string; key: string }> = [];
-  const inserts: Array<{ table: string; record: Record<string, unknown> }> = [];
-  const updates: Array<{
-    table: string;
-    key: string;
-    changes: Record<string, string>;
-  }> = [];
+  const deletes: SingleGTFSPatch[] = [];
+  const inserts: SingleGTFSPatch[] = [];
+  const updates: (SingleGTFSPatch | null)[] = [];
   const required = new Set<string>();
 
   for (const [file, fileEntities] of byFile) {
     const table = file.replace(/\.txt$/, '');
-    const rows = await deps.gtfsDatabase.getAllRows(table);
-    const byKey = new Map<string, Record<string, unknown>>();
-    for (const row of rows) {
-      try {
-        byKey.set(generateCompositeKeyFromRecord(table, row), row);
-      } catch {
-        // A row with no derivable key was never addressable by the issue list.
+    const keys = [
+      ...new Set(fileEntities.map((e) => e.id).filter((id) => id !== '')),
+    ];
+    const found = await feed.byKeys(table, keys);
+    const byKey = new Map<string, FeedRow>();
+    keys.forEach((key, i) => {
+      const row = found[i];
+      if (row) {
+        byKey.set(key, row);
       }
-    }
+    });
 
     const pending = new Map<string, PendingRow>();
     for (const entity of fileEntities) {
@@ -138,32 +133,20 @@ export async function applyWhitespaceFix(
         (keyConfig?.fields ?? []).some((field) => field in entry.changes);
 
       if (!reKeys) {
-        updates.push({ table, key: entry.key, changes: entry.changes });
-        ops.push({
-          op: 'update',
-          table,
-          id: entry.key,
-          before: { ...entry.record },
-          after,
-        });
+        updates.push(updateOp(table, entry.record, after));
       } else {
         const newKey = generateCompositeKeyFromRecord(table, after);
-        if (newKey !== entry.key && byKey.has(newKey)) {
+        const [taken] =
+          newKey === entry.key ? [null] : await feed.byKeys(table, [newKey]);
+        if (taken) {
           console.warn(
             `[WhitespaceFix] ${table} ${entry.key} would collide with ${newKey}, skipped`
           );
           result.skippedConflict += 1;
           continue;
         }
-        deletes.push({ table, key: entry.key });
-        inserts.push({ table, record: after });
-        ops.push({
-          op: 'delete',
-          table,
-          id: entry.key,
-          record: { ...entry.record },
-        });
-        ops.push({ op: 'insert', table, id: newKey, record: after });
+        deletes.push(deleteOp(table, entry.record));
+        inserts.push(insertOp(table, after));
       }
       result.cleaned += Object.keys(entry.changes).length;
       result.rows += 1;
@@ -182,23 +165,8 @@ export async function applyWhitespaceFix(
   );
 
   // Deletes before inserts, so a re-keyed row never collides with itself.
-  for (const entry of deletes) {
-    await deps.gtfsDatabase.deleteRow(entry.table, entry.key);
-  }
-  for (const entry of inserts) {
-    await deps.gtfsDatabase.insertRows(entry.table, [entry.record]);
-  }
-  for (const entry of updates) {
-    await deps.gtfsDatabase.updateRow(entry.table, entry.key, entry.changes);
-  }
-
-  await deps.patchManager.recordBatchMixed(
-    // Same order the writes above went in.
-    [
-      ...ops.filter((op) => op.op === 'delete'),
-      ...ops.filter((op) => op.op === 'insert'),
-      ...ops.filter((op) => op.op === 'update'),
-    ],
+  await feed.apply(
+    [...deletes, ...inserts, ...updates],
     t('fix.cleanLabel', { count: result.cleaned })
   );
 

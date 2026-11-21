@@ -17,18 +17,12 @@ import {
   applyRename,
   renamePlan,
   validateRenameTarget,
-  type RenameDatabase,
-  type RenamePatchManager,
   type RenamePlan,
 } from '../utils/rename-entity';
+import type { EditorFeed } from '../feed/editor-feed';
 import { getNaturalKeyField } from '../utils/gtfs-primary-keys';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
-
-export interface RenameModalDeps {
-  database: RenameDatabase;
-  patchManager: RenamePatchManager | null;
-}
 
 export interface RenameModalTarget {
   /** Store name, without the `.txt`. */
@@ -102,7 +96,7 @@ function showError(message: string): void {
  * cancelled or could not run.
  */
 export async function showRenameModal(
-  deps: RenameModalDeps,
+  feed: EditorFeed,
   target: RenameModalTarget
 ): Promise<string | null> {
   const { table, id } = target;
@@ -111,15 +105,9 @@ export async function showRenameModal(
     console.error(`[RenameIdModal] ${table} has no natural key to rename`);
     return null;
   }
-  if (!deps.patchManager) {
-    notify.error(t('renameModal.historyNotReady'));
-    return null;
-  }
-  const patchManager = deps.patchManager;
-
   let preview: RenamePlan;
   try {
-    preview = await renamePlan(deps.database, table, id, PREVIEW_ID);
+    preview = await renamePlan(feed, table, id, PREVIEW_ID);
   } catch (error) {
     console.error('[RenameIdModal] could not plan the rename', error);
     notify.error(
@@ -174,12 +162,7 @@ export async function showRenameModal(
           }
           const newId = input.value.trim();
 
-          const invalid = await validateRenameTarget(
-            deps.database,
-            table,
-            id,
-            newId
-          );
+          const invalid = await validateRenameTarget(feed, table, id, newId);
           if (invalid) {
             showError(invalid);
             return true;
@@ -189,8 +172,8 @@ export async function showRenameModal(
           try {
             // Planned again rather than reusing the preview: the preview was
             // built for a different target, and the feed may have moved since.
-            const plan = await renamePlan(deps.database, table, id, newId);
-            await applyRename(deps.database, patchManager, plan);
+            const plan = await renamePlan(feed, table, id, newId);
+            await applyRename(feed, plan);
             renamed = newId;
             rows = plan.total;
           } catch (error) {

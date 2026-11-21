@@ -12,12 +12,12 @@ import {
   StopTimes,
   Trips,
 } from '../types/gtfs-entities';
-import { CalendarSchema, GTFS_TABLES } from '../types/gtfs';
+import { CalendarSchema } from '../types/gtfs';
 import { TimeFormatter } from '../utils/time-formatter';
 import { isChronological } from '../utils/stop-time-order';
 import type { StopTimeRef } from 'gtfs-zone-web-common/gtfs/types';
 import { stopTimeRef } from '../utils/stop-time-ref';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
 import { GTFSRouteSource } from './gtfs-route-source';
 import type { RouteSourceTrip } from 'gtfs-zone-web-common/gtfs/route-source';
 import {
@@ -143,11 +143,6 @@ export interface TimetableData {
   graph?: RouteGraph;
 }
 
-interface GTFSRelationships {
-  getCalendarForService(service_id: string): Record<string, unknown> | null;
-  getStopByIdAsync(stop_id: string): Promise<Record<string, unknown> | null>;
-}
-
 /**
  * Timetable Data Processor - Handles data transformation and alignment logic
  *
@@ -160,43 +155,33 @@ interface GTFSRelationships {
  * Follows FAIL HARD error handling policy - throws on data integrity issues.
  */
 export class TimetableDataProcessor {
-  private relationships: GTFSRelationships;
-  private gtfsParser: GTFSParser;
-
   /**
-   * The route-source adapter, held for the lifetime of the current feed state
-   * so its stop index and per-trip stop_time sort survive across renders.
-   * Dropped by invalidateRouteSource whenever the underlying tables change.
+   * Route-source adapters per route, kept across renders so the route
+   * sequence cache stays warm. Dropped by invalidateRouteSource after edits.
    */
-  private routeSource: GTFSRouteSource | null = null;
+  private routeSources = new Map<string, Promise<GTFSRouteSource>>();
 
-  /**
-   * Initialize TimetableDataProcessor with required dependencies
-   *
-   * @param relationships - GTFS relationships manager for data queries
-   * @param gtfsParser - GTFS parser for direct file access
-   */
-  constructor(relationships: GTFSRelationships, gtfsParser: GTFSParser) {
-    this.relationships = relationships;
-    this.gtfsParser = gtfsParser;
-  }
+  constructor(private readonly feed: EditorFeed) {}
 
-  private getRouteSource(): GTFSRouteSource {
-    if (!this.routeSource) {
-      this.routeSource = new GTFSRouteSource(this.gtfsParser);
+  private getRouteSource(route_id: string): Promise<GTFSRouteSource> {
+    let source = this.routeSources.get(route_id);
+    if (!source) {
+      source = GTFSRouteSource.load(this.feed, route_id);
+      this.routeSources.set(route_id, source);
+      source.catch(() => this.routeSources.delete(route_id));
     }
-    return this.routeSource;
+    return source;
   }
 
   /**
-   * Drop the cached route-source adapter and its route-sequence results.
+   * Drop the cached route-source adapters and their route-sequence results.
    * Call after any edit that could change trips, stop_times, or stops.
    */
   public invalidateRouteSource(): void {
-    if (this.routeSource) {
-      clearRouteSequenceCache(this.routeSource);
-      this.routeSource = null;
+    for (const source of this.routeSources.values()) {
+      void source.then(clearRouteSequenceCache, () => {});
     }
+    this.routeSources.clear();
   }
 
   /**
@@ -220,8 +205,7 @@ export class TimetableDataProcessor {
     service_id: string,
     direction_id?: string
   ): Promise<TimetableData> {
-    // Get route information directly from database (no memory cache)
-    const route = await this.gtfsParser.gtfsDatabase.getRow('routes', route_id);
+    const route = this.feed.byKey('routes', route_id) as Routes | null;
 
     if (!route) {
       const error = t('tt.routeNotFound', { id: route_id });
@@ -230,9 +214,7 @@ export class TimetableDataProcessor {
     }
 
     // Get service information - use GTFS standard validation
-    const service = this.relationships.getCalendarForService(service_id) || {
-      service_id,
-    };
+    const service = this.feed.byKey('calendar', service_id) ?? { service_id };
 
     // Validate service using GTFS schema
     try {
@@ -247,7 +229,7 @@ export class TimetableDataProcessor {
     // Feeds that omit direction_id entirely collapse to the '' direction -
     // directionsForRoute and routeSequence agree on that convention.
     const directionId = direction_id ?? '';
-    const source = this.getRouteSource();
+    const source = await this.getRouteSource(route_id);
     const trips = source
       .tripsForRoute(route_id, service_id)
       .filter((trip) => (trip.direction_id ?? '') === directionId);
@@ -276,24 +258,21 @@ export class TimetableDataProcessor {
     // group or an on-demand zone instead of a stop, and have no stops.txt row,
     // so they get a synthetic one carrying the resolved name. The array stays
     // parallel to sequence.stops, which is what every renderer indexes by.
-    const stops: Stops[] = (await Promise.all(
-      sequence.stops.map(async ({ ref }) => {
-        if (ref.kind !== 'stop') {
-          return {
-            stop_id: ref.id,
-            stop_name: source.refName(ref) ?? ref.id,
-          };
-        }
-        const stop = await this.relationships.getStopByIdAsync(ref.id);
-        if (!stop) {
-          const error = t('tt.stopMissing', { id: ref.id });
-          console.error('GTFS Data Integrity Error:', error);
-          throw new Error(error);
-        }
-        // Return the stop with standard GTFS properties
-        return stop;
-      })
-    )) as Stops[];
+    const stops: Stops[] = sequence.stops.map(({ ref }) => {
+      if (ref.kind !== 'stop') {
+        return {
+          stop_id: ref.id,
+          stop_name: source.refName(ref) ?? ref.id,
+        };
+      }
+      const stop = this.feed.byKey('stops', ref.id);
+      if (!stop) {
+        const error = t('tt.stopMissing', { id: ref.id });
+        console.error('GTFS Data Integrity Error:', error);
+        throw new Error(error);
+      }
+      return stop;
+    }) as Stops[];
 
     // Align trips to the canonical stop order
     const alignedTrips = await this.alignTripsWithSequence(trips, sequence);
@@ -333,14 +312,30 @@ export class TimetableDataProcessor {
     trips: RouteSourceTrip[],
     sequence: RouteSequence
   ): Promise<AlignedTrip[]> {
+    const ids = trips.map((trip) => trip.trip_id);
+    const byTrip = new Map<string, StopTimes[]>();
+    for (const st of await this.feed.where('stop_times', [
+      { col: 'trip_id', in: ids },
+    ])) {
+      const list = byTrip.get(st.trip_id ?? '');
+      if (list) {
+        list.push(st as unknown as StopTimes);
+      } else {
+        byTrip.set(st.trip_id ?? '', [st as unknown as StopTimes]);
+      }
+    }
+    const fullTrips = new Map<string, Trips>();
+    (await this.feed.byKeys('trips', ids)).forEach((row, i) => {
+      if (row) {
+        fullTrips.set(ids[i], row as unknown as Trips);
+      }
+    });
+
     const tripsWithStopTimes = trips.map((trip) => {
-      const stopTimes = this.gtfsParser
-        .getStopTimesByTripId(trip.trip_id)
-        .sort(
-          (a, b) =>
-            parseInt(String(a.stop_sequence)) -
-            parseInt(String(b.stop_sequence))
-        );
+      const stopTimes = (byTrip.get(trip.trip_id) ?? []).sort(
+        (a, b) =>
+          parseInt(String(a.stop_sequence)) - parseInt(String(b.stop_sequence))
+      );
       const first = stopTimes[0];
       const last = stopTimes[stopTimes.length - 1];
       const firstDepartureTime =
@@ -484,11 +479,7 @@ export class TimetableDataProcessor {
         });
       });
 
-      // Get full trip data from database to include all GTFS properties
-      const fullTrip = (await this.gtfsParser.gtfsDatabase.getRow(
-        'trips',
-        trip.trip_id
-      )) as Trips;
+      const fullTrip = fullTrips.get(trip.trip_id);
 
       alignedTrips.push({
         ...fullTrip, // Spread all GTFS trip properties (shape_id, wheelchair_accessible, etc.)
@@ -519,9 +510,7 @@ export class TimetableDataProcessor {
   private loadFrequenciesByTrip(): Map<string, TripFrequency[]> {
     const byTrip = new Map<string, TripFrequency[]>();
 
-    const rows = this.gtfsParser.getFileDataSyncTyped(
-      GTFS_TABLES.FREQUENCIES
-    ) as Record<string, unknown>[];
+    const rows = this.feed.table('frequencies');
 
     for (const row of rows) {
       const trip_id = String(row.trip_id ?? '').trim();
@@ -576,7 +565,7 @@ export class TimetableDataProcessor {
     route_id: string,
     service_id: string
   ): Promise<DirectionInfo[]> {
-    const source = this.getRouteSource();
+    const source = await this.getRouteSource(route_id);
     return directionsForRoute(source, route_id, service_id).map((d) => ({
       id: d.direction_id,
       name: d.label,

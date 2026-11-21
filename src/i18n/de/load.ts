@@ -21,11 +21,10 @@ export const load: Translation<typeof en> = {
   'help.continueShapes': 'Weiter zu den Linienverläufen',
   'help.continueFares': 'Weiter zu den Tarifen',
   'help.continueOnDemand': 'Weiter zum Bedarfsverkehr',
+  'load.openedStored': '{name} geöffnet',
+  'load.openStoredFailed':
+    'Der gespeicherte Feed konnte nicht geöffnet werden - {message}',
   'load.linkedFeed': 'Verlinkter Feed',
-  'load.linkedOverEdits_one':
-    'Dieser Link öffnet einen anderen Feed. Der in diesem Browser gespeicherte Feed hat {count} Änderung, die verloren ginge. Arbeiten Sie mit ihm weiter oder laden Sie den verlinkten Feed.',
-  'load.linkedOverEdits_other':
-    'Dieser Link öffnet einen anderen Feed. Der in diesem Browser gespeicherte Feed hat {count} Änderungen, die verloren gingen. Arbeiten Sie mit ihm weiter oder laden Sie den verlinkten Feed.',
   'load.replaceTitle': 'Aktuellen Feed ersetzen?',
   'load.replaceBody_one':
     'Der aktuelle Feed hat {count} Änderung. Wenn Sie einen anderen Feed laden, wird sie samt Verlauf zum Rückgängigmachen verworfen. Exportieren Sie zuerst, um eine Kopie zu behalten.',
@@ -73,6 +72,8 @@ export const load: Translation<typeof en> = {
     'Keine GTFS-Daten zum Exportieren. Bitte fügen Sie zuerst Daten hinzu.',
   'export.preparing': 'GTFS-Export wird vorbereitet...',
   'export.done': 'GTFS-Daten erfolgreich exportiert!',
+  'export.writing': '{file} wird geschrieben...',
+  'export.cancelled': 'Export abgebrochen.',
   'export.failed': 'Die GTFS-Daten konnten nicht exportiert werden: {message}',
   'db.contextInit': 'der Initialisierung',
   'db.unknownError': 'Unbekannter Fehler',
@@ -80,6 +81,12 @@ export const load: Translation<typeof en> = {
   'db.stackTrace': 'Stacktrace (für Entwickler)',
   'db.exportClear': 'Exportieren und leeren',
   'db.clearReload': 'Leeren und neu laden',
+  'db.recoveryFailed':
+    'Der gespeicherte Feed konnte nicht exportiert werden: {message}',
+  'db.recoveryPartialTitle': 'Dem Export fehlen Änderungen',
+  'db.recoveryPartial':
+    'Der heruntergeladene Export enthält {applied} von {total} Änderungen: die nächste lässt sich nicht mehr anwenden ({message}). Leeren löscht den gespeicherten Feed und seinen gesamten Änderungsverlauf.',
+  'db.keepStored': 'Gespeicherten Feed behalten',
   'db.errorTitle': 'Datenbankfehler',
   'db.resetTitle': 'Datenbank zurücksetzen',
   'db.resetBody':
@@ -123,6 +130,15 @@ export const load: Translation<typeof en> = {
   'parse.downloading': 'Feed wird heruntergeladen...',
   'parse.readingFile': 'Datei wird gelesen...',
   'parse.saving': 'Feed wird gespeichert...',
+  'parse.readingProgress': '{name}: {done} von {total}',
+  'parse.readingProgressNoTotal': '{name}: {done}',
+  'parse.compacting': 'Bearbeitungsverlauf wird komprimiert...',
+  'parse.foldFailed':
+    'Der Bearbeitungsverlauf konnte nicht komprimiert werden: {message}. Der Feed ist unverändert geöffnet; das Komprimieren wird beim nächsten Start erneut versucht.',
+  'parse.quotaFull':
+    'Der Browser hat keinen Speicherplatz mehr, daher wurde die letzte Änderung nicht gespeichert. Löschen Sie nicht mehr benötigte Feeds im Lade-Dialog oder geben Sie Speicherplatz frei.',
+  'parse.sessionOnly':
+    'Dieser Browser erlaubt GTFS.zone hier nicht, Feeds zu speichern (zum Beispiel in einem privaten Fenster). Änderungen bleiben nur bis zum Schließen dieses Tabs erhalten: Exportieren Sie den Feed, um sie zu behalten.',
   'parse.networkConflict_one':
     'Dieser Feed definiert Netze in networks.txt oder route_networks.txt und setzt zugleich network_id bei {count} Linie in routes.txt. GTFS verbietet beides gleichzeitig, daher werden die Werte von routes.network_id ignoriert und nicht exportiert.',
   'parse.networkConflict_other':

@@ -5,8 +5,9 @@
 import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicator';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
-import { deleteDatabaseWithTimeout } from '../utils/idb-request';
+import { resetFeedStorage } from '../feed/feed-boot';
 import { buildExportFilename } from '../utils/export-filename';
+import { downloadBlob } from '../utils/download-blob';
 import { t } from '../i18n/messages';
 
 export interface BrowserCapabilities {
@@ -186,7 +187,7 @@ export class DatabaseFallbackManager {
   showDatabaseError(
     error: Error | unknown,
     context: string,
-    exportFn?: () => Promise<Blob | null>
+    exportFn?: () => Promise<{ zip: Blob; note: string | null }>
   ): void {
     const err =
       error instanceof Error
@@ -210,7 +211,7 @@ export class DatabaseFallbackManager {
     const actions: {
       label: string;
       className: string;
-      onClick: () => Promise<void>;
+      onClick: () => Promise<boolean | void>;
     }[] = [];
 
     if (exportFn) {
@@ -218,17 +219,30 @@ export class DatabaseFallbackManager {
         label: t('db.exportClear'),
         className: 'btn-primary',
         onClick: async () => {
-          const blob = await exportFn();
-          if (blob) {
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            // Recovery path: the DB is being cleared, so no feed identity.
-            a.download = buildExportFilename();
-            a.click();
-            URL.revokeObjectURL(url);
+          let exported: { zip: Blob; note: string | null };
+          try {
+            exported = await exportFn();
+          } catch (exportError) {
+            // Nothing was saved, so nothing is cleared: the modal stays open.
+            console.error(
+              '[DatabaseFallback] recovery export failed',
+              exportError
+            );
+            notify.error(
+              t('db.recoveryFailed', {
+                message: (exportError as Error).message,
+              })
+            );
+            return true;
+          }
+          // Recovery path: the DB is being cleared, so no feed identity.
+          downloadBlob(exported.zip, buildExportFilename());
+          // An incomplete export is confirmed before the stored feed goes.
+          if (exported.note && !(await this.confirmClear(exported.note))) {
+            return true;
           }
           await this.resetDatabase();
+          return false;
         },
       });
     }
@@ -242,6 +256,34 @@ export class DatabaseFallbackManager {
     });
 
     void showModal({ title: t('db.errorTitle'), body, actions });
+  }
+
+  /** Ask whether to clear the stored feed after `note`; false keeps it. */
+  private async confirmClear(note: string): Promise<boolean> {
+    let clear = false;
+    await showModal({
+      title: t('db.recoveryPartialTitle'),
+      body: `<p>${note}</p>`,
+      escapeAction: 1,
+      actions: [
+        {
+          label: t('db.clearReload'),
+          className: 'btn-error',
+          onClick: () => {
+            clear = true;
+          },
+        },
+        {
+          label: t('db.keepStored'),
+          className: 'btn-outline',
+          onClick: () => {},
+        },
+      ],
+    });
+    console.log(
+      `[DatabaseFallback] partial recovery: ${clear ? 'clear' : 'keep'}`
+    );
+    return clear;
   }
 
   /**
@@ -284,7 +326,7 @@ export class DatabaseFallbackManager {
     try {
       this.closeConnection?.();
 
-      const outcome = await deleteDatabaseWithTimeout('GTFSZoneDB');
+      const outcome = await resetFeedStorage();
 
       if (outcome === 'deleted') {
         notify.success(t('db.resetDone'));

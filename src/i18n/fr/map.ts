@@ -25,7 +25,6 @@ export const map: Translation<typeof en> = {
   'map.ok': 'OK',
   'map.coordsFailed':
     "Échec de la mise à jour des coordonnées de l'arrêt : {message}",
-  'map.unnamedStop': 'Arrêt sans nom',
   'map.servedBy': '{serves} voyages sur {total}',
   'map.servedByTitle': 'Desservi par {serves} voyages sur {total}',
   'map.routeDiagram': 'Schéma de ligne',
@@ -68,4 +67,9 @@ export const map: Translation<typeof en> = {
     "La zone {id} est revenue avec la géométrie {type}, un Polygon ou un MultiPolygon était attendu. Tracez d'abord la zone dans geojson.io, puis Share et collez le lien.",
   'search.zoneTerms': 'zone à la demande',
   'search.groupTerms': "groupe d'emplacements",
+  'search.stops': 'Arrêts',
+  'search.routes': 'Lignes',
+  'search.agencies': 'Agences',
+  'search.zones': 'Zones',
+  'search.locationGroups': "Groupes d'emplacements",
 };

@@ -57,6 +57,8 @@ export const issues = {
   'issues.duplicateKey': 'sharing a primary key with another row',
   'issues.frequencyOverlap': 'with overlapping headway periods',
   'issues.frequencyEnd': 'whose end_time lands on a departure',
+  'issues.unknownFile': '{file} is not a GTFS file',
+  'issues.unknownFileNote': 'Not loaded for editing; exported unchanged.',
   'issues.recordTitle': 'Issues with this record',
   'issues.danglingRef': "{field} refers to '{value}', which does not exist",
   'issues.danglingNote':
@@ -64,5 +66,4 @@ export const issues = {
   'issues.gone': 'This issue is already gone',
   'issues.unknownAction': 'Unknown issue action {id}',
   'issues.confirmTitle': '{label}?',
-  'issues.title': 'Feed issues',
 } as const;

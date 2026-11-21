@@ -15,11 +15,9 @@ export const load = {
   'help.continueShapes': 'Continue to Shapes',
   'help.continueFares': 'Continue to Fares',
   'help.continueOnDemand': 'Continue to On-Demand',
+  'load.openedStored': 'Opened {name}',
+  'load.openStoredFailed': 'Could not open the stored feed - {message}',
   'load.linkedFeed': 'Linked feed',
-  'load.linkedOverEdits_one':
-    'This link opens a different feed. The feed stored in this browser has {count} edit that would be lost. Continue with it, or load the linked feed.',
-  'load.linkedOverEdits_other':
-    'This link opens a different feed. The feed stored in this browser has {count} edits that would be lost. Continue with it, or load the linked feed.',
   'load.replaceTitle': 'Replace the current feed?',
   'load.replaceBody_one':
     'The current feed has {count} edit. Loading another feed discards it, along with the undo history. Export first to keep a copy.',
@@ -62,6 +60,8 @@ export const load = {
   'export.noData': 'No GTFS data to export. Please add some data first.',
   'export.preparing': 'Preparing GTFS export...',
   'export.done': 'GTFS data exported successfully!',
+  'export.writing': 'Writing {file}...',
+  'export.cancelled': 'Export cancelled.',
   'export.failed': 'Failed to export GTFS data: {message}',
   'db.contextInit': 'initialization',
   'db.unknownError': 'Unknown error',
@@ -69,6 +69,11 @@ export const load = {
   'db.stackTrace': 'Stack trace (for developers)',
   'db.exportClear': 'Export & Clear',
   'db.clearReload': 'Clear & Reload',
+  'db.recoveryFailed': 'The stored feed could not be exported: {message}',
+  'db.recoveryPartialTitle': 'Export is missing edits',
+  'db.recoveryPartial':
+    'The downloaded export holds {applied} of {total} edits: the edit after those no longer applies ({message}). Clearing deletes the stored feed and its full edit history.',
+  'db.keepStored': 'Keep stored feed',
   'db.errorTitle': 'Database Error',
   'db.resetTitle': 'Reset Database',
   'db.resetBody':
@@ -111,6 +116,15 @@ export const load = {
   'parse.downloading': 'Downloading feed...',
   'parse.readingFile': 'Reading file...',
   'parse.saving': 'Saving feed...',
+  'parse.readingProgress': '{name}: {done} of {total}',
+  'parse.readingProgressNoTotal': '{name}: {done}',
+  'parse.compacting': 'Compacting edit history...',
+  'parse.foldFailed':
+    'The edit history could not be compacted: {message}. The feed is open as it was; compacting runs again on the next start.',
+  'parse.quotaFull':
+    'The browser is out of storage, so the last change was not saved. Delete feeds you no longer need from the load dialog, or free up disk space.',
+  'parse.sessionOnly':
+    'This browser does not let GTFS.zone store feeds here (for example in a private window). Edits last until this tab closes: export the feed to keep them.',
   'parse.networkConflict_one':
     'This feed defines networks in networks.txt or route_networks.txt and also sets network_id on {count} route in routes.txt. GTFS forbids both, so the routes.network_id values are ignored and will not be exported.',
   'parse.networkConflict_other':

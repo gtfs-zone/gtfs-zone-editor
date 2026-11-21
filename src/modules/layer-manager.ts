@@ -1,10 +1,15 @@
 import { Map as MapLibreMap, GeoJSONSource } from 'maplibre-gl';
 import type { FilterSpecification, ExpressionSpecification } from 'maplibre-gl';
 import { Stops, Pathways } from '../types/gtfs-entities';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 import { CONFIG } from '../config';
-import { buildStopCoordResolver, hasValidCoords } from '../utils/stop-coords';
+import { buildStopCoordResolver } from '../utils/stop-coords';
 import { bufferedHull } from '../utils/station-hull';
+import {
+  STOPS_SOURCE_LAYER,
+  mapTileUrl,
+  setSourceTiles,
+} from './map-tile-protocol';
 import {
   clearThemeColorCache,
   resolveThemeColor,
@@ -44,7 +49,6 @@ import {
   stopFadeOpacity,
   type StopFadeBands,
 } from 'gtfs-zone-web-common/map/layer-specs';
-import { t } from '../i18n/messages';
 
 export interface StopLayerOptions {
   showBackground: boolean;
@@ -132,6 +136,16 @@ function offsetSegment([a, b]: Segment, meters: number): Segment {
 // Default filter: show all top-level stops (empty parent_station) and stations (location_type=1), hide child stops.
 export const DEFAULT_STOPS_FILTER = TOP_LEVEL_STOPS_FILTER;
 
+/** Every layer drawn from the stops source. */
+const STOP_LAYER_IDS = [
+  STOP_FOCUS_HALO_LAYER,
+  STOP_FOCUS_RING_LAYER,
+  STOPS_BACKGROUND_LAYER,
+  STOP_FOCUS_TOP_LAYER,
+  STOPS_STATION_DOT_LAYER,
+  STOPS_CLICKAREA_LAYER,
+];
+
 /** The zoom bands the stop layers fade through, from this app's config. */
 const STOP_FADE_BANDS: StopFadeBands = {
   stationMin: CONFIG.STATION_FADE_ZOOM_MIN,
@@ -149,9 +163,9 @@ const SPECIAL_STOP = specialStop(['focused', 'onRoute', 'kept']);
 
 export class LayerManager {
   private map: MapLibreMap;
-  private gtfsParser: GTFSParser;
-  public onStopsDataUpdated:
-    ((data: GeoJSON.FeatureCollection) => void) | null = null;
+  private feed: EditorFeed;
+  /** Bumped per stops re-index, so an older one that lands late is dropped. */
+  private stopsBuildSeq = 0;
 
   private activeStopsFilter: FilterSpecification = DEFAULT_STOPS_FILTER;
   // True while the feed is small enough that both zoom fade bands are skipped.
@@ -208,9 +222,14 @@ export class LayerManager {
     clickAreaRadius: 15,
   };
 
-  constructor(map: MapLibreMap, gtfsParser: GTFSParser) {
+  constructor(map: MapLibreMap, feed: EditorFeed) {
     this.map = map;
-    this.gtfsParser = gtfsParser;
+    this.feed = feed;
+  }
+
+  /** The open feed's rows of a mirrored table; empty with no feed open. */
+  private rows(table: 'stops' | 'pathways'): readonly FeedRow[] {
+    return this.feed.isOpen ? this.feed.table(table) : [];
   }
 
   /**
@@ -299,17 +318,17 @@ export class LayerManager {
    * focus highlight) has to survive a string id like "zone-north".
    */
   public updateZonesLayer(): void {
-    const features: GeoJSON.Feature[] = listZones(this.gtfsParser).map(
-      (feature) => ({
-        type: 'Feature',
-        geometry: feature.geometry,
-        properties: {
-          ...(feature.properties ?? {}),
-          location_id: String(feature.id),
-          zone_name: zoneName(feature),
-        },
-      })
-    );
+    const features: GeoJSON.Feature[] = (
+      this.feed.isOpen ? listZones(this.feed) : []
+    ).map((feature) => ({
+      type: 'Feature',
+      geometry: feature.geometry,
+      properties: {
+        ...(feature.properties ?? {}),
+        location_id: String(feature.id),
+        zone_name: zoneName(feature),
+      },
+    }));
     const data: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
       features,
@@ -543,7 +562,7 @@ export class LayerManager {
    * Add stops to map with enhanced styling and functionality
    */
   public addStopsLayer(options: Partial<StopLayerOptions> = {}): void {
-    const stops = this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt');
+    const stops = this.rows('stops');
     if (!stops) {
       console.warn('No stops data available for rendering');
       return;
@@ -555,19 +574,15 @@ export class LayerManager {
     // exemption already decided.
     this.refreshStopFade(stops.length);
 
-    // Create GeoJSON for stops (resolver places coord-less children via Tutte
-    // layout over the pathway graph; stops with no resolvable coords or in
-    // orphan pathway components are skipped + warned).
-    const stopsGeoJSON = this.createStopsGeoJSON(stops);
-
-    // Check if source already exists before adding.
-    // promoteId tells MapLibre to use the stop_id property as the feature id
-    // for feature-state lookups, preserving string ids like "place-jfk" that
-    // would otherwise be coerced to 0 by the vector-tile encoder.
+    // Vector tiles cut in the feed worker (see MapTiles.buildStops), empty
+    // until the re-index below lands. promoteId tells MapLibre to use the
+    // stop_id property as the feature id for feature-state lookups, keeping
+    // string ids like "place-jfk" that the vector-tile encoder cannot carry.
     if (!this.map.getSource(STOPS_SOURCE)) {
       this.map.addSource(STOPS_SOURCE, {
-        type: 'geojson',
-        data: stopsGeoJSON,
+        type: 'vector',
+        tiles: [mapTileUrl(null)],
+        maxzoom: CONFIG.MAP_STOPS_MAXZOOM,
         promoteId: 'stop_id',
       });
       // A fresh source means setStyle wiped the old one and every feature
@@ -580,7 +595,7 @@ export class LayerManager {
       this.routeStopIds = [];
       this.keptStopIds = [];
     }
-    this.onStopsDataUpdated?.(stopsGeoJSON);
+    this.updateStopsData();
 
     // Add background stops layer if enabled. Order matters: the halo sits
     // under the circles (and under the pathways, which insert themselves
@@ -603,98 +618,7 @@ export class LayerManager {
       this.addStopsHoverBehavior();
     }
 
-    const featureCount = stopsGeoJSON.features.length;
-    console.log(`Added ${featureCount} stops to map`);
-  }
-
-  /**
-   * Create GeoJSON data for stops.
-   *
-   * Coord-less child stops are placed via Tutte's barycentric embedding over
-   * the pathway graph (see buildStopCoordResolver). Stops with no own coords
-   * and no coord-having ancestor, or in pathway components disconnected from
-   * any pinned sibling, are skipped with a warning.
-   */
-  private createStopsGeoJSON(stops: Stops[]): GeoJSON.FeatureCollection {
-    const stopById = new Map<string, Stops>();
-    stops.forEach((s) => stopById.set(String(s.stop_id), s));
-
-    const resolveStationId = (stop: Stops): string => {
-      const locType =
-        typeof stop.location_type === 'number'
-          ? stop.location_type
-          : parseInt(stop.location_type ?? '0', 10) || 0;
-      if (locType === 1) {
-        return String(stop.stop_id);
-      }
-      let current = stop;
-      for (let i = 0; i < 5; i++) {
-        const parentId = current.parent_station;
-        if (!parentId) {
-          break;
-        }
-        const parent = stopById.get(String(parentId));
-        if (!parent) {
-          break;
-        }
-        const parentType =
-          typeof parent.location_type === 'number'
-            ? parent.location_type
-            : parseInt(parent.location_type ?? '0', 10) || 0;
-        if (parentType === 1) {
-          return String(parent.stop_id);
-        }
-        current = parent;
-      }
-      return '';
-    };
-
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
-    const resolveCoord = this.getCachedResolver(stops, pathways);
-
-    const features: GeoJSON.Feature[] = [];
-    for (const stop of stops) {
-      const coord = resolveCoord(String(stop.stop_id));
-      if (!coord) {
-        const locType =
-          typeof stop.location_type === 'number'
-            ? stop.location_type
-            : parseInt(stop.location_type ?? '0', 10) || 0;
-        const coordsOptional = locType === 3 || locType === 4;
-        if (!hasValidCoords(stop) && !coordsOptional) {
-          console.warn(
-            `[LayerManager] Skipping stop without resolvable coords: stop_id=${stop.stop_id} location_type=${stop.location_type ?? ''} parent_station=${stop.parent_station ?? ''}`
-          );
-        }
-        continue;
-      }
-      const stopType =
-        typeof stop.location_type === 'number'
-          ? stop.location_type
-          : parseInt(stop.location_type ?? '0', 10) || 0;
-
-      features.push({
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: coord, // [lng, lat] for MapLibre
-        },
-        properties: {
-          stop_id: stop.stop_id,
-          stop_name: stop.stop_name || t('map.unnamedStop'),
-          stop_code: stop.stop_code || '',
-          stop_desc: stop.stop_desc || '',
-          location_type: stopType,
-          parent_station: stop.parent_station ?? '',
-          station_id: resolveStationId(stop),
-          wheelchair_boarding: stop.wheelchair_boarding || '',
-          has_own_coords: hasValidCoords(stop),
-        },
-      });
-    }
-
-    return { type: 'FeatureCollection', features };
+    console.log(`[LayerManager] stop layers added for ${stops.length} stops`);
   }
 
   /**
@@ -748,6 +672,8 @@ export class LayerManager {
       id: STOP_FOCUS_HALO_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      'source-layer': STOPS_SOURCE_LAYER,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: focusHaloPaint(accent),
     });
@@ -756,6 +682,8 @@ export class LayerManager {
       id: STOP_FOCUS_RING_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      'source-layer': STOPS_SOURCE_LAYER,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: focusRingPaint(accent),
     });
@@ -780,6 +708,8 @@ export class LayerManager {
       id: STOPS_BACKGROUND_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      'source-layer': STOPS_SOURCE_LAYER,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: stopsBackgroundPaint(
         this.stopStyle(options),
@@ -803,6 +733,8 @@ export class LayerManager {
       id: STOP_FOCUS_TOP_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      'source-layer': STOPS_SOURCE_LAYER,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: focusTopPaint(this.stopStyle(options)),
     });
@@ -822,6 +754,8 @@ export class LayerManager {
       id: STOPS_STATION_DOT_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      'source-layer': STOPS_SOURCE_LAYER,
+      minzoom: this.stopsMinZoom(),
       filter: stationDotFilter(null),
       paint: stationDotPaint(this.stationFadeOpacity(null)),
     });
@@ -845,6 +779,8 @@ export class LayerManager {
       id: STOPS_CLICKAREA_LAYER,
       type: 'circle',
       source: STOPS_SOURCE,
+      'source-layer': STOPS_SOURCE_LAYER,
+      minzoom: this.stopsMinZoom(),
       filter: this.activeStopsFilter,
       paint: {
         'circle-radius': this.clickAreaRadius(options.clickAreaRadius),
@@ -918,14 +854,14 @@ export class LayerManager {
    * of them is unreadable. Types 4 and 5 link two trips rather than two places,
    * so they have no geometry here and are left out.
    */
-  public showTransferEdges(stop_id: string): void {
+  public showTransferEdges(
+    stop_id: string,
+    transfers: readonly FeedRow[]
+  ): void {
     this.clearTransferEdges();
 
-    const stops =
-      this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
-    const transfers = this.gtfsParser.getFileDataSync('transfers.txt') || [];
+    const stops = this.rows('stops');
+    const pathways = this.rows('pathways');
     // Own coords where a stop has them, otherwise its laid-out position in the
     // pathway graph, so an edge lands on the dot that is actually drawn.
     const resolveCoord = this.getCachedResolver(stops, pathways);
@@ -1142,13 +1078,13 @@ export class LayerManager {
     if (this.map.getSource(STOPS_SOURCE)) {
       for (const id of this.routeStopIds) {
         this.map.setFeatureState(
-          { source: STOPS_SOURCE, id },
+          { source: STOPS_SOURCE, sourceLayer: STOPS_SOURCE_LAYER, id },
           { onRoute: false }
         );
       }
       for (const id of stop_ids) {
         this.map.setFeatureState(
-          { source: STOPS_SOURCE, id },
+          { source: STOPS_SOURCE, sourceLayer: STOPS_SOURCE_LAYER, id },
           { onRoute: true }
         );
       }
@@ -1204,6 +1140,16 @@ export class LayerManager {
       `[LayerManager] stop fade ${disabled ? 'disabled' : 'enabled'}, ${stopCount} stops`
     );
     this.applyStopFadePaint();
+    for (const id of STOP_LAYER_IDS) {
+      if (this.map.getLayer(id)) {
+        this.map.setLayerZoomRange(id, this.stopsMinZoom(), 24);
+      }
+    }
+  }
+
+  /** Stop layers skip low zooms while the fade hides every stop there anyway. */
+  private stopsMinZoom(): number {
+    return this.stopFadeDisabled ? 0 : CONFIG.STOPS_MIN_ZOOM;
   }
 
   /**
@@ -1226,10 +1172,16 @@ export class LayerManager {
 
     if (this.map.getSource(STOPS_SOURCE)) {
       for (const id of this.keptStopIds) {
-        this.map.setFeatureState({ source: STOPS_SOURCE, id }, { kept: false });
+        this.map.setFeatureState(
+          { source: STOPS_SOURCE, sourceLayer: STOPS_SOURCE_LAYER, id },
+          { kept: false }
+        );
       }
       for (const id of next) {
-        this.map.setFeatureState({ source: STOPS_SOURCE, id }, { kept: true });
+        this.map.setFeatureState(
+          { source: STOPS_SOURCE, sourceLayer: STOPS_SOURCE_LAYER, id },
+          { kept: true }
+        );
       }
       this.keptStopIds = next;
     } else {
@@ -1267,14 +1219,22 @@ export class LayerManager {
     try {
       if (this.focusedStopId !== null && this.map.getSource(STOPS_SOURCE)) {
         this.map.setFeatureState(
-          { source: STOPS_SOURCE, id: this.focusedStopId },
+          {
+            source: STOPS_SOURCE,
+            sourceLayer: STOPS_SOURCE_LAYER,
+            id: this.focusedStopId,
+          },
           { focused: false }
         );
       }
       this.focusedStopId = stop_id;
       if (stop_id !== null && this.map.getSource(STOPS_SOURCE)) {
         this.map.setFeatureState(
-          { source: STOPS_SOURCE, id: stop_id },
+          {
+            source: STOPS_SOURCE,
+            sourceLayer: STOPS_SOURCE_LAYER,
+            id: stop_id,
+          },
           { focused: true }
         );
       }
@@ -1314,7 +1274,11 @@ export class LayerManager {
       if (this.map.getSource(STOPS_SOURCE)) {
         for (const stop_id of prev) {
           this.map.setFeatureState(
-            { source: STOPS_SOURCE, id: stop_id },
+            {
+              source: STOPS_SOURCE,
+              sourceLayer: STOPS_SOURCE_LAYER,
+              id: stop_id,
+            },
             { hovered: false }
           );
         }
@@ -1323,7 +1287,11 @@ export class LayerManager {
       if (this.map.getSource(STOPS_SOURCE)) {
         for (const stop_id of next) {
           this.map.setFeatureState(
-            { source: STOPS_SOURCE, id: stop_id },
+            {
+              source: STOPS_SOURCE,
+              sourceLayer: STOPS_SOURCE_LAYER,
+              id: stop_id,
+            },
             { hovered: true }
           );
         }
@@ -1376,7 +1344,10 @@ export class LayerManager {
     state: Record<string, unknown>
   ): void {
     try {
-      this.map.setFeatureState({ source: STOPS_SOURCE, id: stop_id }, state);
+      this.map.setFeatureState(
+        { source: STOPS_SOURCE, sourceLayer: STOPS_SOURCE_LAYER, id: stop_id },
+        state
+      );
     } catch (error) {
       console.debug('Could not set feature state for stop:', stop_id, error);
     }
@@ -1387,8 +1358,8 @@ export class LayerManager {
   }
 
   private getCachedResolver(
-    stops: Stops[],
-    pathways: Pathways[]
+    stops: readonly Stops[],
+    pathways: readonly Pathways[]
   ): (stop_id: string) => [number, number] | null {
     if (!this._resolverDirty && this._cachedResolver) {
       return this._cachedResolver;
@@ -1399,24 +1370,31 @@ export class LayerManager {
   }
 
   /**
-   * Update stops data source
+   * Re-index the stops in the feed worker, then point the source at the new
+   * tiles. Runs in the background; a newer call supersedes an older one.
    */
   public updateStopsData(): void {
-    const stopsSource = this.map.getSource(STOPS_SOURCE) as GeoJSONSource;
-    if (!stopsSource) {
+    if (!this.map.getSource(STOPS_SOURCE) || !this.feed.isOpen) {
       return;
     }
-
-    const stops = this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt');
-    if (!stops) {
-      return;
-    }
-
-    const stopsGeoJSON = this.createStopsGeoJSON(stops);
-    stopsSource.setData(stopsGeoJSON);
-    this.refreshStopFade(stops.length);
-    this.onStopsDataUpdated?.(stopsGeoJSON);
-    console.log(`Updated stops data: ${stopsGeoJSON.features.length} stops`);
+    this.refreshStopFade(this.rows('stops').length);
+    const seq = ++this.stopsBuildSeq;
+    const t0 = performance.now();
+    this.feed
+      .mapStops()
+      .then(({ stops }) => {
+        if (seq !== this.stopsBuildSeq) {
+          console.log('[LayerManager] stops re-index superseded');
+          return;
+        }
+        setSourceTiles(this.map, STOPS_SOURCE, mapTileUrl('stops'));
+        console.log(
+          `[LayerManager] ${stops} stops re-indexed in ${Math.round(performance.now() - t0)}ms`
+        );
+      })
+      .catch((err: unknown) =>
+        console.error('[LayerManager] stops re-index failed:', err)
+      );
   }
 
   /**
@@ -1438,10 +1416,8 @@ export class LayerManager {
    * Only includes pathways where both endpoints are children of the station (or the station itself).
    */
   private buildPathwaysGeoJSON(stationId: string): GeoJSON.FeatureCollection {
-    const stops =
-      this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
+    const stops = this.rows('stops');
+    const pathways = this.rows('pathways');
 
     // Shared coord resolver: own coords if available, otherwise a Tutte-layout
     // position over the pathway graph (matches how stops are drawn so pathway
@@ -1536,10 +1512,8 @@ export class LayerManager {
   private buildStationGroundGeoJSON(
     stationId: string
   ): GeoJSON.FeatureCollection | null {
-    const stops =
-      this.gtfsParser.getFileDataSyncTyped<Stops>('stops.txt') || [];
-    const pathways =
-      this.gtfsParser.getFileDataSyncTyped<Pathways>('pathways.txt') || [];
+    const stops = this.rows('stops');
+    const pathways = this.rows('pathways');
     const resolveCoord = this.getCachedResolver(stops, pathways);
 
     const coords: [number, number][] = [];

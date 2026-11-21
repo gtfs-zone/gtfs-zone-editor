@@ -13,13 +13,12 @@ import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { isOutsideTopModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { showRenameModal } from '../modules/rename-id-modal';
-import type { RenameDatabase, RenamePatchManager } from './rename-entity';
+import type { EditorFeed } from '../feed/editor-feed';
 import { getCurrentPageState } from '../modules/navigation-actions';
 import { t } from '../i18n/messages';
 
 export interface RenameActionDeps {
-  database: RenameDatabase;
-  patchManager: RenamePatchManager | null;
+  feed: EditorFeed;
   /** Re-render when the rename does not move the page. */
   onRenamed?: () => void;
 }
@@ -140,10 +139,7 @@ export async function requestRename(
   }
 
   const before = JSON.stringify(getCurrentPageState());
-  const newId = await showRenameModal(
-    { database: deps.database, patchManager: deps.patchManager },
-    { table, id }
-  );
+  const newId = await showRenameModal(deps.feed, { table, id });
   if (!newId) {
     return;
   }

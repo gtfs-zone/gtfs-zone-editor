@@ -17,7 +17,6 @@ export const map = {
   'map.clickTwoStops': 'Click two stops to make a pathway between them.',
   'map.ok': 'OK',
   'map.coordsFailed': 'Failed to update stop coordinates: {message}',
-  'map.unnamedStop': 'Unnamed Stop',
   'map.servedBy': '{serves} of {total} trips',
   'map.servedByTitle': 'Served by {serves} of {total} trips',
   'map.routeDiagram': 'Route diagram',
@@ -59,4 +58,9 @@ export const map = {
     'Zone {id} came back with geometry {type}, expected a Polygon or MultiPolygon. Draw the zone in geojson.io first, then Share and paste the link.',
   'search.zoneTerms': 'zone on-demand',
   'search.groupTerms': 'location group',
+  'search.stops': 'Stops',
+  'search.routes': 'Routes',
+  'search.agencies': 'Agencies',
+  'search.zones': 'Zones',
+  'search.locationGroups': 'Location groups',
 } as const;

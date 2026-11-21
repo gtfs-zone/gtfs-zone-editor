@@ -13,7 +13,7 @@
 import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import JSZip from 'jszip';
+import { strToU8, zipSync } from 'fflate';
 import Papa from 'papaparse';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -370,15 +370,11 @@ async function main(): Promise<void> {
     ) + '\n';
 
   mkdirSync(CACHE_DIR, { recursive: true });
-  const zip = new JSZip();
+  const entries: Record<string, Uint8Array> = {};
   for (const [name, text] of Object.entries(files)) {
-    zip.file(name, text);
+    entries[name] = strToU8(text);
   }
-  const buffer = await zip.generateAsync({
-    type: 'nodebuffer',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 9 },
-  });
+  const buffer = zipSync(entries, { level: 9 });
   writeFileSync(OUTPUT_PATH, buffer);
   console.log(
     `[synthetic-feed] ${trips.length} trips, ${stopTimes.length + flexStopTimes.length} stop_times, ${ZONES.length} zones`

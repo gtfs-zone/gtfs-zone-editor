@@ -20,7 +20,10 @@ interface ShortcutHost {
   searchController?: {
     clearSearch: () => void;
   };
-  patchManager?: {
+  feed?: {
+    readonly isOpen: boolean;
+    readonly canUndo: boolean;
+    readonly canRedo: boolean;
     undo: () => Promise<void>;
     redo: () => Promise<void>;
   };
@@ -80,7 +83,9 @@ export function editorShortcuts(host: ShortcutHost): ShortcutCommand[] {
       description: t('shortcut.undo'),
       handler: (e) => {
         e?.preventDefault();
-        return host.patchManager?.undo();
+        return host.feed?.isOpen && host.feed.canUndo
+          ? host.feed.undo()
+          : undefined;
       },
     },
     {
@@ -88,7 +93,9 @@ export function editorShortcuts(host: ShortcutHost): ShortcutCommand[] {
       description: t('shortcut.redo'),
       handler: (e) => {
         e?.preventDefault();
-        return host.patchManager?.redo();
+        return host.feed?.isOpen && host.feed.canRedo
+          ? host.feed.redo()
+          : undefined;
       },
     },
   ];

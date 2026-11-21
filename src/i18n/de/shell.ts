@@ -74,6 +74,7 @@ export const shell: Translation<typeof en> = {
   'history.op.update': 'Ändern',
   'history.op.delete': 'Löschen',
   'history.op.batch': 'Stapel',
+  'history.op.file': 'Datei',
   'history.origin': 'Ursprung',
   'history.feedLoaded': 'Feed geladen',
   'files.title': 'Dateien',
@@ -83,8 +84,11 @@ export const shell: Translation<typeof en> = {
   'files.editing': 'Bearbeitung:',
   'files.rawNote':
     'Nicht Teil der GTFS-Spezifikation. Wird beim Export unverändert übernommen. Änderungen hier werden sofort gespeichert und können nicht rückgängig gemacht werden.',
+  'files.readOnlyNote':
+    'Nicht Teil der GTFS-Spezifikation. Nur lesbar angezeigt und beim Export unverändert übernommen.',
   'files.saved': '{name} gespeichert',
   'files.loadingTable': 'Tabellendaten werden geladen...',
+  'files.firstRows': 'Die ersten {shown} von {total} Zeilen werden angezeigt.',
   'files.noData': 'Keine Daten verfügbar',
   'files.tableError': 'Fehler beim Laden der Tabellendaten',
   'levels.title': 'Ebenen',

@@ -8,7 +8,8 @@
  * a computed range.
  */
 
-import { generateCompositeKeyFromRecord } from './gtfs-primary-keys';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
+import { deleteOp, updateOp } from '../feed/patch-build';
 import { t } from '../i18n/messages';
 
 export interface FeedBounds {
@@ -16,12 +17,8 @@ export interface FeedBounds {
   end?: string;
 }
 
-export interface FeedBoundsSource {
-  getAllRows: (tableName: string) => Promise<unknown[]>;
-}
-
 function firstNonBlank(
-  rows: Record<string, unknown>[],
+  rows: readonly FeedRow[],
   field: string
 ): string | undefined {
   for (const row of rows) {
@@ -37,8 +34,8 @@ function firstNonBlank(
   return undefined;
 }
 
-export async function feedBounds(db: FeedBoundsSource): Promise<FeedBounds> {
-  const rows = (await db.getAllRows('feed_info')) as Record<string, unknown>[];
+export function feedBounds(feed: EditorFeed): FeedBounds {
+  const rows = feed.table('feed_info');
   const start = firstNonBlank(rows, 'feed_start_date');
   const end = firstNonBlank(rows, 'feed_end_date');
   if (rows.length > 0) {
@@ -56,42 +53,6 @@ export async function feedBounds(db: FeedBoundsSource): Promise<FeedBounds> {
   return { start, end };
 }
 
-export interface FeedBoundsWriteDatabase extends FeedBoundsSource {
-  updateRow: (
-    tableName: string,
-    key: string,
-    data: Record<string, unknown>
-  ) => Promise<void>;
-  deleteRow: (tableName: string, key: string) => Promise<void>;
-}
-
-export interface BatchMixedPatchManager {
-  recordBatchMixed: (
-    ops: Array<
-      | {
-          op: 'insert';
-          table: string;
-          id: string;
-          record: Record<string, unknown>;
-        }
-      | {
-          op: 'delete';
-          table: string;
-          id: string;
-          record: Record<string, unknown>;
-        }
-      | {
-          op: 'update';
-          table: string;
-          id: string;
-          before: Record<string, unknown>;
-          after: Record<string, unknown>;
-        }
-    >,
-    label?: string
-  ) => Promise<void>;
-}
-
 /**
  * `calendar_dates` rows for `service_ids` lying past `value` on `field`'s side:
  * before it for `start_date`, after it for `end_date`. Both exception types are
@@ -100,25 +61,18 @@ export interface BatchMixedPatchManager {
  * `service_ids` undefined means every service.
  */
 export async function outOfRangeExceptions(
-  db: FeedBoundsSource,
+  feed: EditorFeed,
   field: 'start_date' | 'end_date',
   value: string,
   service_ids?: Set<string>
-): Promise<Record<string, unknown>[]> {
-  const rows = (await db.getAllRows('calendar_dates')) as Record<
-    string,
-    unknown
-  >[];
-  return rows.filter((row) => {
-    if (service_ids && !service_ids.has(String(row.service_id ?? ''))) {
-      return false;
-    }
-    const date = String(row.date ?? '').trim();
-    if (date === '') {
-      return false;
-    }
-    return field === 'start_date' ? date < value : date > value;
-  });
+): Promise<FeedRow[]> {
+  const rows = await feed.where('calendar_dates', [
+    ...(service_ids ? [{ col: 'service_id', in: [...service_ids] }] : []),
+    field === 'start_date'
+      ? { col: 'date', lt: value }
+      : { col: 'date', gt: value },
+  ]);
+  return rows.filter((row) => (row.date ?? '').trim() !== '');
 }
 
 /** How many rows a trim or extend touched, for the caller's notification. */
@@ -130,69 +84,48 @@ export interface TrimOrExtendResult {
 /**
  * Set each named service's `start_date` (trim) or `end_date` (extend) to
  * `value`, skipping rows already there, and delete the `calendar_dates`
- * exceptions lying past that same edge. Recorded as one `recordBatchMixed` so a
- * single undo reverts the whole action.
+ * exceptions lying past that same edge, as one patch so a single undo
+ * reverts the whole action.
  *
  * `service_ids` undefined means every service in `calendar`. Only the edge
  * being acted on is pruned; the other edge's exceptions are left alone.
  */
 export async function trimOrExtendServices(
-  db: FeedBoundsWriteDatabase,
-  patchManager: BatchMixedPatchManager,
+  feed: EditorFeed,
   field: 'start_date' | 'end_date',
   value: string,
   service_ids?: Set<string>
 ): Promise<TrimOrExtendResult> {
-  const rows = (await db.getAllRows('calendar')) as Record<string, unknown>[];
-  const ops: Parameters<BatchMixedPatchManager['recordBatchMixed']>[0] = [];
+  const updates = feed
+    .table('calendar')
+    .filter(
+      (row) =>
+        (!service_ids || service_ids.has(row.service_id)) &&
+        (row[field] ?? '') !== value
+    )
+    .map((row) => updateOp('calendar', row, { [field]: value }));
 
-  let services = 0;
-  for (const row of rows) {
-    const service_id = String(row.service_id);
-    if (service_ids && !service_ids.has(service_id)) {
-      continue;
-    }
-    if (String(row[field] ?? '') === value) {
-      continue;
-    }
-    const before = { [field]: row[field] };
-    const after = { [field]: value };
-    await db.updateRow('calendar', service_id, after);
-    ops.push({
-      op: 'update',
-      table: 'calendar',
-      id: service_id,
-      before,
-      after,
-    });
-    services += 1;
-  }
-
-  // Deletes after the updates, so replaying the batch applies them in the same
-  // order they were written.
-  const exceptions = await outOfRangeExceptions(db, field, value, service_ids);
-  for (const record of exceptions) {
-    const id = generateCompositeKeyFromRecord('calendar_dates', record);
-    await db.deleteRow('calendar_dates', id);
-    ops.push({ op: 'delete', table: 'calendar_dates', id, record });
-  }
-
-  if (ops.length > 0) {
-    const verb = field === 'start_date' ? 'Trim' : 'Extend';
-    const edge = field === 'start_date' ? 'start' : 'end';
-    const vars = {
-      services: t('count.services', { count: services }),
-      exceptions: t('count.exceptions', { count: exceptions.length }),
-    };
-    const trim = field === 'start_date';
-    await patchManager.recordBatchMixed(
-      ops,
-      exceptions.length > 0
-        ? t(trim ? 'bounds.trimRemoveLabel' : 'bounds.extendRemoveLabel', vars)
-        : t(trim ? 'bounds.trimLabel' : 'bounds.extendLabel', vars)
-    );
+  const exceptions = await outOfRangeExceptions(
+    feed,
+    field,
+    value,
+    service_ids
+  );
+  const services = updates.length;
+  const vars = {
+    services: t('count.services', { count: services }),
+    exceptions: t('count.exceptions', { count: exceptions.length }),
+  };
+  const trim = field === 'start_date';
+  const applied = await feed.apply(
+    [...updates, ...exceptions.map((row) => deleteOp('calendar_dates', row))],
+    exceptions.length > 0
+      ? t(trim ? 'bounds.trimRemoveLabel' : 'bounds.extendRemoveLabel', vars)
+      : t(trim ? 'bounds.trimLabel' : 'bounds.extendLabel', vars)
+  );
+  if (applied) {
     console.log(
-      `[FeedBounds] ${verb} to feed ${edge}: ${services} calendar row(s), ${exceptions.length} exception(s) removed`
+      `[FeedBounds] ${trim ? 'Trim' : 'Extend'} to feed ${trim ? 'start' : 'end'}: ${services} calendar row(s), ${exceptions.length} exception(s) removed`
     );
   }
 

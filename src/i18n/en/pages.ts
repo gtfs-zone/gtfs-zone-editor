@@ -4,7 +4,6 @@ export const pages = {
   'page.loadFailed': 'Failed to load content. Please try again.',
   'page.cleanFeed': 'Everything look good? Export your feed and publish.',
   'page.publishingGuide': 'Publishing guide',
-  'page.noPatchManager': 'No patch manager available',
   'page.trimAllTitle':
     "Set every service's start_date to {date}, and remove every exception before it",
   'page.extendAllTitle':
@@ -19,6 +18,11 @@ export const pages = {
   'page.trimAll': 'Trim all to feed start',
   'page.extendAll': 'Extend all to feed end',
   'page.newService': '+ New service',
+  'page.servicesActiveToday': '{count} running today',
+  'page.filterServices': 'Filter by service_id',
+  'page.noServiceMatch': 'No service_id contains "{filter}".',
+  'page.issuesChecking': 'Checking the feed for issues...',
+  'page.noFeedOpen': 'No feed is open.',
   'page.noServices': 'No services found in GTFS data.',
   'page.feedInfo': 'Feed Information',
   'page.timetable': 'Timetable',

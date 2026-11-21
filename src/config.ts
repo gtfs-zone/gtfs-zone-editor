@@ -3,8 +3,8 @@
  * All magic numbers live here: import CONFIG rather than inlining literals.
  */
 export const CONFIG = {
-  // IndexedDB
-  DB_NAME: 'GTFSZoneDB',
+  // IndexedDB database of the previous storage layer, deleted at boot.
+  LEGACY_DB_NAME: 'GTFSZoneDB',
 
   // IndexedDB: how long an open or delete request may sit unanswered before we
   // treat the database as wedged. A request queued behind a blocked
@@ -12,40 +12,21 @@ export const CONFIG = {
   // hangs forever with nothing logged.
   DB_REQUEST_TIMEOUT_MS: 8_000,
 
-  // Feed blobs: rows per file_blobs chunk. Keeps every serialized JSON string
-  // far below the engine's max string length (SpiderMonkey: ~1.07 GB, which a
-  // 4.5M-row stop_times.txt exceeds as a single string) and small enough to
-  // parse inside one frame budget.
-  BLOB_CHUNK_ROWS: 50_000,
-
-  // Feed loading: rows hydrated between awaits of a macrotask, so the event
-  // loop drains and the progress bar keeps painting during a large import.
-  HYDRATE_YIELD_ROWS: 25_000,
-
-  // Route rendering: trips built between yields to the event loop. Lower than
-  // HYDRATE_YIELD_ROWS because a trip costs far more than a row: each one
-  // walks its stop_times and joins them into a geometry key.
-  ROUTE_BUILD_TRIP_CHUNK: 2_000,
-
-  // Feed loading: how long to wait for a message from the parse worker before
-  // treating the load as dead, terminating the worker and failing loudly.
-  LOAD_WATCHDOG_MS: 60_000,
-
-  // Feed loading: thresholds above which the user is warned and offered a
-  // bailout before the expensive work starts. Bytes are the zip's uncompressed
-  // size; rows are the estimated total across all tables.
-  LARGE_FEED_WARN_BYTES: 250_000_000,
-  LARGE_FEED_WARN_ROWS: 2_000_000,
-
-  // Feed loading: bytes of CSV per row, used to turn a zip entry's uncompressed
-  // size into a row estimate without inflating it. Measured on MBTA's
-  // stop_times.txt (210 MB, 4,494,139 rows).
-  FEED_CSV_BYTES_PER_ROW: 48,
-
   // Editor (table view)
-  DEBOUNCE_DELAY: 500, // ms before flushing pending cell updates to IndexedDB
+  DEBOUNCE_DELAY: 500, // ms before flushing pending cell updates
+  // Rows the Files grid loads; a longer table shows its first rows only.
+  FILES_GRID_MAX_ROWS: 100_000,
   CLUSTERIZE_ROWS_IN_BLOCK: 50,
   CLUSTERIZE_BLOCKS_IN_CLUSTER: 4,
+
+  // Long lists (home services, top-bar modals): rows a lazy list appends per
+  // page as it scrolls.
+  MODAL_LIST_ROWS: 50,
+  // Timetable browser: services above which a section lists each route's
+  // timetables instead of drawing a route x service matrix.
+  TIMETABLE_BROWSER_MAX_COLUMNS: 30,
+  // Calendar month grid: service chips a day appends per page as it scrolls.
+  CALENDAR_DAY_CHIPS: 12,
 
   // Enum menus: option count above which the searchable modal opens instead.
   ENUM_MODAL_THRESHOLD: 15,
@@ -55,8 +36,21 @@ export const CONFIG = {
   // stops there, which is slow but fine - the patch log holds it.
   RENAME_CASCADE_WARN: 5_000,
 
-  // Patch system: how often to compress and store a full-state snapshot
-  SNAPSHOT_INTERVAL: 50, // take a full snapshot every N patches
+  // Feed worker: IndexedDB holding the patch log and the pointer to the
+  // active OPFS base file.
+  FEED_DB_NAME: 'GTFSZoneFeed',
+  // Patches to replay at boot (both directions, bridge included) above which
+  // the patch log is folded into a new base file.
+  FEED_FOLD_PATCHES: 500,
+  // Feed validation in the worker: work per `validateStep` call, and rows
+  // between checks of that budget.
+  VALIDATE_STEP_MS: 30,
+  VALIDATE_CHUNK_ROWS: 5_000,
+  // Export in the worker: work per `exportStep` call, CSV rows encoded and
+  // zipped at a time, and zip output gathered per Blob part.
+  EXPORT_STEP_MS: 50,
+  EXPORT_CHUNK_ROWS: 5_000,
+  EXPORT_BLOB_PART_BYTES: 16 * 1024 * 1024,
 
   // Map navigation: zoom level used when focusing a single stop or station.
   // For stations with multiple child stops, this is the max zoom; fitBounds
@@ -97,6 +91,22 @@ export const CONFIG = {
   ROUTE_ARROW_FADE_ZOOM_MIN: 12,
   ROUTE_ARROW_FADE_ZOOM_MAX: 13.5,
   ROUTE_ARROW_OPACITY: 0.85,
+
+  // Route lines: Douglas-Peucker tolerance in degrees applied in the worker
+  // before the lines reach the map (1e-5 is about 1m).
+  ROUTE_LINE_SIMPLIFY_DEG: 1e-5,
+  // Map vector tiles cut in the feed worker: deepest zoom tiled per layer
+  // (deeper zooms overscale it), line simplification in tile pixels, and tile
+  // buffer in tile pixels (of 4096).
+  MAP_ROUTES_MAXZOOM: 14,
+  MAP_STOPS_MAXZOOM: 18,
+  MAP_TILE_TOLERANCE: 0.5,
+  MAP_TILE_BUFFER: 64,
+
+  // Stop layers: lowest zoom drawn once the zoom fade is on (see
+  // STOP_FADE_MIN_STOPS). Below it the fade already hides every stop but the
+  // focused and spotlighted ones; routes carry the overview there.
+  STOPS_MIN_ZOOM: 7.5,
 
   // Map spotlight: line-sort-key applied to the focused route so it paints
   // above every other route. Far above any natural key (max ~90999).

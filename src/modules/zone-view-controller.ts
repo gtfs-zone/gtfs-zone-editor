@@ -8,7 +8,7 @@
  * other entity page.
  */
 
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
 import { GTFS_TABLES } from '../types/gtfs';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { getRouteDisplay, renderCardLabel } from '../utils/entity-display';
@@ -26,7 +26,6 @@ import {
   zoneDescription,
   zoneName,
   type ZoneFeature,
-  type ZonePatchRecorder,
 } from './zone-store';
 import { t } from '../i18n/messages';
 
@@ -83,11 +82,7 @@ function renderZoneField(config: FieldConfig, value: string): string {
 }
 
 export interface ZoneViewDependencies {
-  gtfsParser?: GTFSParser;
-  patchManager?: ZonePatchRecorder | null;
-  /** Trips whose stop_times reference this zone. */
-  getTripsForZone?: (location_id: string) => Array<Record<string, unknown>>;
-  getRouteAsync?: (route_id: string) => Promise<unknown>;
+  feed: EditorFeed;
   onRouteClick?: (route_id: string) => void;
   /** Re-render the page after the geometry is rewritten. */
   onGeometryChanged?: (location_id: string) => void;
@@ -107,13 +102,13 @@ export class ZoneViewController {
   async renderZoneView(location_id: string): Promise<string> {
     console.log('[ZoneViewController] Rendering zone view for:', location_id);
 
-    const parser = this.dependencies.gtfsParser;
-    if (!parser) {
+    const feed = this.dependencies.feed;
+    if (!feed.isOpen) {
       return this.renderError(t('view.zoneUnavailable'));
     }
 
     try {
-      const feature = getZoneFeature(parser, location_id);
+      const feature = getZoneFeature(feed, location_id);
       if (!feature) {
         return this.renderError(
           t('view.zoneMissing', { id: escapeHtml(location_id) })
@@ -121,7 +116,7 @@ export class ZoneViewController {
       }
 
       const name = zoneName(feature) || location_id;
-      const geometryHtml = await renderZoneGeometrySection(parser, location_id);
+      const geometryHtml = await renderZoneGeometrySection(feed, location_id);
       const routesHtml = await this.renderRoutes(location_id);
 
       return `
@@ -188,7 +183,15 @@ export class ZoneViewController {
 
   /** Trips referencing the zone, collapsed to one row per route. */
   private async renderRoutes(location_id: string): Promise<string> {
-    const trips = this.dependencies.getTripsForZone?.(location_id) ?? [];
+    const feed = this.dependencies.feed;
+    const stopTimes = await feed.where('stop_times', [
+      { col: 'location_id', eq: location_id },
+    ]);
+    const tripIds = [...new Set(stopTimes.map((st) => st.trip_id))];
+    const trips =
+      tripIds.length > 0
+        ? await feed.where('trips', [{ col: 'trip_id', in: tripIds }])
+        : [];
     if (trips.length === 0) {
       return `<p class="text-sm opacity-60">${t('view.zoneNoStopTimes')}</p>`;
     }
@@ -204,8 +207,7 @@ export class ZoneViewController {
 
     const rows: string[] = [];
     for (const [route_id, count] of counts) {
-      const route = (await this.dependencies.getRouteAsync?.(route_id)) as
-        Record<string, string> | null | undefined;
+      const route = feed.byKey('routes', route_id);
       const label = route
         ? renderCardLabel(getRouteDisplay(route))
         : `<span class="font-mono">${escapeHtml(route_id)}</span>`;
@@ -220,15 +222,14 @@ export class ZoneViewController {
   }
 
   addEventListeners(container: HTMLElement): void {
-    const parser = this.dependencies.gtfsParser;
-    if (parser) {
+    const feed = this.dependencies.feed;
+    if (feed.isOpen) {
       attachZoneGeometryHandlers(container, {
-        gtfsParser: parser,
-        patchManager: this.dependencies.patchManager ?? null,
+        feed,
         onGeometryChanged: (location_id) =>
           this.dependencies.onGeometryChanged?.(location_id),
       });
-      this.attachDetailsHandlers(container, parser);
+      this.attachDetailsHandlers(container);
     }
 
     container
@@ -258,10 +259,7 @@ export class ZoneViewController {
    * Open the editor on click, Enter or Space, and commit on blur, which is the
    * contract `utils/inline-edit` carries for every editable value in the app.
    */
-  private attachDetailsHandlers(
-    container: HTMLElement,
-    parser: GTFSParser
-  ): void {
+  private attachDetailsHandlers(container: HTMLElement): void {
     const form = container.querySelector<HTMLElement>(`.${DETAILS_FORM}`);
     if (!form) {
       return;
@@ -276,7 +274,7 @@ export class ZoneViewController {
         className: 'w-full',
         placeholder: span.dataset.placeholder,
         onCommit: (value) =>
-          this.commitProperty(parser, location_id, span, value.trim()),
+          this.commitProperty(location_id, span, value.trim()),
       });
     };
 
@@ -293,7 +291,6 @@ export class ZoneViewController {
 
   /** Write one edited property, leaving the span as it was on failure. */
   private async commitProperty(
-    parser: GTFSParser,
     location_id: string,
     span: HTMLElement,
     value: string
@@ -304,12 +301,9 @@ export class ZoneViewController {
     }
 
     try {
-      await setZoneProperties(
-        parser,
-        this.dependencies.patchManager ?? null,
-        location_id,
-        { [field]: value }
-      );
+      await setZoneProperties(this.dependencies.feed, location_id, {
+        [field]: value,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       notify.error(message);

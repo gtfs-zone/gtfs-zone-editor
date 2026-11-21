@@ -8,8 +8,8 @@
  * the patch's `source.id` pointing at the old key and undo silently drops.
  */
 
-import type { GTFSDatabaseRecord } from '../modules/gtfs-database';
-import type { PatchManager } from '../modules/patch-manager';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import { GTFS_FOREIGN_KEYS } from '../types/gtfs';
 import {
   generateCompositeKeyFromRecord,
@@ -22,33 +22,6 @@ import {
 } from './translation-targets';
 import { CONFIG } from '../config';
 import { t } from '../i18n/messages';
-
-/**
- * The database handle a rename needs. Structural rather than `GTFSDatabase`
- * so a page's narrower handle can drive it without being widened first.
- */
-export interface RenameDatabase {
-  getRow(
-    tableName: string,
-    key: string
-  ): Promise<GTFSDatabaseRecord | undefined>;
-  queryRows(
-    tableName: string,
-    filter?: Record<string, string | number | boolean>
-  ): Promise<GTFSDatabaseRecord[]>;
-  insertRows(tableName: string, rows: GTFSDatabaseRecord[]): Promise<void>;
-  updateRow(
-    tableName: string,
-    key: string,
-    data: Partial<GTFSDatabaseRecord>
-  ): Promise<void>;
-  deleteRow(tableName: string, key: string): Promise<void>;
-}
-
-/** The one patch call a rename makes. */
-export interface RenamePatchManager {
-  recordBatchMixed: PatchManager['recordBatchMixed'];
-}
 
 /** One referencing field's contribution to a rename, for display. */
 export interface RenameCascade {
@@ -63,8 +36,8 @@ export interface RenameEdit {
   table: string;
   rekeys: boolean;
   key: string;
-  before: GTFSDatabaseRecord;
-  after: GTFSDatabaseRecord;
+  before: FeedRow;
+  after: Record<string, string>;
   fields: string[];
 }
 
@@ -74,7 +47,7 @@ export interface RenamePlan {
   oldId: string;
   newId: string;
   /** The row being renamed, as it stands before the rename. */
-  row: GTFSDatabaseRecord;
+  row: FeedRow;
   /** One entry per referencing (table, field) pair that has matching rows. */
   cascades: RenameCascade[];
   edits: RenameEdit[];
@@ -141,7 +114,7 @@ export function validateIdText(id: string): string | null {
  * null if it is usable.
  */
 export async function validateNewId(
-  db: { getRow(tableName: string, key: string): Promise<unknown> },
+  feed: EditorFeed,
   table: string,
   id: string
 ): Promise<string | null> {
@@ -149,7 +122,7 @@ export async function validateNewId(
   if (textError) {
     return textError;
   }
-  const clash = await db.getRow(table, id);
+  const [clash] = await feed.byKeys(table, [id]);
   if (clash) {
     return t('renameRule.taken', { table, id });
   }
@@ -161,7 +134,7 @@ export async function validateNewId(
  * Exported so the modal can validate as the user types.
  */
 export async function validateRenameTarget(
-  db: RenameDatabase,
+  feed: EditorFeed,
   table: string,
   oldId: string,
   newId: string
@@ -169,7 +142,7 @@ export async function validateRenameTarget(
   if (newId !== '' && newId === oldId) {
     return t('renameRule.unchanged');
   }
-  return validateNewId(db, table, newId);
+  return validateNewId(feed, table, newId);
 }
 
 /**
@@ -177,7 +150,7 @@ export async function validateRenameTarget(
  * until `applyRename` is called with the returned plan.
  */
 export async function renamePlan(
-  db: RenameDatabase,
+  feed: EditorFeed,
   table: string,
   oldId: string,
   newId: string
@@ -187,12 +160,12 @@ export async function renamePlan(
     throw new Error(`[renameEntity] ${table} has no natural key to rename`);
   }
 
-  const invalid = await validateRenameTarget(db, table, oldId, newId);
+  const invalid = await validateRenameTarget(feed, table, oldId, newId);
   if (invalid) {
     throw new Error(`[renameEntity] ${invalid}`);
   }
 
-  const row = await db.getRow(table, oldId);
+  const [row] = await feed.byKeys(table, [oldId]);
   if (!row) {
     throw new Error(`[renameEntity] no row "${oldId}" in ${table}`);
   }
@@ -230,7 +203,7 @@ export async function renamePlan(
     // Strict equality on the stored value. Renaming a named agency leaves the
     // implicitly-resolved blank agency_id rows of a single-agency feed alone;
     // setting the ID of a blank agency rewrites them, since they are its rows.
-    const matches = await db.queryRows(refTable, { [ref.field]: oldId });
+    const matches = await feed.where(refTable, [{ col: ref.field, eq: oldId }]);
     const rekeys = fieldIsPartOfKey(refTable, ref.field);
 
     let counted = 0;
@@ -285,10 +258,10 @@ export async function renamePlan(
         if (!field || !namesRenamedKey(target, field, table, keyField)) {
           continue;
         }
-        const matches = await db.queryRows('translations', {
-          table_name: target,
-          [column]: oldId,
-        });
+        const matches = await feed.where('translations', [
+          { col: 'table_name', eq: target },
+          { col: column, eq: oldId },
+        ]);
         for (const match of matches) {
           const key = generateCompositeKeyFromRecord('translations', match);
           const editKey = `translations\u0000${key}`;
@@ -326,9 +299,10 @@ export async function renamePlan(
         continue;
       }
       const newKey = generateCompositeKeyFromRecord('translations', edit.after);
-      if (await db.getRow('translations', newKey)) {
+      const [taken] = await feed.byKeys('translations', [newKey]);
+      if (taken) {
         throw new Error(
-          `[renameEntity] translations already has a ${String(edit.after.table_name)}.${String(edit.after.field_name)} (${String(edit.after.language)}) row for "${newId}"; delete it first`
+          `[renameEntity] translations already has a ${edit.after.table_name}.${edit.after.field_name} (${edit.after.language}) row for "${newId}"; delete it first`
         );
       }
     }
@@ -351,78 +325,39 @@ export async function renamePlan(
 }
 
 /**
- * Write a plan out: the renamed row plus every referencing row, applied first
- * and then recorded as a single patch so one undo takes the whole rename back.
+ * Write a plan out as one patch: the renamed row plus every referencing row,
+ * so one undo takes the whole rename back.
  *
- * Deletes go first in both the writes and the patch ops, so neither forward
- * replay nor the reversed inverse replay ever holds two rows on one key.
+ * Deletes go first, so neither forward replay nor the reversed inverse replay
+ * ever holds two rows on one key.
  */
 export async function applyRename(
-  db: RenameDatabase,
-  patchManager: RenamePatchManager,
+  feed: EditorFeed,
   plan: RenamePlan
 ): Promise<void> {
   const { table, keyField, oldId, newId, row, edits } = plan;
 
-  const invalid = await validateRenameTarget(db, table, oldId, newId);
+  const invalid = await validateRenameTarget(feed, table, oldId, newId);
   if (invalid) {
     throw new Error(`[renameEntity] ${invalid}`);
   }
 
   const rekeyEdits = edits.filter((e) => e.rekeys);
   const updateEdits = edits.filter((e) => !e.rekeys);
-  const renamedRow: GTFSDatabaseRecord = { ...row, [keyField]: newId };
 
-  const ops: Parameters<PatchManager['recordBatchMixed']>[0] = [];
+  // The renamed row always re-keys: its key is the renamed field.
+  const ops = [
+    deleteOp(table, row),
+    ...rekeyEdits.map((edit) => deleteOp(edit.table, edit.before)),
+    insertOp(table, { ...row, [keyField]: newId }),
+    ...rekeyEdits.map((edit) => insertOp(edit.table, edit.after)),
+    ...updateEdits.map((edit) => updateOp(edit.table, edit.before, edit.after)),
+  ];
 
-  // Deletes: the renamed row (the store's keyPath is its natural key, so it
-  // always re-keys) and every referencing row whose own key holds the field.
-  await db.deleteRow(table, oldId);
-  ops.push({ op: 'delete', table, id: oldId, record: row });
-  for (const edit of rekeyEdits) {
-    await db.deleteRow(edit.table, edit.key);
-    ops.push({
-      op: 'delete',
-      table: edit.table,
-      id: edit.key,
-      record: edit.before,
-    });
-  }
-
-  await db.insertRows(table, [renamedRow]);
-  ops.push({ op: 'insert', table, id: newId, record: renamedRow });
-  for (const edit of rekeyEdits) {
-    const newKey = generateCompositeKeyFromRecord(edit.table, edit.after);
-    await db.insertRows(edit.table, [edit.after]);
-    ops.push({
-      op: 'insert',
-      table: edit.table,
-      id: newKey,
-      record: edit.after,
-    });
-  }
-
-  for (const edit of updateEdits) {
-    const delta: GTFSDatabaseRecord = {};
-    const before: GTFSDatabaseRecord = {};
-    for (const field of edit.fields) {
-      delta[field] = newId;
-      before[field] = edit.before[field];
-    }
-    await db.updateRow(edit.table, edit.key, delta);
-    ops.push({
-      op: 'update',
-      table: edit.table,
-      id: edit.key,
-      before,
-      after: delta,
-    });
-  }
-
-  await patchManager.recordBatchMixed(
+  await feed.apply(
     ops,
     `Rename ${table}.${keyField} "${oldId}" to "${newId}"`,
-    { rename: { table, keyField, from: oldId, to: newId } }
+    { table, keyField, from: oldId, to: newId }
   );
 
   console.log(

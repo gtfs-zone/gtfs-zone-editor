@@ -12,7 +12,8 @@ import {
   markReferenceResolved,
   refreshFeedIssuesIfStale,
 } from './feed-issues';
-import type { GTFSParser } from './gtfs-parser';
+import type { EditorFeed } from '../feed/editor-feed';
+import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import { TimeFormatter, renderTimeHtml } from '../utils/time-formatter';
 import {
   coupleStopTimes,
@@ -32,7 +33,6 @@ import {
   assertValidTime,
 } from './timetable-database';
 import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
-import { patchUpdate } from '../utils/patch-utils';
 import {
   openInlineEditor,
   openInlineMenu,
@@ -77,7 +77,6 @@ import { setPickerTriggerContent } from '../utils/picker-trigger';
 import { getGTFSFieldDescription } from '../utils/zod-tooltip-helper';
 import { nextEntityId } from '../utils/inline-entity-creator';
 import { GTFS_TABLES } from '../types/gtfs';
-import type { LocationGroups } from '../types/gtfs-entities';
 import {
   stopTimeFieldKind,
   STOP_TIME_EDITABLE_FIELDS,
@@ -170,123 +169,6 @@ function asWindowField(field: string | undefined): FlexWindowField | null {
     : null;
 }
 
-// Enhanced GTFS interfaces using standard GTFS property names
-
-interface EnhancedTrip {
-  // Shorthand properties
-  id: string;
-  headsign?: string;
-  shortName?: string;
-  // Original GTFS properties
-  trip_id: string;
-  route_id: string;
-  service_id: string;
-  trip_headsign?: string;
-  trip_short_name?: string;
-  direction_id?: string;
-  block_id?: string;
-  shape_id?: string;
-  wheelchair_accessible?: string;
-}
-
-interface PatchManagerInterface {
-  recordInsert(
-    table: string,
-    id: string,
-    record: Record<string, unknown>
-  ): Promise<void>;
-  recordDelete(
-    table: string,
-    id: string,
-    record: Record<string, unknown>
-  ): Promise<void>;
-  recordUpdate(
-    table: string,
-    id: string,
-    before: Record<string, unknown>,
-    after: Record<string, unknown>
-  ): Promise<void>;
-  recordBatch(
-    ops: Array<{
-      table: string;
-      id: string;
-      before: Record<string, unknown>;
-      after: Record<string, unknown>;
-    }>,
-    label: string
-  ): Promise<void>;
-  recordBatchDelete(
-    ops: Array<{ table: string; id: string; record: Record<string, unknown> }>,
-    label: string
-  ): Promise<void>;
-  recordBatchInsert(
-    ops: Array<{ table: string; id: string; record: Record<string, unknown> }>,
-    label: string
-  ): Promise<void>;
-  recordBatchMixed(
-    ops: Array<
-      | {
-          op: 'insert';
-          table: string;
-          id: string;
-          record: Record<string, unknown>;
-        }
-      | {
-          op: 'delete';
-          table: string;
-          id: string;
-          record: Record<string, unknown>;
-        }
-      | {
-          op: 'update';
-          table: string;
-          id: string;
-          before: Record<string, unknown>;
-          after: Record<string, unknown>;
-        }
-    >,
-    label?: string
-  ): Promise<void>;
-  on(
-    event: 'undo' | 'redo' | 'change' | 'jump',
-    listener: (record?: unknown) => void
-  ): void;
-}
-
-interface GTFSRelationships {
-  getCalendarForService(service_id: string): Record<string, unknown> | null;
-  getTripsForRoute(route_id: string): EnhancedTrip[];
-  getTripsForRouteAsync(route_id: string): Promise<EnhancedTrip[]>;
-  getStopTimesForTrip(trip_id: string): Record<string, unknown>[];
-  getStopById(stop_id: string): Record<string, unknown> | null;
-  getStopByIdAsync(stop_id: string): Promise<Record<string, unknown> | null>;
-}
-
-/**
- * Field-level diff of two versions of the same row, or null when they match.
- * Both sides are returned so the caller can hand them straight to a patch.
- */
-function changedFields(
-  before: StopTimes,
-  after: StopTimes
-): { before: Record<string, unknown>; after: Record<string, unknown> } | null {
-  const prev = before as unknown as Record<string, unknown>;
-  const next = after as unknown as Record<string, unknown>;
-  const beforeChanges: Record<string, unknown> = {};
-  const afterChanges: Record<string, unknown> = {};
-
-  for (const field of new Set([...Object.keys(prev), ...Object.keys(next)])) {
-    if (prev[field] !== next[field]) {
-      beforeChanges[field] = prev[field] ?? null;
-      afterChanges[field] = next[field] ?? null;
-    }
-  }
-
-  return Object.keys(afterChanges).length === 0
-    ? null
-    : { before: beforeChanges, after: afterChanges };
-}
-
 /**
  * Schedule Controller - Main orchestrator for timetable functionality
  *
@@ -300,8 +182,7 @@ function changedFields(
  * Follows the Enhanced GTFS Object pattern and FAIL HARD error handling policy.
  */
 export class ScheduleController {
-  private gtfsParser: GTFSParser;
-  private patchManager: PatchManagerInterface | null = null;
+  private feed: EditorFeed;
   private dataProcessor: TimetableDataProcessor;
   private renderer: TimetableRenderer;
   private database: TimetableDatabase;
@@ -376,20 +257,16 @@ export class ScheduleController {
   /** The cell whose compact popover is open, reopened after a re-render. */
   private popoverCell: { tripId: string; stopIndex: number } | null = null;
 
-  /**
-   * Initialize ScheduleController with required dependencies
-   *
-   * @param gtfsRelationships - GTFS relationships manager for data queries
-   * @param gtfsParser - GTFS parser with database access
-   */
-  constructor(gtfsRelationships: GTFSRelationships, gtfsParser: GTFSParser) {
-    this.gtfsParser = gtfsParser;
-    this.dataProcessor = new TimetableDataProcessor(
-      gtfsRelationships,
-      gtfsParser
-    );
+  constructor(feed: EditorFeed) {
+    this.feed = feed;
+    this.dataProcessor = new TimetableDataProcessor(feed);
     this.renderer = new TimetableRenderer();
-    this.database = new TimetableDatabase(gtfsParser);
+    this.database = new TimetableDatabase(feed);
+
+    // The picker options and TimetableData are cached across renders, so any
+    // edit drops them. Subscribed here, before index.ts subscribes the browse
+    // refresh, so the caches are clear by the time that refresh re-renders.
+    feed.onEdit(() => this.invalidateCaches());
 
     // Capture-phase scroll listener: fires synchronously when the user scrolls
     // the timetable, before any edit handlers run.  This is the only reliable
@@ -1849,9 +1726,7 @@ export class ScheduleController {
     }
 
     const currentValue = value ?? '';
-    const rules = this.gtfsParser.getFileDataSyncTyped<Record<string, unknown>>(
-      GTFS_TABLES.BOOKING_RULES
-    );
+    const rules = this.feed.table('booking_rules');
     const options: OptionPickerItem[] = [
       { value: '', primary: t('common.noneOption') },
       ...rules.map((rule) => {
@@ -1913,7 +1788,7 @@ export class ScheduleController {
     }
 
     const currentValue = value ?? '';
-    const shapeIds = this.gtfsParser.getShapeIds();
+    const shapeIds = await this.feed.read('shapeIds');
     const options = [
       { value: '', primary: t('common.noneOption') },
       ...shapeIds.map((sid) => ({ value: sid, primary: sid })),
@@ -2062,12 +1937,12 @@ export class ScheduleController {
 
   private async getStopOptions(): Promise<OptionPickerItem[]> {
     if (this.stopOptions === null) {
-      const stops = await this.gtfsParser.gtfsDatabase.queryRows('stops', {});
+      const stops = this.feed.table('stops');
       console.log(
         `[ScheduleController] building stop picker options for ${stops.length} stops`
       );
       this.stopOptions = stops.map((stop) => ({
-        value: stop.stop_id,
+        value: stop.stop_id ?? '',
         primary: getStopDisplay(stop as unknown as Record<string, string>)
           .primary,
         secondary: stop.stop_id,
@@ -2085,7 +1960,7 @@ export class ScheduleController {
   private async getRefOptions(): Promise<OptionPickerItem[]> {
     if (this.refOptions === null) {
       const stops = await this.getStopOptions();
-      const zones = listZones(this.gtfsParser).map((feature) => {
+      const zones = listZones(this.feed).map((feature) => {
         const location_id = String(feature.id);
         const name = zoneName(feature);
         return {
@@ -2094,8 +1969,8 @@ export class ScheduleController {
           secondary: t('sched.zoneSecondary', { id: location_id }),
         };
       });
-      const groups = this.gtfsParser
-        .getFileDataSyncTyped<LocationGroups>(GTFS_TABLES.LOCATION_GROUPS)
+      const groups = this.feed
+        .table('location_groups')
         .map((group) => {
           const location_group_id = String(group.location_group_id ?? '');
           const name = String(group.location_group_name ?? '');
@@ -2130,21 +2005,6 @@ export class ScheduleController {
     // next timetable. Drop it so the new grid opens at its first cell.
     this.selectedCell = null;
     this.selectionHadFocus = false;
-  }
-
-  setPatchManager(pm: PatchManagerInterface): void {
-    this.patchManager = pm;
-
-    // The picker options and TimetableData are cached across renders, so any
-    // edit has to drop them. Rebuilding is cheap and only happens on the next
-    // render/picker-open.
-    //
-    // Registration order matters: this runs from the constructor, before
-    // index.ts subscribes browseNavigation.refresh() to the same events, so
-    // the caches are always clear by the time that refresh re-renders.
-    for (const event of ['change', 'undo', 'redo', 'jump'] as const) {
-      pm.on(event, () => this.invalidateCaches());
-    }
   }
 
   // ===== PUBLIC EDITING METHODS =====
@@ -2246,7 +2106,7 @@ export class ScheduleController {
         castedTime,
         stopSequence,
         isPendingRow,
-        this.stopTimeInsertIndex(trip_id, stopIndex),
+        await this.stopTimeInsertIndex(trip_id, stopIndex),
         coupled
       );
 
@@ -2368,9 +2228,9 @@ export class ScheduleController {
       return;
     }
 
-    const row = this.gtfsParser
-      .getStopTimesByTripId(trip_id)
-      .find((st) => String(st.stop_sequence) === stopSequence);
+    const row = (await this.feed.read('stopTimesForTrip', trip_id)).find(
+      (st) => st.stop_sequence === stopSequence
+    );
     if (!row) {
       console.warn(
         `[ScheduleController] no stop_time for ${trip_id} at stop_sequence ${stopSequence}`
@@ -2378,9 +2238,7 @@ export class ScheduleController {
       return;
     }
 
-    const rowId = String(
-      row.location_group_id ?? row.location_id ?? row.stop_id ?? ''
-    );
+    const rowId = row.location_group_id || row.location_id || row.stop_id || '';
     const isClear = !newTime.trim();
     const casted = isClear ? '' : TimeFormatter.castTimeToHHMMSS(newTime);
     const current = String(row[field] ?? '');
@@ -2432,21 +2290,10 @@ export class ScheduleController {
     }
 
     try {
-      const key = generateCompositeKeyFromRecord(
-        'stop_times',
-        row as unknown as Record<string, unknown>
-      );
-      await patchUpdate(
-        this.gtfsParser.gtfsDatabase,
-        this.patchManager,
-        'stop_times',
-        key,
-        { [field]: current },
-        { [field]: casted }
-      );
       const label = isClear
         ? `Clear ${field} for ${trip_id}/${rowId}`
         : `Set ${field} for ${trip_id}/${rowId} to ${casted}`;
+      await this.feed.apply([updateOp('stop_times', row, { [field]: casted })]);
       console.log(`[ScheduleController] ${label}`);
     } catch (error) {
       console.error('Failed to update pickup/drop-off window:', error);
@@ -2478,9 +2325,9 @@ export class ScheduleController {
     rawValue: string
   ): Promise<void> {
     const value = rawValue.trim();
-    const row = this.gtfsParser
-      .getStopTimesByTripId(trip_id)
-      .find((st) => String(st.stop_sequence) === stopSequence);
+    const row = (await this.feed.read('stopTimesForTrip', trip_id)).find(
+      (st) => st.stop_sequence === stopSequence
+    );
     if (!row) {
       console.warn(
         `[ScheduleController] no stop_time for ${trip_id} at stop_sequence ${stopSequence}`
@@ -2488,9 +2335,7 @@ export class ScheduleController {
       return;
     }
 
-    const rowId = String(
-      row.location_group_id ?? row.location_id ?? row.stop_id ?? ''
-    );
+    const rowId = row.location_group_id || row.location_id || row.stop_id || '';
     const record = row as unknown as Record<string, unknown>;
     const current = String(record[field] ?? '');
     if (current === value) {
@@ -2507,15 +2352,7 @@ export class ScheduleController {
     }
 
     try {
-      const key = generateCompositeKeyFromRecord('stop_times', record);
-      await patchUpdate(
-        this.gtfsParser.gtfsDatabase,
-        this.patchManager,
-        'stop_times',
-        key,
-        { [field]: current },
-        { [field]: value }
-      );
+      await this.feed.apply([updateOp('stop_times', row, { [field]: value })]);
       console.log(
         `[ScheduleController] Set ${field} for ${trip_id}/${rowId} to ${value || '(empty)'}`
       );
@@ -2639,7 +2476,7 @@ export class ScheduleController {
         trip_id,
         ref,
         casted,
-        this.tripInsertIndex(data, trip_id, stopIndex),
+        await this.tripInsertIndex(data, trip_id, stopIndex),
         inherited?.shape
       );
       const newRow = plan.afterRows[plan.insertedIndex ?? 0];
@@ -2757,11 +2594,11 @@ export class ScheduleController {
 
   // ===== FREQUENCIES BAND =====
 
-  /** The trip's headway periods, straight from the parsed table. */
-  private tripFrequencyRows(trip_id: string): Record<string, unknown>[] {
-    return this.gtfsParser
-      .getFileDataSyncTyped<Record<string, unknown>>(GTFS_TABLES.FREQUENCIES)
-      .filter((row) => String(row.trip_id ?? '') === trip_id);
+  /** The trip's headway periods. */
+  private tripFrequencyRows(trip_id: string): Record<string, string>[] {
+    return this.feed
+      .table('frequencies')
+      .filter((row) => (row.trip_id ?? '') === trip_id);
   }
 
   /**
@@ -2804,16 +2641,7 @@ export class ScheduleController {
     });
   }
 
-  /**
-   * Write one field of one headway period.
-   *
-   * `start_time` is half of the composite primary key, so editing it re-keys
-   * the record: that path is a delete plus an insert recorded as one mixed
-   * batch, deletes first. `patchUpdate` looks like it works there - the virtual
-   * table re-keys `byId` in place, so the forward edit lands - but the patch's
-   * `source.id` is then the stale old key and its inverse silently drops on
-   * undo.
-   */
+  /** Write one field of one headway period. */
   private async updateFrequencyField(
     trip_id: string,
     startTime: string,
@@ -2850,31 +2678,12 @@ export class ScheduleController {
 
     try {
       const oldKey = frequencyPeriodKey(row);
-      if (field !== 'start_time') {
-        await patchUpdate(
-          this.gtfsParser.gtfsDatabase,
-          this.patchManager,
-          'frequencies',
-          oldKey,
-          { [field]: row[field] ?? null },
-          { [field]: value }
-        );
-      } else {
-        // start_time is part of the key: an update would leave the patch's
-        // source.id stale and undo would silently drop, so re-key as one
-        // delete + insert batch.
-        const newKey = frequencyPeriodKey(after);
-        await this.gtfsParser.gtfsDatabase.deleteRow('frequencies', oldKey);
-        await this.gtfsParser.gtfsDatabase.insertRows('frequencies', [after]);
-        this.invalidateCaches();
-        await this.patchManager?.recordBatchMixed(
-          [
-            { op: 'delete', table: 'frequencies', id: oldKey, record: row },
-            { op: 'insert', table: 'frequencies', id: newKey, record: after },
-          ],
-          t('sched.labelMoveHeadway', { trip: trip_id, start: value })
-        );
-      }
+      await this.feed.apply(
+        [updateOp('frequencies', row, { [field]: value })],
+        field === 'start_time'
+          ? t('sched.labelMoveHeadway', { trip: trip_id, start: value })
+          : undefined
+      );
       console.log(
         `[ScheduleController] Set ${field} of frequency ${oldKey} to ${value || '(empty)'}`
       );
@@ -2894,7 +2703,7 @@ export class ScheduleController {
   private async addFrequencyPeriod(trip_id: string): Promise<void> {
     const siblings = this.tripFrequencyRows(trip_id);
 
-    const stopTimes = this.gtfsParser.getStopTimesByTripId(trip_id);
+    const stopTimes = await this.feed.read('stopTimesForTrip', trip_id);
     const firstDeparture =
       stopTimes
         .slice()
@@ -2942,9 +2751,7 @@ export class ScheduleController {
 
     try {
       const key = frequencyPeriodKey(record);
-      await this.gtfsParser.gtfsDatabase.insertRows('frequencies', [record]);
-      this.invalidateCaches();
-      await this.patchManager?.recordInsert('frequencies', key, record);
+      await this.feed.apply([insertOp('frequencies', record)]);
       console.log(`[ScheduleController] Added headway period ${key}`);
     } catch (error) {
       console.error('Failed to add headway period:', error);
@@ -2969,9 +2776,7 @@ export class ScheduleController {
 
     try {
       const key = frequencyPeriodKey(row);
-      await this.gtfsParser.gtfsDatabase.deleteRow('frequencies', key);
-      this.invalidateCaches();
-      await this.patchManager?.recordDelete('frequencies', key, row);
+      await this.feed.apply([deleteOp('frequencies', row)]);
       console.log(`[ScheduleController] Removed headway period ${key}`);
     } catch (error) {
       console.error('Failed to remove headway period:', error);
@@ -3002,10 +2807,10 @@ export class ScheduleController {
    * data itself. Returns undefined when the caller had no strip position or the
    * timetable is not the one in hand, which leaves planStopTimeEdit appending.
    */
-  private stopTimeInsertIndex(
+  private async stopTimeInsertIndex(
     trip_id: string,
     stopIndex?: number
-  ): number | undefined {
+  ): Promise<number | undefined> {
     if (stopIndex === undefined || Number.isNaN(stopIndex)) {
       return undefined;
     }
@@ -3027,14 +2832,14 @@ export class ScheduleController {
    * `positionOf` returns null for a trip whose pattern was dropped from the
    * ordering, in which case the row degrades to an append rather than throwing.
    */
-  private tripInsertIndex(
+  private async tripInsertIndex(
     data: TimetableData,
     trip_id: string,
     stopIndex: number
-  ): number {
-    const rows = this.gtfsParser
-      .getStopTimesByTripId(trip_id)
-      .sort((a, b) => Number(a.stop_sequence) - Number(b.stop_sequence));
+  ): Promise<number> {
+    const rows = (await this.feed.read('stopTimesForTrip', trip_id)).sort(
+      (a, b) => Number(a.stop_sequence) - Number(b.stop_sequence)
+    );
     const sequence = data.sequence;
     if (!sequence) {
       return rows.length;
@@ -3110,81 +2915,29 @@ export class ScheduleController {
       );
 
     const before = new Map(plan.beforeRows.map((row) => [keyOf(row), row]));
-    const after = new Map(plan.afterRows.map((row) => [keyOf(row), row]));
+    const after = new Set(plan.afterRows.map(keyOf));
 
-    const deletes = plan.beforeRows.filter((row) => !after.has(keyOf(row)));
-    const inserts = plan.afterRows.filter((row) => !before.has(keyOf(row)));
-    const updates = plan.afterRows
-      .map((row) => ({ key: keyOf(row), row }))
-      .filter(({ key, row }) => {
-        const prev = before.get(key);
-        return prev !== undefined && changedFields(prev, row) !== null;
-      });
+    // Deletes first: a batch must never hold two rows on one trip_id +
+    // stop_sequence key.
+    const deletes = plan.beforeRows
+      .filter((row) => !after.has(keyOf(row)))
+      .map((row) => deleteOp('stop_times', row));
+    const inserts = plan.afterRows
+      .filter((row) => !before.has(keyOf(row)))
+      .map((row) => insertOp('stop_times', row));
+    const updates = plan.afterRows.map((row) => {
+      const prev = before.get(keyOf(row));
+      return prev ? updateOp('stop_times', prev, row) : null;
+    });
 
-    if (deletes.length === 0 && inserts.length === 0 && updates.length === 0) {
-      return false;
-    }
-
-    const db = this.gtfsParser.gtfsDatabase;
-    const pm = this.patchManager;
-
-    // Fast path: nothing was renumbered, so this is one row's field changing.
-    if (deletes.length === 0 && inserts.length === 0 && updates.length === 1) {
-      const { key, row } = updates[0];
-      const changes = changedFields(before.get(key)!, row)!;
-      await patchUpdate(
-        db,
-        pm,
-        'stop_times',
-        key,
-        changes.before,
-        changes.after
-      );
-      this.invalidateCaches();
-      return true;
-    }
-
-    await db.replaceRows('stop_times', [...before.keys()], plan.afterRows);
-    this.invalidateCaches();
-
-    // Deletes first: forward replay (and its reversed inverse) must never hold
-    // two rows on one trip_id + stop_sequence key.
-    await pm?.recordBatchMixed(
-      [
-        ...deletes.map((row) => ({
-          op: 'delete' as const,
-          table: 'stop_times',
-          id: keyOf(row),
-          record: row as unknown as Record<string, unknown>,
-        })),
-        ...inserts.map((row) => ({
-          op: 'insert' as const,
-          table: 'stop_times',
-          id: keyOf(row),
-          record: row as unknown as Record<string, unknown>,
-        })),
-        ...updates.map(({ key, row }) => {
-          const changes = changedFields(before.get(key)!, row)!;
-          return {
-            op: 'update' as const,
-            table: 'stop_times',
-            id: key,
-            before: changes.before,
-            after: changes.after,
-          };
-        }),
-      ],
-      label
-    );
-    return true;
+    return this.feed.apply([...deletes, ...inserts, ...updates], label);
   }
 
   /**
    * Update trip property (headsign, direction_id, wheelchair_accessible, etc.)
    *
-   * Updates a single property on a trip record.
-   * Handles type conversion for enum and number fields.
-   * Shows an error notification on failure; success is handled by the patch-manager change event.
+   * Updates a single property on a trip record. Shows an error notification
+   * on failure; the edit event re-renders on success.
    *
    * @param trip_id - GTFS trip identifier
    * @param field - Property name (e.g., 'trip_headsign', 'direction_id')
@@ -3202,47 +2955,18 @@ export class ScheduleController {
       return false;
     }
     try {
-      // Type conversion based on field
-      let processedValue: string | number | null = newValue;
-
-      // Enum fields that should be numbers
-      if (
-        ['direction_id', 'wheelchair_accessible', 'bikes_allowed'].includes(
-          field
-        )
-      ) {
-        processedValue = newValue ? parseInt(newValue, 10) : null;
-      } else if (newValue === '') {
-        // Empty string becomes null for optional fields
-        processedValue = null;
+      const trip = (await this.feed.byKeys('trips', [trip_id]))[0];
+      if (!trip) {
+        throw new Error(`trip ${trip_id} not found`);
       }
-
-      // Capture before value from in-memory data
-      const allTrips = this.gtfsParser.getFileDataSync('trips.txt');
-      const currentTrip = allTrips.find((t) => t.trip_id === trip_id) as
-        Record<string, unknown> | undefined;
-      const storedValue = currentTrip?.[field] ?? null;
-      const before = { [field]: storedValue };
-
-      // No-op guard: skip if value is unchanged
-      if (processedValue === storedValue) {
-        return true;
+      const wrote = await this.feed.apply([
+        updateOp('trips', trip, { [field]: newValue }),
+      ]);
+      if (wrote) {
+        console.log(
+          `[ScheduleController] trip ${trip_id} ${field} = ${newValue}`
+        );
       }
-
-      // Update database
-      await patchUpdate(
-        this.gtfsParser.gtfsDatabase,
-        this.patchManager,
-        'trips',
-        trip_id,
-        before,
-        { [field]: processedValue }
-      );
-
-      console.log(
-        `Updated trip property ${field} for ${trip_id} to:`,
-        processedValue
-      );
       return true;
     } catch (error) {
       console.error('Failed to update trip property:', error);
@@ -3433,19 +3157,20 @@ export class ScheduleController {
   async resolveTimetableTarget(
     partial: Partial<TimetableTarget> = {}
   ): Promise<TimetableTarget | null> {
-    const trips =
-      this.gtfsParser.getFileDataSyncTyped<Record<string, unknown>>(
-        GTFS_TABLES.TRIPS
-      ) ?? [];
+    // Keys come in trips.txt order, so the first is the first trip's route.
+    const firstRoute =
+      partial.route_id === undefined
+        ? (Object.keys(await this.feed.countBy('trips', 'route_id'))[0] ?? null)
+        : null;
     // Only fatal without a named route: there is then nothing to default to.
-    if (trips.length === 0 && partial.route_id === undefined) {
+    if (firstRoute === null && partial.route_id === undefined) {
       console.warn(
         '[ScheduleController] no trips in feed, no timetable to open'
       );
       return null;
     }
 
-    const route_id = partial.route_id ?? String(trips[0].route_id ?? '');
+    const route_id = partial.route_id ?? firstRoute ?? '';
     if (route_id === '') {
       return null;
     }
@@ -3454,8 +3179,8 @@ export class ScheduleController {
     // started, not a bad id: honour it as long as the feed defines the service.
     // Only a missing or unknown id falls back to what the route already runs,
     // then to the feed's first service for a route that runs nothing yet.
-    const services = this.servicesForRoute(route_id);
-    const allServices = this.allServices();
+    const services = await this.servicesForRoute(route_id);
+    const allServices = await this.allServices();
     const requested = partial.service_id;
     const service_id =
       requested !== undefined &&
@@ -3487,25 +3212,19 @@ export class ScheduleController {
    * id-only record. This is the feed's real service roster;
    * `servicesForRoute` is narrower by construction, since it reads trips.
    */
-  private allServices(): Map<string, Record<string, unknown>> {
+  private async allServices(): Promise<Map<string, Record<string, unknown>>> {
     const services = new Map<string, Record<string, unknown>>();
-    const calendar =
-      this.gtfsParser.getFileDataSyncTyped<Record<string, unknown>>(
-        GTFS_TABLES.CALENDAR
-      ) ?? [];
-    for (const row of calendar) {
-      const service_id = String(row.service_id ?? '');
+    for (const row of this.feed.table('calendar')) {
+      const service_id = row.service_id ?? '';
       if (service_id !== '') {
         services.set(service_id, row);
       }
     }
-    const exceptions =
-      this.gtfsParser.getFileDataSyncTyped<Record<string, unknown>>(
-        GTFS_TABLES.CALENDAR_DATES
-      ) ?? [];
-    for (const row of exceptions) {
-      const service_id = String(row.service_id ?? '');
-      if (service_id !== '' && !services.has(service_id)) {
+    for (const service_id of await this.feed.distinct(
+      'calendar_dates',
+      'service_id'
+    )) {
+      if (!services.has(service_id)) {
         services.set(service_id, { service_id });
       }
     }
@@ -3513,17 +3232,10 @@ export class ScheduleController {
   }
 
   /** Distinct service_ids this route runs, in the order trips.txt lists them. */
-  private servicesForRoute(route_id: string): string[] {
-    const trips =
-      this.gtfsParser.getFileDataSyncTyped<Record<string, unknown>>(
-        GTFS_TABLES.TRIPS
-      ) ?? [];
+  private async servicesForRoute(route_id: string): Promise<string[]> {
     const seen: string[] = [];
-    for (const trip of trips) {
-      if (String(trip.route_id ?? '') !== route_id) {
-        continue;
-      }
-      const service_id = String(trip.service_id ?? '');
+    for (const trip of await this.feed.find('trips', 'route_id', route_id)) {
+      const service_id = trip.service_id ?? '';
       if (service_id !== '' && !seen.includes(service_id)) {
         seen.push(service_id);
       }
@@ -3537,10 +3249,7 @@ export class ScheduleController {
    * always name a timetable that exists.
    */
   private async openRoutePicker(): Promise<void> {
-    const routes =
-      this.gtfsParser.getFileDataSyncTyped<Record<string, string>>(
-        GTFS_TABLES.ROUTES
-      ) ?? [];
+    const routes = this.feed.table('routes') as Record<string, string>[];
     const options: OptionPickerItem[] = routes.map((route) => {
       const display = getRouteDisplay(route);
       return {
@@ -3580,8 +3289,8 @@ export class ScheduleController {
     route_id: string,
     current_service_id?: string
   ): Promise<void> {
-    const services = this.allServices();
-    const onRoute = this.servicesForRoute(route_id);
+    const services = await this.allServices();
+    const onRoute = await this.servicesForRoute(route_id);
     const onRouteSet = new Set(onRoute);
     const ordered = [
       ...onRoute,
@@ -3620,10 +3329,7 @@ export class ScheduleController {
     });
 
     if (createNew) {
-      const service_id = await showNewServiceModal({
-        database: this.gtfsParser.gtfsDatabase,
-        patchManager: this.patchManager,
-      });
+      const service_id = await showNewServiceModal(this.feed);
       if (service_id !== null) {
         await openTimetable(route_id, service_id);
       }
@@ -3776,11 +3482,7 @@ export class ScheduleController {
       title: t('sched.newTrip'),
       id: {
         table: 'trips',
-        suggested: await nextEntityId(
-          this.gtfsParser.gtfsDatabase,
-          'trips',
-          'trip'
-        ),
+        suggested: await nextEntityId(this.feed, 'trips', 'trip'),
       },
       fields: [],
       validate: () => null,
@@ -3813,17 +3515,11 @@ export class ScheduleController {
       service_id: this.currentServiceId,
       shape_id: '',
       ...(this.currentDirectionId && {
-        direction_id: parseInt(this.currentDirectionId),
+        direction_id: this.currentDirectionId,
       }),
     };
 
-    await this.gtfsParser.gtfsDatabase.insertRows('trips', [tripData]);
-    this.invalidateCaches();
-    await this.patchManager?.recordInsert(
-      'trips',
-      trip_id,
-      tripData as Record<string, unknown>
-    );
+    await this.feed.apply([insertOp('trips', tripData)]);
     console.log('Trip saved to database:', tripData);
   }
 
@@ -3840,14 +3536,8 @@ export class ScheduleController {
     errorMessage?: string;
   }> {
     try {
-      const existingTrips = await this.gtfsParser.gtfsDatabase.queryRows(
-        'trips',
-        {
-          trip_id,
-        }
-      );
-
-      if (existingTrips.length > 0) {
+      const [existing] = await this.feed.byKeys('trips', [trip_id]);
+      if (existing) {
         return {
           isValid: false,
           errorMessage: t('sched.tripIdTaken'),
@@ -3924,26 +3614,17 @@ export class ScheduleController {
   /** The label for a picked ref, or null when it no longer exists. */
   private async refDisplayName(ref: StopTimeRef): Promise<string | null> {
     if (ref.kind === 'stop') {
-      const stops = await this.gtfsParser.gtfsDatabase.queryRows('stops', {
-        stop_id: ref.id,
-      });
-      if (stops.length === 0) {
-        return null;
-      }
-      return stops[0].stop_name || stops[0].stop_id;
+      const stop = this.feed.byKey('stops', ref.id);
+      return stop ? stop.stop_name || ref.id : null;
     }
 
     if (ref.kind === 'location') {
-      const feature = listZones(this.gtfsParser).find(
-        (f) => String(f.id) === ref.id
-      );
+      const feature = listZones(this.feed).find((f) => String(f.id) === ref.id);
       return feature ? zoneName(feature) || ref.id : null;
     }
 
-    const group = this.gtfsParser
-      .getFileDataSyncTyped<LocationGroups>(GTFS_TABLES.LOCATION_GROUPS)
-      .find((g) => String(g.location_group_id ?? '') === ref.id);
-    return group ? String(group.location_group_name || ref.id) : null;
+    const group = this.feed.byKey('location_groups', ref.id);
+    return group ? group.location_group_name || ref.id : null;
   }
 
   /**
@@ -3971,11 +3652,6 @@ export class ScheduleController {
       return;
     }
 
-    if (!this.patchManager) {
-      console.error('[ScheduleController] changeStopAtRow: no patch manager');
-      return;
-    }
-
     if (this.currentDirectionId === undefined) {
       console.error(
         '[ScheduleController] changeStopAtRow: no direction selected'
@@ -3990,32 +3666,13 @@ export class ScheduleController {
         this.currentDirectionId
       );
 
-      const ops: Array<{
-        table: string;
-        id: string;
-        before: Record<string, unknown>;
-        after: Record<string, unknown>;
-      }> = [];
-
-      for (const trip of data.trips) {
-        const stopTimes = await this.gtfsParser.gtfsDatabase.queryRows(
-          'stop_times',
-          { trip_id: trip.trip_id, stop_id: oldStopId }
-        );
-
-        for (const record of stopTimes) {
-          const id = generateCompositeKeyFromRecord(
-            'stop_times',
-            record as Record<string, unknown>
-          );
-          ops.push({
-            table: 'stop_times',
-            id,
-            before: { stop_id: oldStopId },
-            after: { stop_id: newStopId },
-          });
-        }
-      }
+      const stopTimes = await this.feed.where('stop_times', [
+        { col: 'trip_id', in: data.trips.map((trip) => trip.trip_id) },
+        { col: 'stop_id', eq: oldStopId },
+      ]);
+      const ops = stopTimes.map((record) =>
+        updateOp('stop_times', record, { stop_id: newStopId })
+      );
 
       if (ops.length === 0) {
         console.warn(
@@ -4025,12 +3682,10 @@ export class ScheduleController {
         return;
       }
 
-      const [oldStopRows, newStopRows] = await Promise.all([
-        this.gtfsParser.gtfsDatabase.queryRows('stops', { stop_id: oldStopId }),
-        this.gtfsParser.gtfsDatabase.queryRows('stops', { stop_id: newStopId }),
-      ]);
-      const oldName = oldStopRows[0]?.stop_name || oldStopId;
-      const newName = newStopRows[0]?.stop_name || newStopId;
+      const oldName =
+        this.feed.byKey('stops', oldStopId)?.stop_name || oldStopId;
+      const newName =
+        this.feed.byKey('stops', newStopId)?.stop_name || newStopId;
       const routeLabel =
         data.route.route_short_name ||
         data.route.route_long_name ||
@@ -4042,7 +3697,7 @@ export class ScheduleController {
         direction: String(this.currentDirectionId),
       });
 
-      await this.patchManager.recordBatch(ops, label);
+      await this.feed.apply(ops, label);
     } catch (error) {
       console.error('[ScheduleController] changeStopAtRow failed:', error);
       notify.error(t('sched.changeStopFailed'));
@@ -4191,8 +3846,9 @@ export class ScheduleController {
    * @param trip_id - Trip to copy
    */
   public async copyTrip(trip_id: string): Promise<void> {
-    const db = this.gtfsParser.gtfsDatabase;
-    const source = (await db.queryRows('trips', { trip_id }))[0];
+    const source = (
+      await this.feed.byKeys('trips', [trip_id])
+    )[0] as Trips | null;
     if (!source) {
       notify.error(t('sched.tripNotFound', { trip: trip_id }));
       return;
@@ -4203,7 +3859,7 @@ export class ScheduleController {
       createLabel: t('sched.copyCreate'),
       id: {
         table: 'trips',
-        suggested: await nextEntityId(db, 'trips', 'trip'),
+        suggested: await nextEntityId(this.feed, 'trips', 'trip'),
       },
       fields: [
         offsetField(),
@@ -4243,8 +3899,6 @@ export class ScheduleController {
     offsetSeconds: number,
     flip: boolean
   ): Promise<void> {
-    const db = this.gtfsParser.gtfsDatabase;
-    const pm = this.patchManager;
     const trip_id = source.trip_id;
 
     const newTrip: Trips = { ...source, trip_id: newId };
@@ -4257,7 +3911,10 @@ export class ScheduleController {
       }
     }
 
-    const sourceRows = await db.queryRows('stop_times', { trip_id });
+    const sourceRows = (await this.feed.read(
+      'stopTimesForTrip',
+      trip_id
+    )) as unknown as StopTimes[];
     sourceRows.sort(
       (a, b) => Number(a.stop_sequence) - Number(b.stop_sequence)
     );
@@ -4270,44 +3927,25 @@ export class ScheduleController {
     }
     const newRows = rows.map((st) => ({ ...st, trip_id: newId }));
 
-    const newFrequencies = (await db.queryRows('frequencies', { trip_id })).map(
-      (f) => ({
-        ...f,
-        trip_id: newId,
-        start_time: TimeFormatter.addSecondsToTime(
-          String(f.start_time ?? ''),
-          offsetSeconds
-        ),
-        end_time: TimeFormatter.addSecondsToTime(
-          String(f.end_time ?? ''),
-          offsetSeconds
-        ),
-      })
-    );
-
-    await db.insertRows('trips', [newTrip]);
-    if (newRows.length > 0) {
-      await db.insertRows('stop_times', newRows);
-    }
-    if (newFrequencies.length > 0) {
-      await db.insertRows('frequencies', newFrequencies);
-    }
-    this.invalidateCaches();
+    const newFrequencies = this.tripFrequencyRows(trip_id).map((f) => ({
+      ...f,
+      trip_id: newId,
+      start_time: TimeFormatter.addSecondsToTime(
+        String(f.start_time ?? ''),
+        offsetSeconds
+      ),
+      end_time: TimeFormatter.addSecondsToTime(
+        String(f.end_time ?? ''),
+        offsetSeconds
+      ),
+    }));
 
     const label = t('sched.labelCopy', { trip: trip_id, id: newId });
-    await pm?.recordBatchInsert(
+    await this.feed.apply(
       [
-        { table: 'trips', id: newId, record: newTrip },
-        ...newRows.map((st) => ({
-          table: 'stop_times',
-          id: generateCompositeKeyFromRecord('stop_times', st),
-          record: st,
-        })),
-        ...newFrequencies.map((f) => ({
-          table: 'frequencies',
-          id: generateCompositeKeyFromRecord('frequencies', f),
-          record: f,
-        })),
+        insertOp('trips', newTrip),
+        ...newRows.map((st) => insertOp('stop_times', st)),
+        ...newFrequencies.map((f) => insertOp('frequencies', f)),
       ],
       label
     );
@@ -4330,37 +3968,16 @@ export class ScheduleController {
    * @returns Whether the trip had a shape to clear
    */
   private async clearTripShape(trip_id: string): Promise<boolean> {
-    const db = this.gtfsParser.gtfsDatabase;
-    const trip = (await db.queryRows('trips', { trip_id }))[0] as
-      Record<string, unknown> | undefined;
+    const trip = (await this.feed.byKeys('trips', [trip_id]))[0];
     if (!trip?.shape_id) {
       return false;
     }
-
-    await patchUpdate(
-      db,
-      this.patchManager,
-      'trips',
-      trip_id,
-      { shape_id: trip.shape_id },
-      { shape_id: '' }
-    );
-    this.invalidateCaches();
+    await this.feed.apply([updateOp('trips', trip, { shape_id: '' })]);
     return true;
   }
 
   async handleDeleteTrip(trip_id: string): Promise<void> {
-    const db = this.gtfsParser.gtfsDatabase;
-    const pm = this.patchManager;
-    if (!pm) {
-      console.warn(
-        '[ScheduleController] handleDeleteTrip: missing patchManager'
-      );
-      return;
-    }
-
-    const trips = await db.queryRows('trips', { trip_id });
-    const trip = trips[0] as Record<string, unknown> | undefined;
+    const trip = (await this.feed.byKeys('trips', [trip_id]))[0];
     if (!trip) {
       console.warn(
         '[ScheduleController] handleDeleteTrip: trip not found',
@@ -4369,29 +3986,9 @@ export class ScheduleController {
       return;
     }
 
-    const stopTimes = (await db.queryRows('stop_times', { trip_id })) as Record<
-      string,
-      unknown
-    >[];
+    const stopTimes = await this.feed.read('stopTimesForTrip', trip_id);
 
     const doDelete = async () => {
-      const stopTimeKeys = stopTimes.map((st) =>
-        generateCompositeKeyFromRecord('stop_times', st)
-      );
-      if (stopTimeKeys.length > 0) {
-        await db.deleteRows('stop_times', stopTimeKeys);
-      }
-      await db.deleteRow('trips', trip_id);
-      this.invalidateCaches();
-
-      const ops = [
-        ...stopTimes.map((st) => ({
-          table: 'stop_times',
-          id: generateCompositeKeyFromRecord('stop_times', st),
-          record: st,
-        })),
-        { table: 'trips', id: trip_id, record: trip },
-      ];
       const label =
         stopTimes.length > 0
           ? t('delete.cascade', {
@@ -4399,7 +3996,13 @@ export class ScheduleController {
               parts: t('count.stopTimes', { count: stopTimes.length }),
             })
           : t('sched.deleteTripLabel', { trip: trip_id });
-      await pm.recordBatchDelete(ops, label);
+      await this.feed.apply(
+        [
+          ...stopTimes.map((st) => deleteOp('stop_times', st)),
+          deleteOp('trips', trip),
+        ],
+        label
+      );
 
       console.log(
         `[ScheduleController] Deleted trip ${trip_id}${stopTimes.length > 0 ? ` and ${stopTimes.length} stop_times` : ''}`

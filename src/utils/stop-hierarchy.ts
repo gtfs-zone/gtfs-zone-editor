@@ -6,8 +6,7 @@
  * expand the stop into its whole descendant subtree first, or a station looks
  * like it has no service at all.
  */
-import type { Stops } from '../types/gtfs';
-import type { QueryOnlyDatabase } from './field-component';
+import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 
 /** station -> platform -> boarding area is the deepest legal nesting. */
 const MAX_DEPTH = 3;
@@ -21,23 +20,32 @@ const MAX_DEPTH = 3;
  * included even when the stops table has no row for it, in which case only the
  * id is known and the array is empty.
  */
-export async function collectDescendantStops(
-  db: QueryOnlyDatabase,
+export function collectDescendantStops(
+  feed: EditorFeed,
   stop_id: string
-): Promise<Stops[]> {
-  const rootRows = (await db.queryRows('stops', { stop_id })) as Stops[];
-  const collected: Stops[] = [...rootRows];
+): FeedRow[] {
+  const root = feed.byKey('stops', stop_id);
+  const collected: FeedRow[] = root ? [root] : [];
+  const children = new Map<string, FeedRow[]>();
+  for (const stop of feed.table('stops')) {
+    const parent = stop.parent_station ?? '';
+    if (parent !== '') {
+      const list = children.get(parent);
+      if (list) {
+        list.push(stop);
+      } else {
+        children.set(parent, [stop]);
+      }
+    }
+  }
   const visited = new Set<string>([stop_id]);
 
   let frontier = [stop_id];
   for (let depth = 0; depth < MAX_DEPTH && frontier.length > 0; depth++) {
     const next: string[] = [];
     for (const parentId of frontier) {
-      const children = (await db.queryRows('stops', {
-        parent_station: parentId,
-      })) as Stops[];
-      for (const child of children) {
-        const childId = String(child.stop_id);
+      for (const child of children.get(parentId) ?? []) {
+        const childId = child.stop_id;
         if (visited.has(childId)) {
           console.warn(
             `[StopHierarchy] Cycle in parent_station: ${childId} is already an ancestor of itself under ${stop_id}, skipping.`

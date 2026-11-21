@@ -74,6 +74,7 @@ export const shell: Translation<typeof en> = {
   'history.op.update': 'modif.',
   'history.op.delete': 'suppr.',
   'history.op.batch': 'lot',
+  'history.op.file': 'fichier',
   'history.origin': 'origine',
   'history.feedLoaded': 'Flux chargé',
   'files.title': 'Fichiers',
@@ -83,8 +84,11 @@ export const shell: Translation<typeof en> = {
   'files.editing': 'Modification :',
   'files.rawNote':
     "Hors spécification GTFS. Conservé tel quel à l'export. Les modifications ici sont enregistrées immédiatement et ne peuvent pas être annulées.",
+  'files.readOnlyNote':
+    "Hors spécification GTFS. Affiché en lecture seule et conservé tel quel à l'export.",
   'files.saved': '{name} enregistré',
   'files.loadingTable': 'Chargement des données de la table...',
+  'files.firstRows': 'Affichage des {shown} premières lignes sur {total}.',
   'files.noData': 'Aucune donnée disponible',
   'files.tableError': 'Erreur de chargement des données de la table',
   'levels.title': 'Niveaux',

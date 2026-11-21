@@ -272,14 +272,6 @@ export function getGTFSPrimaryKey(
 }
 
 /**
- * Check if a table uses a natural (single field) primary key
- */
-export function isNaturalKey(tableName: string): boolean {
-  const config = getGTFSPrimaryKey(tableName);
-  return config?.type === 'natural';
-}
-
-/**
  * Get the natural key field name for tables with single-field primary keys
  */
 export function getNaturalKeyField(tableName: string): string | null {

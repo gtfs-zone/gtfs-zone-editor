@@ -10,7 +10,6 @@ export const pages: Translation<typeof en> = {
   'page.cleanFeed':
     'Alles in Ordnung? Exportieren und veröffentlichen Sie Ihren Feed.',
   'page.publishingGuide': 'Anleitung zur Veröffentlichung',
-  'page.noPatchManager': 'Kein Patch-Manager verfügbar',
   'page.trimAllTitle':
     'start_date jedes Service auf {date} setzen und alle Ausnahmen davor entfernen',
   'page.extendAllTitle':
@@ -25,6 +24,11 @@ export const pages: Translation<typeof en> = {
   'page.trimAll': 'Alle auf Feed-Beginn kürzen',
   'page.extendAll': 'Alle bis Feed-Ende verlängern',
   'page.newService': '+ Neuer Service',
+  'page.servicesActiveToday': '{count} heute in Betrieb',
+  'page.filterServices': 'Nach service_id filtern',
+  'page.noServiceMatch': 'Keine service_id enthält „{filter}“.',
+  'page.issuesChecking': 'Feed wird auf Probleme geprüft...',
+  'page.noFeedOpen': 'Kein Feed geöffnet.',
   'page.noServices': 'Keine Services in den GTFS-Daten gefunden.',
   'page.feedInfo': 'Feed-Informationen',
   'page.timetable': 'Fahrplan',

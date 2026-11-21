@@ -20,13 +20,11 @@ import {
 } from '../utils/whitespace-fix';
 import { deleteTrips, describeTripDelete } from '../utils/trip-delete';
 import { getEntityDisplay, renderOptionLabel } from '../utils/entity-display';
-import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
+import type { EditorFeed } from '../feed/editor-feed';
 import { t } from '../i18n/messages';
 
-/** Rows for the entity labels. Just the parser's sync read, narrowed. */
-export interface FeedIssueRowSource {
-  getFileDataSync(fileName: string): Record<string, unknown>[];
-}
+/** Rows for the entity labels: the feed's mirrors. */
+export type FeedIssueRowSource = EditorFeed;
 
 /**
  * What `refreshFeedIssuesIfStale` needs to re-run a pass on its own: the
@@ -38,9 +36,6 @@ export interface FeedIssueRevalidator {
   source: FeedIssueRowSource;
   getStalenessKey(): string;
 }
-
-/** Most entities a single issue row lists before it collapses into a tail. */
-const MAX_ITEMS = 12;
 
 /**
  * Files whose rows have their own page, and the page-state key to navigate by.
@@ -150,7 +145,7 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
           describeTripDelete(
             await deleteTrips(
               entities.map((entity) => entity.id),
-              deps
+              deps.feed
             )
           ),
       },
@@ -190,7 +185,7 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
             values: t('issues.values', { count: entities.length }),
           }),
         run: async (entities, deps) =>
-          describeWhitespaceFix(await applyWhitespaceFix(entities, deps)),
+          describeWhitespaceFix(await applyWhitespaceFix(entities, deps.feed)),
       },
     ],
   },
@@ -198,6 +193,10 @@ const ISSUE_KINDS: Record<string, IssueKind> = {
   FREQUENCY_OVERLAP: { label: rowsLabel(t('issues.frequencyOverlap')) },
   FREQUENCY_END_AMBIGUOUS: {
     label: rowsLabel(t('issues.frequencyEnd')),
+  },
+  UNKNOWN_FILE: {
+    label: (group) => t('issues.unknownFile', { file: group.file }),
+    note: () => t('issues.unknownFileNote'),
   },
 };
 
@@ -223,22 +222,13 @@ let currentIssues: IssueRow[] = [];
 
 /**
  * Every group the last pass produced, keyed by `file:code:field`, with its full
- * entity list. The issue rows cap their item lists at MAX_ITEMS for display;
- * an action and the full list have to see all of them, so they read this.
+ * entity list, for the row actions.
  */
 const groupsByKey = new Map<string, IssueGroup>();
 
-/** The rows the published groups were labelled from. */
-let publishedSource: FeedIssueRowSource | undefined;
-
-/** One group of the last pass, uncapped. */
+/** One group of the last pass. */
 export function getFeedIssueGroup(key: string): IssueGroup | undefined {
   return groupsByKey.get(key);
-}
-
-/** Every group of the last pass, largest first. */
-export function getFeedIssueGroups(): IssueGroup[] {
-  return [...groupsByKey.values()];
 }
 
 /** The actions a group's row offers. None without entities to act on. */
@@ -277,7 +267,7 @@ export interface IssueGroup {
   entities: ValidationEntity[];
 }
 
-/** `data-issue-key` of a group's row, its buttons and its full-list pane. */
+/** `data-issue-key` of a group's row and its buttons. */
 export function groupKey(group: IssueGroup): string {
   return `${group.file}:${group.code}:${group.field}`;
 }
@@ -327,13 +317,18 @@ export function deriveFeedIssues(
 ): IssueRow[] {
   const index = new RowIndex(source);
   return groups.map((group) => {
-    const shown = group.entities.slice(0, MAX_ITEMS);
     const row: IssueRow = {
       ...feedIssueGroupLabel(group),
       key: groupKey(group),
       count: group.count,
-      items: shown.map((entity) => buildIssueItem(entity, index)),
-      moreCount: group.entities.length - shown.length,
+      // Labels are built per page as the open row scrolls.
+      items: {
+        count: group.entities.length,
+        page: (start, end) =>
+          group.entities
+            .slice(start, end)
+            .map((entity) => buildIssueItem(entity, index)),
+      },
     };
     const actions = getIssueActions(group);
     if (actions.length > 0) {
@@ -344,12 +339,6 @@ export function deriveFeedIssues(
     }
     return row;
   });
-}
-
-/** Every item of one group, uncapped, for the full list. */
-export function getFeedIssueItems(group: IssueGroup): IssueItem[] {
-  const index = new RowIndex(publishedSource);
-  return group.entities.map((entity) => buildIssueItem(entity, index));
 }
 
 /**
@@ -438,33 +427,25 @@ export function formatIssueValue(value: string): string {
   return value;
 }
 
-/** Lazily indexes a file's rows by primary key, one file at a time. */
+/**
+ * Rows by file and primary key, from the mirrors. A worker-only table gives
+ * no row, so its issues are labelled by id.
+ */
 class RowIndex {
-  private source?: FeedIssueRowSource;
-  private byFile = new Map<string, Map<string, Record<string, unknown>>>();
-
-  constructor(source?: FeedIssueRowSource) {
-    this.source = source;
-  }
+  constructor(private readonly source?: FeedIssueRowSource) {}
 
   get(file: string, id: string): Record<string, unknown> | undefined {
     if (!this.source || id === '') {
       return undefined;
     }
-    let rows = this.byFile.get(file);
-    if (!rows) {
-      rows = new Map();
-      const tableName = file.replace(/\.txt$/, '');
-      for (const row of this.source.getFileDataSync(file)) {
-        try {
-          rows.set(generateCompositeKeyFromRecord(tableName, row), row);
-        } catch {
-          // Rows missing their primary key are unreachable by id anyway.
-        }
-      }
-      this.byFile.set(file, rows);
+    if (!file.endsWith('.txt')) {
+      return undefined;
     }
-    return rows.get(id);
+    const table = file.slice(0, -'.txt'.length);
+    if (!this.source.isMirrored(table)) {
+      return undefined;
+    }
+    return this.source.byKey(table, id) ?? undefined;
   }
 }
 
@@ -513,7 +494,6 @@ function publishFeedIssues(
   for (const group of groups) {
     groupsByKey.set(groupKey(group), group);
   }
-  publishedSource = source;
 
   const issues = deriveFeedIssues(groups, source);
   setFeedIssues(issues);
@@ -524,6 +504,11 @@ function publishFeedIssues(
 
 export function setFeedIssueRevalidator(next: FeedIssueRevalidator): void {
   revalidator = next;
+}
+
+/** Whether the published issues are behind the feed (a pass is due). */
+export function feedIssuesNeedRefresh(): boolean {
+  return revalidator !== null && revalidator.getStalenessKey() !== validatedKey;
 }
 
 /**

@@ -485,18 +485,6 @@ export function generateFieldConfigsFromSchema(
 }
 
 /**
- * Minimal database interface required by view controllers (read-only queries).
- * Using this type in view controller dependencies prevents accidentally wiring
- * up write operations (updateRow) that should go through patchManager instead.
- */
-export interface QueryOnlyDatabase {
-  queryRows: (
-    tableName: string,
-    filter?: Record<string, unknown>
-  ) => Promise<unknown[]>;
-}
-
-/**
  * Generate human-readable label from snake_case field name
  */
 function generateLabel(fieldName: string): string {

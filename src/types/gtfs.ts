@@ -42,8 +42,6 @@ export const GTFS_FILES = deriveGTFSFileInfos(
 
 // ─── Individual schema exports (backward compat) ───────────────────────────────
 
-export const AgencySchema = GTFSSchemas['agency.txt'];
-export const RoutesSchema = GTFSSchemas['routes.txt'];
 export const TripsSchema = GTFSSchemas['trips.txt'];
 export const StopTimesSchema = GTFSSchemas['stop_times.txt'];
 export const CalendarSchema = GTFSSchemas['calendar.txt'];
@@ -51,15 +49,7 @@ export const CalendarSchema = GTFSSchemas['calendar.txt'];
 // ─── Individual type exports ───────────────────────────────────────────────────
 // Re-exported from gtfs-entities for consumers that import types from this module.
 
-export type {
-  Agency,
-  Stops,
-  Routes,
-  Trips,
-  StopTimes,
-  Calendar,
-  Pathways,
-} from './gtfs-entities';
+export type { Agency, Stops, Routes, Pathways } from './gtfs-entities';
 
 // ─── Table name constants ──────────────────────────────────────────────────────
 // Kept as a literal `as const` object so consumers get narrow string literal

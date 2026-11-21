@@ -40,7 +40,6 @@ export const MODAL_TYPES = [
   'translations',
   'attributions',
   'levels',
-  'feed_issues',
   'files',
 ] as const;
 
@@ -65,10 +64,7 @@ export type PaneModalType = Exclude<ModalType, 'timetable'>;
 export type PaneModalState = {
   [T in PaneModalType]: {
     type: T;
-    /**
-     * Which pane a multi-table modal opens on. For feed_issues, the
-     * `file:code:field` key of the issue group.
-     */
+    /** Which pane a multi-table modal opens on. */
     table?: string;
   };
 }[PaneModalType];

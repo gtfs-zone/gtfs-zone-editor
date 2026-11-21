@@ -7,7 +7,7 @@
  * platform is actually in cannot be read off its own rows alone.
  */
 
-import type { QueryOnlyDatabase } from './field-component';
+import type { EditorFeed } from '../feed/editor-feed';
 
 export interface EffectiveArea {
   area_id: string;
@@ -34,7 +34,7 @@ export function canStopHaveAreas(stop: Record<string, unknown>): boolean {
   return type === 0 || type === 1;
 }
 
-function uniqueAreaIds(rows: Record<string, unknown>[]): string[] {
+function uniqueAreaIds(rows: readonly Record<string, unknown>[]): string[] {
   const seen = new Set<string>();
   for (const row of rows) {
     const area_id = String(row.area_id ?? '').trim();
@@ -46,14 +46,13 @@ function uniqueAreaIds(rows: Record<string, unknown>[]): string[] {
 }
 
 /** The `stop_areas` rows naming this stop directly. */
-export async function getExplicitAreasForStop(
-  db: QueryOnlyDatabase,
+export function getExplicitAreasForStop(
+  feed: EditorFeed,
   stop_id: string
-): Promise<string[]> {
-  const rows = (await db.queryRows('stop_areas', {
-    stop_id,
-  })) as Record<string, unknown>[];
-  return uniqueAreaIds(rows);
+): string[] {
+  return uniqueAreaIds(
+    feed.table('stop_areas').filter((row) => row.stop_id === stop_id)
+  );
 }
 
 /**
@@ -63,20 +62,16 @@ export async function getExplicitAreasForStop(
  * platform to an area is what the spec means by overriding the station's, so
  * the two sets never mix.
  */
-export async function getEffectiveAreasForStop(
-  db: QueryOnlyDatabase,
+export function getEffectiveAreasForStop(
+  feed: EditorFeed,
   stop_id: string
-): Promise<EffectiveArea[]> {
-  const explicit = await getExplicitAreasForStop(db, stop_id);
+): EffectiveArea[] {
+  const explicit = getExplicitAreasForStop(feed, stop_id);
   if (explicit.length > 0) {
     return explicit.map((area_id) => ({ area_id }));
   }
 
-  const stops = (await db.queryRows('stops', { stop_id })) as Record<
-    string,
-    unknown
-  >[];
-  const stop = stops[0];
+  const stop = feed.byKey('stops', stop_id);
   if (!stop || stopLocationType(stop) !== 0) {
     return [];
   }
@@ -85,7 +80,7 @@ export async function getEffectiveAreasForStop(
     return [];
   }
 
-  const inherited = await getExplicitAreasForStop(db, parent_station);
+  const inherited = getExplicitAreasForStop(feed, parent_station);
   return inherited.map((area_id) => ({
     area_id,
     inheritedFrom: parent_station,

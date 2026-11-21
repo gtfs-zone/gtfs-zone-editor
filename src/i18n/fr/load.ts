@@ -20,11 +20,9 @@ export const load: Translation<typeof en> = {
   'help.continueShapes': 'Continuer vers les tracés',
   'help.continueFares': 'Continuer vers les tarifs',
   'help.continueOnDemand': 'Continuer vers le transport à la demande',
+  'load.openedStored': '{name} ouvert',
+  'load.openStoredFailed': "Impossible d'ouvrir le flux enregistré - {message}",
   'load.linkedFeed': 'Flux lié',
-  'load.linkedOverEdits_one':
-    'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modification qui serait perdue. Continuez avec celui-ci, ou chargez le flux du lien.',
-  'load.linkedOverEdits_other':
-    'Ce lien ouvre un autre flux. Le flux enregistré dans ce navigateur contient {count} modifications qui seraient perdues. Continuez avec celui-ci, ou chargez le flux du lien.',
   'load.replaceTitle': 'Remplacer le flux actuel ?',
   'load.replaceBody_one':
     "Le flux actuel contient {count} modification. Charger un autre flux l'efface, ainsi que l'historique d'annulation. Exportez d'abord pour en garder une copie.",
@@ -69,6 +67,8 @@ export const load: Translation<typeof en> = {
     "Aucune donnée GTFS à exporter. Ajoutez d'abord des données.",
   'export.preparing': "Préparation de l'export GTFS...",
   'export.done': 'Données GTFS exportées.',
+  'export.writing': 'Écriture de {file}...',
+  'export.cancelled': 'Export annulé.',
   'export.failed': "Échec de l'export des données GTFS : {message}",
   'db.contextInit': "l'initialisation",
   'db.unknownError': 'Erreur inconnue',
@@ -77,6 +77,11 @@ export const load: Translation<typeof en> = {
   'db.stackTrace': 'Trace de pile (pour les développeurs)',
   'db.exportClear': 'Exporter et vider',
   'db.clearReload': 'Vider et recharger',
+  'db.recoveryFailed': "Le flux enregistré n'a pas pu être exporté : {message}",
+  'db.recoveryPartialTitle': "Il manque des modifications dans l'export",
+  'db.recoveryPartial':
+    "L'export téléchargé contient {applied} modifications sur {total} : la suivante ne s'applique plus ({message}). Vider supprime le flux enregistré et tout son historique de modifications.",
+  'db.keepStored': 'Garder le flux enregistré',
   'db.errorTitle': 'Erreur de base de données',
   'db.resetTitle': 'Réinitialiser la base de données',
   'db.resetBody':
@@ -119,6 +124,15 @@ export const load: Translation<typeof en> = {
   'parse.downloading': 'Téléchargement du flux...',
   'parse.readingFile': 'Lecture du fichier...',
   'parse.saving': 'Enregistrement du flux...',
+  'parse.readingProgress': '{name} : {done} sur {total}',
+  'parse.readingProgressNoTotal': '{name} : {done}',
+  'parse.compacting': "Compactage de l'historique des modifications...",
+  'parse.foldFailed':
+    "L'historique des modifications n'a pas pu être compacté : {message}. Le flux est ouvert tel quel ; le compactage sera relancé au prochain démarrage.",
+  'parse.quotaFull':
+    "Le navigateur n'a plus d'espace de stockage, la dernière modification n'a donc pas été enregistrée. Supprimez les flux inutiles depuis la fenêtre de chargement, ou libérez de l'espace disque.",
+  'parse.sessionOnly':
+    "Ce navigateur ne permet pas à GTFS.zone d'enregistrer des flux ici (par exemple en navigation privée). Les modifications durent jusqu'à la fermeture de cet onglet : exportez le flux pour les conserver.",
   'parse.networkConflict_one':
     'Ce flux définit des réseaux dans networks.txt ou route_networks.txt et renseigne aussi network_id sur {count} ligne de routes.txt. GTFS interdit les deux : les valeurs de routes.network_id sont ignorées et ne seront pas exportées.',
   'parse.networkConflict_other':

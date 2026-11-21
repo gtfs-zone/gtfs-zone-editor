@@ -6,58 +6,46 @@
  */
 
 import { PageStateManager, initPageStateManager } from './page-state-manager';
-import {
-  GTFSBreadcrumbLookup,
-  createGTFSBreadcrumbLookup,
-} from './gtfs-breadcrumb-lookup';
-import { GTFSParser } from './gtfs-parser';
-import { GTFSRelationships } from './gtfs-relationships';
+import { createGTFSBreadcrumbLookup } from './gtfs-breadcrumb-lookup';
+import type { EditorFeed } from '../feed/editor-feed';
 import { getZoneFeature } from './zone-store';
-
-let globalBreadcrumbLookup: GTFSBreadcrumbLookup | null = null;
 
 /**
  * Initialize the page state system with GTFS integration
  */
 export function initializePageStateWithGTFS(
-  gtfsParser: GTFSParser,
-  relationships: GTFSRelationships
+  feed: EditorFeed
 ): PageStateManager {
-  // Create breadcrumb lookup
-  globalBreadcrumbLookup = createGTFSBreadcrumbLookup(gtfsParser.getDatabase());
-
   // Initialize PageStateManager with hash-based URL sync enabled
   const pageStateManager = initPageStateManager({ enableUrlSync: true });
 
-  // Set up breadcrumb lookup
-  pageStateManager.setBreadcrumbLookup(globalBreadcrumbLookup);
+  pageStateManager.setBreadcrumbLookup(createGTFSBreadcrumbLookup(feed));
 
   // Inject state validator so restored hash states are checked against live data
   pageStateManager.setStateValidator(async (state) => {
+    if (!feed.isOpen) {
+      return state.type === 'home';
+    }
     switch (state.type) {
       case 'route':
-        return (await relationships.getRouteByIdAsync(state.route_id)) !== null;
+        return feed.byKey('routes', state.route_id) !== null;
       case 'stop':
-        return (await relationships.getStopByIdAsync(state.stop_id)) !== null;
+        return feed.byKey('stops', state.stop_id) !== null;
       case 'agency':
-        return (
-          (await relationships.getAgencyByIdAsync(state.agency_id)) !== null
-        );
+        return feed.byKey('agency', state.agency_id) !== null;
       case 'service':
         return (
-          (await relationships.getCalendarForServiceAsync(state.service_id)) !==
-          null
+          feed.byKey('calendar', state.service_id) !== null ||
+          (await feed.findOne(
+            'calendar_dates',
+            'service_id',
+            state.service_id
+          )) !== null
         );
       case 'zone':
-        return getZoneFeature(gtfsParser, state.location_id) !== null;
+        return getZoneFeature(feed, state.location_id) !== null;
       case 'location_group':
-        return (
-          (
-            await gtfsParser.getDatabase().queryRows('location_groups', {
-              location_group_id: state.location_group_id,
-            })
-          ).length > 0
-        );
+        return feed.byKey('location_groups', state.location_group_id) !== null;
       default:
         return true;
     }

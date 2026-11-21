@@ -6,7 +6,7 @@
  * toggles are the service page's own, committing into a draft record that
  * Create writes as one insert.
  *
- * The row is written and recorded here, so the caller only has to deal with the
+ * The row is written here, so the caller only has to deal with the
  * new service_id it resolves with.
  */
 
@@ -17,30 +17,14 @@ import {
   createDefaultService,
   defaultServiceRange,
 } from '../utils/default-values';
-import type { FeedBoundsSource } from '../utils/feed-bounds';
+import type { EditorFeed } from '../feed/editor-feed';
+import { insertOp } from '../feed/patch-build';
 import {
   renderWeekdayToggles,
   setWeekdayToggle,
 } from '../utils/weekday-toggles';
 import { setDraftValue } from '../utils/inline-editable-field';
 import { t } from '../i18n/messages';
-
-export interface NewServiceModalDeps {
-  database: FeedBoundsSource & {
-    getAllRows: (tableName: string) => Promise<unknown[]>;
-    insertRows: (
-      tableName: string,
-      rows: Record<string, unknown>[]
-    ) => Promise<void>;
-  };
-  patchManager: {
-    recordInsert: (
-      table: string,
-      id: string,
-      record: Record<string, unknown>
-    ) => Promise<void>;
-  } | null;
-}
 
 /**
  * Ask for a new service and write it.
@@ -50,13 +34,10 @@ export interface NewServiceModalDeps {
  * dates is legal, and the service page can add those afterwards.
  */
 export async function showNewServiceModal(
-  deps: NewServiceModalDeps
+  feed: EditorFeed
 ): Promise<string | null> {
-  const suggested = await nextServiceId(deps.database);
-  const defaults = createDefaultService(
-    suggested,
-    await defaultServiceRange(deps.database)
-  );
+  const suggested = await nextServiceId(feed);
+  const defaults = createDefaultService(suggested, defaultServiceRange(feed));
 
   let service_id: string | null = null;
 
@@ -67,14 +48,10 @@ export async function showNewServiceModal(
       table: 'calendar',
       suggested,
       // nextServiceId skips these, so a typed ID has to as well.
-      taken: async (id) => {
-        const exceptions = (await deps.database.getAllRows(
-          'calendar_dates'
-        )) as Record<string, unknown>[];
-        return exceptions.some((row) => String(row.service_id ?? '') === id)
+      taken: async (id) =>
+        (await feed.findOne('calendar_dates', 'service_id', id))
           ? t('newSvc.idHasExceptions', { id })
-          : null;
-      },
+          : null,
     },
     fields: [
       {
@@ -128,14 +105,7 @@ export async function showNewServiceModal(
     onCreate: async (v, row) => {
       const id = v.service_id;
       console.log('[NewServiceModal] creating service', id, row);
-      await deps.database.insertRows('calendar', [row]);
-      if (deps.patchManager) {
-        await deps.patchManager.recordInsert('calendar', id, row);
-      } else {
-        console.warn(
-          '[NewServiceModal] no patchManager wired, the insert is not undoable'
-        );
-      }
+      await feed.apply([insertOp('calendar', row)]);
 
       service_id = id;
       notify.success(t('newSvc.created', { id }));
