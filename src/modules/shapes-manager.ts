@@ -44,7 +44,12 @@ import { t } from '../i18n/messages';
 import { getLocale } from 'gtfs-zone-web-common/i18n/index';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 import { CONFIG } from '../config';
-import { renderModalLoading, renderShowMore } from '../utils/modal-loading';
+import { renderModalLoading } from '../utils/modal-loading';
+import {
+  bindListSearch,
+  mountLazyList,
+  type LazyList,
+} from 'gtfs-zone-web-common/ui/lazy-list';
 
 /**
  * The stops of the simplify slider, in metres of allowed deviation. The
@@ -96,7 +101,6 @@ interface ShapeRowDetail {
 interface ShapesView {
   shapes: Map<string, ShapeUsage>;
   ids: string[];
-  shown: number;
 }
 
 function pickFile(accept: string): Promise<File | null> {
@@ -757,18 +761,8 @@ function renderRow(shapeId: string, usage: ShapeUsage): string {
     </tr>`;
 }
 
-/** The next page of rows, advancing `view.shown`; returns the ids drawn. */
-function nextPage(view: ShapesView): { html: string; ids: string[] } {
-  const end = Math.min(view.ids.length, view.shown + CONFIG.MODAL_LIST_ROWS);
-  const ids = view.ids.slice(view.shown, end);
-  view.shown = end;
-  return {
-    html: ids.map((id) => renderRow(id, view.shapes.get(id)!)).join(''),
-    ids,
-  };
-}
-
-function renderBody(view: ShapesView, rowsHtml: string): string {
+/** The panel with an empty table body for the lazy rows. */
+function renderBody(view: ShapesView, needle: string): string {
   const uploadBtn = `<button class="btn btn-sm btn-primary" data-action="new">${renderUploadIcon()} ${t('shapes.upload')}</button>`;
   const helpText = `
     <p class="text-base-content/60 text-sm mb-4">
@@ -790,6 +784,8 @@ function renderBody(view: ShapesView, rowsHtml: string): string {
 
   return `
     ${helpText}
+    <input type="search" class="input input-sm w-64 mb-2" data-shapes-search
+      placeholder="${escapeHtml(t('shapes.search'))}" value="${escapeHtml(needle)}" />
     ${renderScrollableTable(
       [
         t('shapes.colId'),
@@ -799,9 +795,8 @@ function renderBody(view: ShapesView, rowsHtml: string): string {
         t('shapes.colTimetables'),
         t('shapes.colActions'),
       ],
-      rowsHtml
+      ''
     )}
-    <div data-show-more-slot>${renderShowMore(view.ids.length - view.shown, CONFIG.MODAL_LIST_ROWS)}</div>
     <div class="mt-4 flex gap-2">
       ${uploadBtn}
       ${simplifyAllBtn}
@@ -901,7 +896,9 @@ export class ShapesManager {
   }
 
   async open(): Promise<void> {
-    let view: ShapesView = { shapes: new Map(), ids: [], shown: 0 };
+    let view: ShapesView = { shapes: new Map(), ids: [] };
+    let list: LazyList<string> | null = null;
+    let needle = '';
 
     await showModal({
       title: t('shapes.title'),
@@ -915,6 +912,41 @@ export class ShapesManager {
           return;
         }
 
+        /** Draw the panel and mount its lazy rows. */
+        const renderPanel = (): void => {
+          list?.destroy();
+          list = null;
+          panel.innerHTML = renderBody(view, needle);
+          const tbody = panel.querySelector<HTMLElement>('tbody');
+          if (!tbody) {
+            return;
+          }
+          list = mountLazyList<string>(tbody, {
+            name: 'shapes',
+            items: view.ids,
+            pageSize: CONFIG.MODAL_LIST_ROWS,
+            renderPage: (slice) =>
+              slice
+                .map((id) => {
+                  const usage = view.shapes.get(id);
+                  return usage ? renderRow(id, usage) : '';
+                })
+                .join(''),
+            afterAppend: (_nodes, slice) => this.fillRowDetails(panel, slice),
+            match: (id, value) => id.toLowerCase().includes(value),
+          });
+          list.setNeedle(needle);
+          const input = panel.querySelector<HTMLInputElement>(
+            '[data-shapes-search]'
+          );
+          if (input) {
+            bindListSearch(input, (value) => {
+              needle = value;
+              list?.setNeedle(value);
+            });
+          }
+        };
+
         const refreshPanel = async () => {
           const t0 = performance.now();
           const shapes = await this.getShapes();
@@ -922,42 +954,20 @@ export class ShapesManager {
             console.log('[ShapesManager] closed before shapes landed, dropped');
             return;
           }
-          // A refresh after an edit keeps as many rows on screen as before.
-          const keep = view.shown;
+          const hadShapes = view.ids.length > 0;
           view = {
             shapes,
             ids: [...shapes.keys()].sort((a, b) => a.localeCompare(b)),
-            shown: 0,
           };
-          let html = '';
-          const ids: string[] = [];
-          do {
-            const page = nextPage(view);
-            html += page.html;
-            ids.push(...page.ids);
-          } while (view.shown < Math.min(keep, view.ids.length));
-          panel.innerHTML = renderBody(view, html);
-          console.log(
-            `[ShapesManager] panel: ${view.shown}/${view.ids.length} shapes drawn in ${Math.round(performance.now() - t0)}ms`
-          );
-          await this.fillRowDetails(panel, ids);
-        };
-
-        const showMore = async () => {
-          const page = nextPage(view);
-          panel
-            .querySelector('tbody')
-            ?.insertAdjacentHTML('beforeend', page.html);
-          const slot = panel.querySelector<HTMLElement>(
-            '[data-show-more-slot]'
-          );
-          if (slot) {
-            slot.innerHTML = renderShowMore(
-              view.ids.length - view.shown,
-              CONFIG.MODAL_LIST_ROWS
-            );
+          // A refresh after an edit keeps the rows on screen and the scroll.
+          if (list && hadShapes && view.ids.length > 0) {
+            list.setItems(view.ids, { keep: true });
+          } else {
+            renderPanel();
           }
-          await this.fillRowDetails(panel, page.ids);
+          console.log(
+            `[ShapesManager] panel: ${view.ids.length} shapes in ${Math.round(performance.now() - t0)}ms`
+          );
         };
 
         const onError = (error: unknown) => {
@@ -966,10 +976,6 @@ export class ShapesManager {
         };
 
         panel.addEventListener('click', (e: Event) => {
-          if ((e.target as HTMLElement).closest('[data-show-more]')) {
-            showMore().catch(onError);
-            return;
-          }
           const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
             '[data-action]'
           );
