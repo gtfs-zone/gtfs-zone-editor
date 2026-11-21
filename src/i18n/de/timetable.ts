@@ -81,6 +81,8 @@ export const timetable: Translation<typeof en> = {
   'tt.browserTitle': 'Fahrpläne',
   'tt.noAgency': 'Kein Verkehrsunternehmen',
   'tt.noRoutes': 'Keine Linien.',
+  'tt.searchRoutes': 'Linien suchen',
+  'tt.noRouteMatch': 'Keine Linie passt zu „{filter}“.',
   'tt.newTimetable': 'Neuer Fahrplan',
   'tt.openTimetable': 'Fahrplan öffnen',
   'tt.feedNoRoutes': 'Dieser Feed hat noch keine Linien.',

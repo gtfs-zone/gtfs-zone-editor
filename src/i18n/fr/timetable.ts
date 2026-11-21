@@ -81,6 +81,8 @@ export const timetable: Translation<typeof en> = {
   'tt.browserTitle': 'Horaires',
   'tt.noAgency': 'Aucune agence',
   'tt.noRoutes': 'Aucune ligne.',
+  'tt.searchRoutes': 'Rechercher des lignes',
+  'tt.noRouteMatch': 'Aucune ligne ne correspond à « {filter} ».',
   'tt.newTimetable': 'Nouvel horaire',
   'tt.openTimetable': "Ouvrir l'horaire",
   'tt.feedNoRoutes': "Ce flux n'a pas encore de ligne.",

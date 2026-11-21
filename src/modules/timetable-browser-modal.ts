@@ -5,7 +5,8 @@
  * a table of that agency's routes against the services they run, with the
  * trip count of each (route, service) pair in its cell. A section with too
  * many services lists each route's timetables instead. A section renders when
- * first opened, a page of rows at a time.
+ * first opened, appending a page of rows as it scrolls. One search filters the
+ * routes of every section and hides the sections left empty.
  *
  * A cell opens that timetable. The timetable is a different modal type, so the
  * router closes this one when the page state switches to it.
@@ -30,7 +31,12 @@ import { formatDaysOfWeek } from '../utils/entity-references';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 import { CONFIG } from '../config';
-import { renderModalLoading, renderShowMore } from '../utils/modal-loading';
+import { renderModalLoading } from '../utils/modal-loading';
+import {
+  bindListSearch,
+  mountLazyList,
+  type LazyList,
+} from 'gtfs-zone-web-common/ui/lazy-list';
 
 export interface TimetableBrowserDeps {
   feed: EditorFeed;
@@ -96,8 +102,10 @@ interface SectionView {
   columns: string[];
   /** False when there are too many columns: each row lists its timetables. */
   matrix: boolean;
-  /** Rows rendered so far. */
-  shown: number;
+  /** Lowercased route_id and names, per route, for the search. */
+  searchText: Map<Row, string>;
+  /** Mounted once the section is first opened. */
+  list: LazyList<Row> | null;
 }
 
 interface BrowserData {
@@ -153,7 +161,16 @@ function buildSectionView(
     routes,
     columns,
     matrix: columns.length <= CONFIG.TIMETABLE_BROWSER_MAX_COLUMNS,
-    shown: 0,
+    searchText: new Map(
+      routes.map((route) => [
+        route,
+        [route.route_id, route.route_short_name, route.route_long_name]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase(),
+      ])
+    ),
+    list: null,
   };
 }
 
@@ -220,18 +237,7 @@ function renderRow(view: SectionView, route: Row, data: BrowserData): string {
   return `<tr class="${selected}">${routeCell}${cells}</tr>`;
 }
 
-/** The next page of rows, advancing `view.shown`. */
-function renderNextRows(view: SectionView, data: BrowserData): string {
-  const end = Math.min(view.routes.length, view.shown + CONFIG.MODAL_LIST_ROWS);
-  const html = view.routes
-    .slice(view.shown, end)
-    .map((route) => renderRow(view, route, data))
-    .join('');
-  view.shown = end;
-  return html;
-}
-
-/** The section's table with its first page of rows. */
+/** The section's table with an empty body for its lazy rows. */
 function renderSectionBody(view: SectionView, data: BrowserData): string {
   if (view.routes.length === 0) {
     return `<p class="text-sm opacity-70">${t('tt.noRoutes')}</p>`;
@@ -244,17 +250,15 @@ function renderSectionBody(view: SectionView, data: BrowserData): string {
         )
         .join('')
     : `<th>${t('tt.service')}</th>`;
-  const rows = renderNextRows(view, data);
   return `
     <div class="overflow-x-auto">
       <table class="table table-sm w-auto">
         <thead>
           <tr><th class="sticky left-0 z-10 bg-base-100">${t('tt.route')}</th>${headers}</tr>
         </thead>
-        <tbody>${rows}</tbody>
+        <tbody data-section-rows></tbody>
       </table>
-    </div>
-    <div data-show-more-slot>${renderShowMore(view.routes.length - view.shown, CONFIG.MODAL_LIST_ROWS)}</div>`;
+    </div>`;
 }
 
 /** Collapsed section: its table renders when it is first opened. */
@@ -277,22 +281,36 @@ function renderSectionShell(
     </details>`;
 }
 
-/** Fill a section's body the first time it is open. */
+/** Fill a section's body and mount its rows the first time it is open. */
 function fillSection(
   details: HTMLDetailsElement,
   view: SectionView,
-  data: BrowserData
+  data: BrowserData,
+  needle: string
 ): void {
   const body = details.querySelector<HTMLElement>('[data-section-body]');
   if (!details.open || !body || body.childElementCount > 0) {
     return;
   }
-  const t0 = performance.now();
   body.innerHTML = renderSectionBody(view, data);
+  const tbody = body.querySelector<HTMLElement>('[data-section-rows]');
+  if (!tbody) {
+    return;
+  }
+  view.list = mountLazyList<Row>(tbody, {
+    name: `timetable section ${details.dataset.section}`,
+    items: view.routes,
+    pageSize: CONFIG.MODAL_LIST_ROWS,
+    renderPage: (slice) =>
+      slice.map((route) => renderRow(view, route, data)).join(''),
+    match: (route, value) =>
+      view.searchText.get(route)?.includes(value) ?? false,
+  });
+  view.list.setNeedle(needle);
   console.log(
-    `[TimetableBrowser] section ${details.dataset.section} rendered: ` +
-      `${view.shown}/${view.routes.length} routes, ${view.columns.length} services, ` +
-      `${view.matrix ? 'matrix' : 'list'} in ${Math.round(performance.now() - t0)}ms`
+    `[TimetableBrowser] section ${details.dataset.section} opened: ` +
+      `${view.routes.length} routes, ${view.columns.length} services, ` +
+      `${view.matrix ? 'matrix' : 'list'}`
   );
 }
 
@@ -346,41 +364,50 @@ async function fillBrowser(
   );
   const openIndex = currentIndex === -1 ? 0 : currentIndex;
 
-  root.innerHTML = views
-    .map((view, i) => renderSectionShell(view, i, i === openIndex))
-    .join('');
-  root
-    .querySelectorAll<HTMLDetailsElement>('details[data-section]')
-    .forEach((details) => {
-      const view = views[Number(details.dataset.section)];
-      details.addEventListener('toggle', () =>
-        fillSection(details, view, data)
-      );
-      fillSection(details, view, data);
-    });
-  root.addEventListener('click', (event) => {
-    const more = (event.target as Element).closest<HTMLElement>(
-      '[data-show-more]'
-    );
-    const details = more?.closest<HTMLDetailsElement>('details[data-section]');
-    if (!more || !details) {
-      return;
-    }
+  root.innerHTML = `
+    <div class="flex items-center gap-3">
+      <input type="search" class="input input-sm w-64" data-browser-search
+        placeholder="${escapeHtml(t('tt.searchRoutes'))}" />
+      <span class="text-sm opacity-70" data-browser-no-match hidden></span>
+    </div>
+    ${views.map((view, i) => renderSectionShell(view, i, i === openIndex)).join('')}`;
+
+  let needle = '';
+  const sections = [
+    ...root.querySelectorAll<HTMLDetailsElement>('details[data-section]'),
+  ];
+  for (const details of sections) {
     const view = views[Number(details.dataset.section)];
-    details
-      .querySelector('tbody')
-      ?.insertAdjacentHTML('beforeend', renderNextRows(view, data));
-    const slot = details.querySelector<HTMLElement>('[data-show-more-slot]');
-    if (slot) {
-      slot.innerHTML = renderShowMore(
-        view.routes.length - view.shown,
-        CONFIG.MODAL_LIST_ROWS
-      );
-    }
-    console.log(
-      `[TimetableBrowser] section ${details.dataset.section}: ${view.shown}/${view.routes.length} routes shown`
+    details.addEventListener('toggle', () =>
+      fillSection(details, view, data, needle)
     );
-  });
+    fillSection(details, view, data, needle);
+  }
+
+  const input = root.querySelector<HTMLInputElement>('[data-browser-search]');
+  const noMatch = root.querySelector<HTMLElement>('[data-browser-no-match]');
+  if (input) {
+    bindListSearch(input, (value) => {
+      needle = value.trim().toLowerCase();
+      let visible = 0;
+      for (const details of sections) {
+        const view = views[Number(details.dataset.section)];
+        const matches = needle
+          ? view.routes.filter((route) =>
+              view.searchText.get(route)?.includes(needle)
+            ).length
+          : view.routes.length;
+        details.hidden = needle !== '' && matches === 0;
+        visible += details.hidden ? 0 : 1;
+        view.list?.setNeedle(needle);
+      }
+      if (noMatch) {
+        noMatch.hidden = visible > 0;
+        noMatch.textContent = t('tt.noRouteMatch', { filter: value.trim() });
+      }
+      console.log(`[TimetableBrowser] search "${needle}": ${visible} sections`);
+    });
+  }
 
   console.log(
     `[TimetableBrowser] ${views.length} sections, ${routes.length} routes, ` +

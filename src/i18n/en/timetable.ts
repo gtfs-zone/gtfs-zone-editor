@@ -75,6 +75,8 @@ export const timetable = {
   'tt.browserTitle': 'Timetables',
   'tt.noAgency': 'No agency',
   'tt.noRoutes': 'No routes.',
+  'tt.searchRoutes': 'Search routes',
+  'tt.noRouteMatch': 'No route matches "{filter}".',
   'tt.newTimetable': 'New timetable',
   'tt.openTimetable': 'Open timetable',
   'tt.feedNoRoutes': 'This feed has no routes yet.',
