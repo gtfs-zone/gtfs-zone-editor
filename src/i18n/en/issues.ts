@@ -66,5 +66,4 @@ export const issues = {
   'issues.gone': 'This issue is already gone',
   'issues.unknownAction': 'Unknown issue action {id}',
   'issues.confirmTitle': '{label}?',
-  'issues.title': 'Feed issues',
 } as const;

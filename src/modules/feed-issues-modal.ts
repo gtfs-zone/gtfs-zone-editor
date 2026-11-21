@@ -1,32 +1,19 @@
 /**
- * Feed issue actions and the full issue list.
+ * Feed issue actions and item navigation.
  *
- * `runFeedIssueAction` is the one dispatch for an issue row's buttons, on the
- * home card and in the modal alike: it looks the action up in the registry,
- * confirms with the count, and runs it on that row's group only.
- *
- * `showFeedIssuesModal` lists every entity of every group, one group per
- * sidebar entry. An item click navigates, and the modal router closes the
- * modal because the new page state no longer names it.
+ * `runFeedIssueAction` is the one dispatch for an issue row's buttons: it
+ * looks the action up in the registry, confirms with the count, and runs it on
+ * that row's group only. `navigateToIssueItem` follows an item's link.
  */
 
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
-import { showSidebarModal } from 'gtfs-zone-web-common/ui/sidebar-modal';
-import { routeSidebarTabs } from './routed-sidebar-tabs';
-import type { IssueItem } from 'gtfs-zone-web-common/ui/issue-card';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import type { EditableTableDeps } from './editable-table';
 import {
-  feedIssueGroupLabel,
   getFeedIssueGroup,
-  getFeedIssueGroups,
-  getFeedIssueItems,
   getIssueAction,
-  getIssueActions,
-  groupKey,
   refreshFeedIssuesIfStale,
-  type IssueGroup,
 } from './feed-issues';
 import {
   navigateToAgency,
@@ -132,110 +119,5 @@ export function navigateToIssueItem(item: Element): void {
     void navigateToPathway(id);
   } else {
     console.warn(`[FeedIssues] unknown issue nav ${nav}`);
-  }
-}
-
-/** The same item markup the issue card draws. */
-function renderItem(item: IssueItem): string {
-  const attrs = Object.entries(item.data ?? {})
-    .map(([name, value]) => ` data-${name}="${escapeHtml(value)}"`)
-    .join('');
-  const clickable = item.data && Object.keys(item.data).length > 0;
-  const classes = clickable
-    ? 'link link-hover cursor-pointer'
-    : 'opacity-70 cursor-default';
-  const detail = item.detail
-    ? ` <span class="opacity-50">${escapeHtml(item.detail)}</span>`
-    : '';
-  return `<li><span class="${classes}"${attrs}>${escapeHtml(item.label)}</span>${detail}</li>`;
-}
-
-function renderPane(key: string, group: IssueGroup): string {
-  const actions = getIssueActions(group);
-  const buttons =
-    actions.length > 0
-      ? `<div class="flex flex-wrap gap-2 mb-3">${actions
-          .map(
-            (action) =>
-              `<button type="button" class="btn btn-sm btn-warning btn-outline" data-issue-key="${escapeHtml(key)}" data-issue-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`
-          )
-          .join('')}</div>`
-      : '';
-  const items = getFeedIssueItems(group).map(renderItem).join('');
-  return `${buttons}<ul class="space-y-0.5 text-sm list-disc list-inside">${items}</ul>`;
-}
-
-/**
- * Every entity of every group that has any, opened on the group `initialKey`
- * names. Resolves once the modal closes.
- */
-export async function showFeedIssuesModal(
-  deps: EditableTableDeps | undefined,
-  initialKey?: string
-): Promise<void> {
-  const groups = getFeedIssueGroups().filter(
-    (group) => group.entities.length > 0
-  );
-  if (initialKey && !groups.some((group) => groupKey(group) === initialKey)) {
-    console.warn(`[FeedIssues] ${initialKey} is not an issue any more`);
-  }
-
-  const tabs = routeSidebarTabs(
-    'feed_issues',
-    groups.some((group) => groupKey(group) === initialKey)
-      ? initialKey
-      : groups[0] && groupKey(groups[0])
-  );
-  try {
-    await showSidebarModal({
-      title: t('issues.title'),
-      initialId: initialKey,
-      onSelect: tabs.onSelect,
-      selectRef: tabs.selectRef,
-      entries: groups.map((group) => {
-        const key = groupKey(group);
-        const { label, note } = feedIssueGroupLabel(group);
-        return {
-          id: key,
-          label,
-          count: () => Promise.resolve(group.count),
-          paneTitle: label,
-          note: note ? escapeHtml(note) : undefined,
-          renderPane: () => Promise.resolve(renderPane(key, group)),
-        };
-      }),
-      onPaneRendered: (pane, close) => {
-        pane.addEventListener('click', (event) => {
-          const target = event.target as HTMLElement;
-          const button = target.closest<HTMLButtonElement>(
-            '[data-issue-action]'
-          );
-          if (button) {
-            const key = button.getAttribute('data-issue-key') ?? '';
-            const actionId = button.getAttribute('data-issue-action') ?? '';
-            if (!deps) {
-              notify.error(t('page.readOnly'));
-              return;
-            }
-            button.disabled = true;
-            void runFeedIssueAction(key, actionId, deps).then((ran) => {
-              // The groups this modal lists are from before the run.
-              if (ran) {
-                close();
-              } else {
-                button.disabled = false;
-              }
-            });
-            return;
-          }
-          const item = target.closest('[data-issue-nav]');
-          if (item) {
-            navigateToIssueItem(item);
-          }
-        });
-      },
-    });
-  } finally {
-    tabs.dispose();
   }
 }

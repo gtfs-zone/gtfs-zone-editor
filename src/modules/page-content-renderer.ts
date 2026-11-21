@@ -37,7 +37,10 @@ import {
 } from '../utils/inline-editable-field';
 import { installStopAreasField } from '../utils/stop-areas-field';
 import type { EditableTableDeps } from './editable-table';
-import { renderIssueCard } from 'gtfs-zone-web-common/ui/issue-card';
+import {
+  attachIssueCard,
+  renderIssueCard,
+} from 'gtfs-zone-web-common/ui/issue-card';
 import { installGuideButtons } from 'gtfs-zone-web-common/ui/help-modal';
 import {
   feedIssuesNeedRefresh,
@@ -77,7 +80,6 @@ import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import {
   getCurrentPageState,
   navigateToHome,
-  openModal,
   navigateToLocationGroup,
   navigateToZone,
 } from './navigation-actions';
@@ -1158,11 +1160,21 @@ export class PageContentRenderer {
     return values ? network_id : null;
   }
 
-  /** The feed issue card's item links, row actions and "Show all". */
+  /** The feed issue card's item lists, item links and row actions. */
   private attachIssueCardListeners(root: HTMLElement): void {
+    // Each row mounts its lazy item list when opened, from the rows the card
+    // was just rendered from.
+    attachIssueCard(root, getFeedIssues());
+
     // Feed issue card items: navigate to the offending object's own page.
-    root.querySelectorAll('[data-issue-nav]').forEach((item) => {
-      item.addEventListener('click', () => navigateToIssueItem(item));
+    // Delegated per list, since pages of items are appended on scroll.
+    root.querySelectorAll('[data-issue-list]').forEach((list) => {
+      list.addEventListener('click', (event) => {
+        const item = (event.target as Element).closest('[data-issue-nav]');
+        if (item) {
+          navigateToIssueItem(item);
+        }
+      });
     });
 
     // Feed issue card row actions: a fix for that row's group only.
@@ -1172,22 +1184,6 @@ export class PageContentRenderer {
         event.preventDefault();
         event.stopPropagation();
         void this.runIssueAction(button as HTMLButtonElement);
-      });
-    });
-
-    // Feed issue card "Show all n": the group's full list in a modal.
-    root.querySelectorAll('[data-issue-show-all]').forEach((button) => {
-      button.addEventListener('click', () => {
-        void openModal(
-          {
-            type: 'feed_issues',
-            table: button.getAttribute('data-issue-key') ?? undefined,
-          },
-          {
-            // An action run from the modal changes what the card shows.
-            onClosed: () => this.dependencies.onEntityCreated?.(),
-          }
-        );
       });
     });
   }

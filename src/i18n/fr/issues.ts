@@ -74,5 +74,4 @@ export const issues: Translation<typeof en> = {
   'issues.gone': 'Ce problème a déjà disparu',
   'issues.unknownAction': 'Action inconnue {id}',
   'issues.confirmTitle': '{label} ?',
-  'issues.title': 'Problèmes du flux',
 };

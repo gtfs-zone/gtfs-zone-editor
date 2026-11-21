@@ -17,7 +17,6 @@ import {
   refreshFeedIssuesIfStale,
   setFeedIssueRevalidator,
 } from './modules/feed-issues';
-import { showFeedIssuesModal } from './modules/feed-issues-modal';
 import {
   KeyboardShortcuts,
   describeShortcuts,
@@ -830,14 +829,6 @@ export class GTFSEditor {
     router.register('files', (modal) =>
       this.uiController.openFilesModal(modal.table)
     );
-
-    router.register('feed_issues', async (modal, _transient, cancelled) => {
-      await refreshFeedIssuesIfStale();
-      if (cancelled()) {
-        return;
-      }
-      await showFeedIssuesModal({ feed: this.feed }, modal.table);
-    });
 
     this.pageStateManager.addNavigationHandler((event) => {
       router.sync(event.to);

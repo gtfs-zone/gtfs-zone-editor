@@ -72,5 +72,4 @@ export const issues: Translation<typeof en> = {
   'issues.gone': 'Dieses Problem ist bereits behoben',
   'issues.unknownAction': 'Unbekannte Aktion {id}',
   'issues.confirmTitle': '{label}?',
-  'issues.title': 'Feed-Probleme',
 };

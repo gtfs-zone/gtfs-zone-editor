@@ -37,9 +37,6 @@ export interface FeedIssueRevalidator {
   getStalenessKey(): string;
 }
 
-/** Most entities a single issue row lists before it collapses into a tail. */
-const MAX_ITEMS = 12;
-
 /**
  * Files whose rows have their own page, and the page-state key to navigate by.
  * A file absent here still lists its offending rows, just without a link.
@@ -225,22 +222,13 @@ let currentIssues: IssueRow[] = [];
 
 /**
  * Every group the last pass produced, keyed by `file:code:field`, with its full
- * entity list. The issue rows cap their item lists at MAX_ITEMS for display;
- * an action and the full list have to see all of them, so they read this.
+ * entity list, for the row actions.
  */
 const groupsByKey = new Map<string, IssueGroup>();
 
-/** The rows the published groups were labelled from. */
-let publishedSource: FeedIssueRowSource | undefined;
-
-/** One group of the last pass, uncapped. */
+/** One group of the last pass. */
 export function getFeedIssueGroup(key: string): IssueGroup | undefined {
   return groupsByKey.get(key);
-}
-
-/** Every group of the last pass, largest first. */
-export function getFeedIssueGroups(): IssueGroup[] {
-  return [...groupsByKey.values()];
 }
 
 /** The actions a group's row offers. None without entities to act on. */
@@ -279,7 +267,7 @@ export interface IssueGroup {
   entities: ValidationEntity[];
 }
 
-/** `data-issue-key` of a group's row, its buttons and its full-list pane. */
+/** `data-issue-key` of a group's row and its buttons. */
 export function groupKey(group: IssueGroup): string {
   return `${group.file}:${group.code}:${group.field}`;
 }
@@ -329,13 +317,18 @@ export function deriveFeedIssues(
 ): IssueRow[] {
   const index = new RowIndex(source);
   return groups.map((group) => {
-    const shown = group.entities.slice(0, MAX_ITEMS);
     const row: IssueRow = {
       ...feedIssueGroupLabel(group),
       key: groupKey(group),
       count: group.count,
-      items: shown.map((entity) => buildIssueItem(entity, index)),
-      moreCount: group.entities.length - shown.length,
+      // Labels are built per page as the open row scrolls.
+      items: {
+        count: group.entities.length,
+        page: (start, end) =>
+          group.entities
+            .slice(start, end)
+            .map((entity) => buildIssueItem(entity, index)),
+      },
     };
     const actions = getIssueActions(group);
     if (actions.length > 0) {
@@ -346,12 +339,6 @@ export function deriveFeedIssues(
     }
     return row;
   });
-}
-
-/** Every item of one group, uncapped, for the full list. */
-export function getFeedIssueItems(group: IssueGroup): IssueItem[] {
-  const index = new RowIndex(publishedSource);
-  return group.entities.map((entity) => buildIssueItem(entity, index));
 }
 
 /**
@@ -507,7 +494,6 @@ function publishFeedIssues(
   for (const group of groups) {
     groupsByKey.set(groupKey(group), group);
   }
-  publishedSource = source;
 
   const issues = deriveFeedIssues(groups, source);
   setFeedIssues(issues);
