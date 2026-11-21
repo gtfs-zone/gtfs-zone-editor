@@ -97,12 +97,31 @@ interface PaneFilter {
   untranslatedOnly: boolean;
 }
 
+/**
+ * A table's columns, as rows `translatableFields` can read: the mirror, or
+ * one row from the worker, since every store row carries the full header.
+ * stop_times gets no matrix (see `readRows`).
+ */
+async function columnSample(
+  feed: EditorFeed,
+  file: string
+): Promise<Record<string, unknown>[]> {
+  const store = specStoreName(file);
+  if (store === 'stop_times') {
+    return [];
+  }
+  return feed.isMirrored(store)
+    ? [...feed.table(store)]
+    : await feed.head(store, 1);
+}
+
 /** One entry per translatable field of each table that has rows. */
 async function buildEntries(feed: EditorFeed): Promise<TranslationEntry[]> {
+  const t0 = performance.now();
   const entries: TranslationEntry[] = [];
   for (const table of translatableTables()) {
     const file = `${table}.txt`;
-    const rows = await readRows(feed, file);
+    const rows = await columnSample(feed, file);
     if (rows.length === 0) {
       continue;
     }
@@ -118,6 +137,9 @@ async function buildEntries(feed: EditorFeed): Promise<TranslationEntry[]> {
       entries.push({ id: `${table}.${field}`, table, file, fields: [field] });
     }
   }
+  console.log(
+    `[Translations] ${entries.length} entries in ${Math.round(performance.now() - t0)}ms`
+  );
   return entries;
 }
 
