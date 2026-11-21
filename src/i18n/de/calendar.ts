@@ -47,7 +47,6 @@ export const calendar: Translation<typeof en> = {
   'cal.title': 'Servicekalender',
   'cal.monthGrid': 'Monatsansicht',
   'cal.timeline': 'Zeitleiste',
-  'cal.moreServices': '+{count} weitere',
   'newSvc.title': 'Neuer Service',
   'newSvc.idHasExceptions':
     'calendar_dates enthält bereits Ausnahmen für den Service „{id}“',

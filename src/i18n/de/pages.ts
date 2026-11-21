@@ -26,7 +26,6 @@ export const pages: Translation<typeof en> = {
   'page.newService': '+ Neuer Service',
   'page.servicesActiveToday': '{count} heute in Betrieb',
   'page.filterServices': 'Nach service_id filtern',
-  'page.servicesShown': '{shown} von {total} angezeigt',
   'page.noServiceMatch': 'Keine service_id enthält „{filter}“.',
   'page.issuesChecking': 'Feed wird auf Probleme geprüft...',
   'page.noFeedOpen': 'Kein Feed geöffnet.',

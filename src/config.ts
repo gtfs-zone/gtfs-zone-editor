@@ -25,7 +25,7 @@ export const CONFIG = {
   // Timetable browser: services above which a section lists each route's
   // timetables instead of drawing a route x service matrix.
   TIMETABLE_BROWSER_MAX_COLUMNS: 30,
-  // Calendar month grid: service chips a day shows before "+N more".
+  // Calendar month grid: service chips a day appends per page as it scrolls.
   CALENDAR_DAY_CHIPS: 12,
 
   // Enum menus: option count above which the searchable modal opens instead.

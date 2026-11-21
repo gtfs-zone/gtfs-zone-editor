@@ -16,11 +16,18 @@ import {
   isServiceActive,
   loadTripCounts,
   NO_DATE,
-  renderServiceTimeline,
+  renderNoTimeline,
+  renderServiceTimelineFrame,
+  renderServiceTimelineRows,
+  timelineFrame,
   type ServiceData,
-  type ServiceDataMap,
   type TimelineSpan,
 } from './service-timeline';
+import {
+  bindListSearch,
+  mountLazyList,
+  type LazyList,
+} from 'gtfs-zone-web-common/ui/lazy-list';
 import { renderModalLoading } from '../utils/modal-loading';
 import { t } from '../i18n/messages';
 
@@ -144,12 +151,12 @@ async function loadCalendarIndex(feed: EditorFeed): Promise<CalendarIndex> {
   };
 }
 
-/** Days of the month grid: the services running that day, capped. */
-function renderDayChips(
+/** The services running on `date`, sorted. */
+function activeOnDay(
   index: CalendarIndex,
   exByDate: Map<string, Map<string, Exceptions>>,
   date: string
-): string {
+): string[] {
   const onDay = exByDate.get(date);
   const active: string[] = [];
   const candidates = onDay
@@ -161,9 +168,18 @@ function renderDayChips(
       active.push(sid);
     }
   }
-  active.sort();
-  const chips = active
-    .slice(0, CONFIG.CALENDAR_DAY_CHIPS)
+  return active.sort();
+}
+
+/** Chips for `sids` on `date`. */
+function renderDayChips(
+  index: CalendarIndex,
+  exByDate: Map<string, Map<string, Exceptions>>,
+  date: string,
+  sids: string[]
+): string {
+  const onDay = exByDate.get(date);
+  return sids
     .map((sid) =>
       renderServiceChip(
         sid,
@@ -177,10 +193,6 @@ function renderDayChips(
       )
     )
     .join('');
-  const rest = active.length - CONFIG.CALENDAR_DAY_CHIPS;
-  return rest > 0
-    ? `${chips}<span class="text-[10px] opacity-60">${t('cal.moreServices', { count: rest })}</span>`
-    : chips;
 }
 
 export async function showCalendarModal(
@@ -202,7 +214,14 @@ export async function showCalendarModal(
     Map<string, Map<string, Exceptions>>
   >();
   const serviceExceptions = new Map<string, Exceptions>();
-  let timelineLimit: number = CONFIG.MODAL_LIST_ROWS;
+  // Services of each day with more than a page of chips, for its lazy list.
+  const crowdedDays = new Map<
+    string,
+    { active: string[]; exByDate: Map<string, Map<string, Exceptions>> }
+  >();
+  let dayLists: LazyList<string>[] = [];
+  let timelineList: LazyList<string> | null = null;
+  let timelineNeedle = '';
   const inFlight = new Set<string>();
   // Bumped by a batch write, so a load that started before it is dropped.
   let generation = 0;
@@ -301,6 +320,7 @@ export async function showCalendarModal(
         }
       });
     }
+    crowdedDays.clear();
     if (!idx || !exByDate) {
       return renderModalLoading();
     }
@@ -308,63 +328,158 @@ export async function showCalendarModal(
       codec: GTFS_DATE_CODEC,
       weekStart: CONFIG.WEEK_START,
       today: todayGtfsDate,
-      renderDay: ({ date }) => ({
-        badges: renderFeedEdgeBadges(date, feedStartDate, feedEndDate),
-        chips: renderDayChips(idx, exByDate, date),
-      }),
+      renderDay: ({ date }) => {
+        const active = activeOnDay(idx, exByDate, date);
+        // A crowded day fills its chips a page at a time in `mountLists`.
+        if (active.length > CONFIG.CALENDAR_DAY_CHIPS) {
+          crowdedDays.set(date, { active, exByDate });
+        }
+        return {
+          badges: renderFeedEdgeBadges(date, feedStartDate, feedEndDate),
+          chips:
+            active.length > CONFIG.CALENDAR_DAY_CHIPS
+              ? `<div data-cal-day-chips="${escapeHtml(date)}" class="flex flex-col gap-0.5"></div>`
+              : renderDayChips(idx, exByDate, date, active),
+        };
+      },
     });
   };
 
+  /** The timeline's search and frame; `mountLists` appends its rows. */
   const renderTimeline = (): string => {
     const idx = needIndex();
     if (!idx) {
       return renderModalLoading();
     }
-    const shown = idx.order.slice(0, timelineLimit);
-    const missing = shown.filter((sid) => !serviceExceptions.has(sid));
-    if (missing.length > 0) {
-      const gen = generation;
-      ensure(`timeline ${timelineLimit}`, async () => {
-        const rows = await feed.where('calendar_dates', [
-          { col: 'service_id', in: missing },
+    if (idx.order.length === 0) {
+      return renderNoTimeline('noData');
+    }
+    if (!idx.span) {
+      return renderNoTimeline('noDates');
+    }
+    const frame = renderServiceTimelineFrame(
+      timelineFrame(idx.span, idx.order),
+      { tripCounts: idx.tripCounts }
+    );
+    return `
+      <input
+        type="search"
+        class="input input-sm w-56 mb-2"
+        data-cal-timeline-search
+        placeholder="${escapeHtml(t('page.filterServices'))}"
+        value="${escapeHtml(timelineNeedle)}"
+      />
+      <div data-cal-timeline>${frame}</div>`;
+  };
+
+  /** Exceptions of the services in `sids` not read yet. */
+  const loadServiceExceptions = async (sids: string[]): Promise<void> => {
+    const missing = sids.filter((sid) => !serviceExceptions.has(sid));
+    if (missing.length === 0) {
+      return;
+    }
+    const gen = generation;
+    const rows = await feed.where('calendar_dates', [
+      { col: 'service_id', in: missing },
+    ]);
+    if (gen !== generation) {
+      return;
+    }
+    for (const sid of missing) {
+      serviceExceptions.set(sid, []);
+    }
+    for (const row of rows) {
+      serviceExceptions.get(row.service_id)?.push(row);
+    }
+  };
+
+  /** The timeline's lazy rows, against the frame just drawn. */
+  const mountTimeline = (tbody: HTMLElement, idx: CalendarIndex): void => {
+    const span = idx.span;
+    if (!span) {
+      return;
+    }
+    const frame = timelineFrame(span, idx.order);
+    const kept = timelineList?.shown() ?? 0;
+    timelineList = mountLazyList<string>(tbody, {
+      name: 'calendar timeline',
+      items: [],
+      pageSize: CONFIG.MODAL_LIST_ROWS,
+      renderPage: async (slice) => {
+        await loadServiceExceptions(slice);
+        const entries: Array<[string, ServiceData]> = slice.map((sid) => [
+          sid,
+          {
+            calendar: idx.calendar.get(sid) ?? null,
+            exceptions: serviceExceptions.get(sid) ?? [],
+            color: idx.color.get(sid) ?? '',
+            label: sid,
+          },
         ]);
-        if (gen !== generation) {
+        return renderServiceTimelineRows(frame, entries, {
+          tripCounts: idx.tripCounts,
+        });
+      },
+      afterAppend: (nodes) => {
+        for (const node of nodes) {
+          attachServiceTimelineListeners(node, (sid) => openService(sid));
+        }
+      },
+      match: (sid, needle) => sid.toLowerCase().includes(needle),
+      noMatch: (needle) => t('page.noServiceMatch', { filter: needle }),
+    });
+    timelineList.setNeedle(timelineNeedle);
+    timelineList.setItems(idx.order, { through: kept - 1 });
+  };
+
+  /** After a redraw: the timeline's rows and each crowded day's chips. */
+  const mountLists = (root: HTMLElement): void => {
+    for (const list of dayLists) {
+      list.destroy();
+    }
+    dayLists = [];
+    const tbody = root.querySelector<HTMLElement>(
+      '[data-cal-timeline] [data-timeline-rows]'
+    );
+    if (!tbody) {
+      timelineList?.destroy();
+      timelineList = null;
+    }
+    const idx = index;
+    if (!idx) {
+      return;
+    }
+    if (tbody) {
+      timelineList?.destroy();
+      mountTimeline(tbody, idx);
+      const input = root.querySelector<HTMLInputElement>(
+        '[data-cal-timeline-search]'
+      );
+      if (input) {
+        bindListSearch(input, (needle) => {
+          timelineNeedle = needle;
+          timelineList?.setNeedle(needle);
+        });
+      }
+    }
+    root
+      .querySelectorAll<HTMLElement>('[data-cal-day-chips]')
+      .forEach((target) => {
+        const date = target.dataset.calDayChips ?? '';
+        const day = crowdedDays.get(date);
+        if (!day) {
           return;
         }
-        for (const sid of missing) {
-          serviceExceptions.set(sid, []);
-        }
-        for (const row of rows) {
-          serviceExceptions.get(row.service_id)?.push(row);
-        }
+        dayLists.push(
+          mountLazyList<string>(target, {
+            name: `calendar day ${date}`,
+            items: day.active,
+            pageSize: CONFIG.CALENDAR_DAY_CHIPS,
+            renderPage: (slice) =>
+              renderDayChips(idx, day.exByDate, date, slice),
+          })
+        );
       });
-      return renderModalLoading();
-    }
-    const data: ServiceDataMap = new Map(
-      shown.map((sid) => [
-        sid,
-        {
-          calendar: idx.calendar.get(sid) ?? null,
-          exceptions: serviceExceptions.get(sid) ?? [],
-          color: idx.color.get(sid) ?? '',
-          label: sid,
-        },
-      ])
-    );
-    const timeline = renderServiceTimeline(data, {
-      tripCounts: idx.tripCounts,
-      span: idx.span ?? undefined,
-      keepOrder: true,
-    });
-    const remaining = idx.order.length - shown.length;
-    const more =
-      remaining > 0
-        ? `<div class="flex items-center justify-between gap-2 pt-2 text-sm">
-            <span class="opacity-70">${t('page.servicesShown', { shown: shown.length, total: idx.order.length })}</span>
-            <button type="button" class="btn btn-xs btn-outline" data-cal-more>${t('common.showMore', { count: Math.min(remaining, CONFIG.MODAL_LIST_ROWS) })}</button>
-          </div>`
-        : '';
-    return timeline + more;
   };
 
   const runBoundBatch = async (
@@ -435,12 +550,6 @@ export async function showCalendarModal(
           openService(chip.dataset.serviceId);
           return;
         }
-        if (source?.closest('[data-cal-more]')) {
-          timelineLimit += CONFIG.MODAL_LIST_ROWS;
-          console.log(`[CalendarModal] timeline: ${timelineLimit} rows`);
-          handle.redraw();
-          return;
-        }
         const bound = source?.closest<HTMLButtonElement>('[data-cal-bound]');
         if (!bound || bound.disabled) {
           return;
@@ -454,7 +563,6 @@ export async function showCalendarModal(
 
       console.log('[CalendarModal] opened');
     },
-    onRender: (root) =>
-      attachServiceTimelineListeners(root, (sid) => openService(sid)),
+    onRender: mountLists,
   });
 }
