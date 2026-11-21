@@ -234,7 +234,7 @@ export function filterServiceDataMap(
 }
 
 /** Sorts after every real date, so a service with no dates lands last. */
-const NO_DATE = '99999999';
+export const NO_DATE = '99999999';
 
 /**
  * First and last date a service runs: the calendar range widened by any added

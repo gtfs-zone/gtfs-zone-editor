@@ -47,6 +47,7 @@ export const calendar: Translation<typeof en> = {
   'cal.title': 'Calendrier de service',
   'cal.monthGrid': 'Grille mensuelle',
   'cal.timeline': 'Frise',
+  'cal.moreServices': '+{count} de plus',
   'newSvc.title': 'Nouveau service',
   'newSvc.idHasExceptions':
     'calendar_dates contient déjà des exceptions pour le service « {id} »',

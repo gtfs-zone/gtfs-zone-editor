@@ -40,6 +40,7 @@ import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { t } from '../i18n/messages';
 import type {
   Cond,
+  ExceptionBounds,
   Moved,
   Persistence,
   RouteRefs,
@@ -381,6 +382,11 @@ export class EditorFeed {
       inner[r[b] ?? ''] = (inner[r[b] ?? ''] ?? 0) + 1;
     }
     return out;
+  }
+
+  /** calendar_dates date bounds per service_id (built in the worker). */
+  exceptionBounds(): Promise<Record<string, ExceptionBounds>> {
+    return this.requireClient().call('exceptionBounds');
   }
 
   /** Point and trip counts of every shape (built in the worker). */

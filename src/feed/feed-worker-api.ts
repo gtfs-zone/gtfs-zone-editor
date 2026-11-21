@@ -284,6 +284,51 @@ function routeRefs(s: FeedStore): Record<string, RouteRefs> {
   return out;
 }
 
+/** Date range of one service's calendar_dates, '' where there is none. */
+export interface ExceptionBounds {
+  /** Over every exception. */
+  first: string;
+  last: string;
+  /** Over added exceptions (exception_type 1) only. */
+  addedFirst: string;
+  addedLast: string;
+}
+
+/** calendar_dates date bounds per service_id. */
+function exceptionBounds(s: FeedStore): Record<string, ExceptionBounds> {
+  const out: Record<string, ExceptionBounds> = {};
+  if (!s.hasTable('calendar_dates')) {
+    return out;
+  }
+  s.scan(
+    'calendar_dates',
+    ['service_id', 'date', 'exception_type'],
+    ([service, date, type]) => {
+      const b = (out[service] ??= {
+        first: date,
+        last: date,
+        addedFirst: '',
+        addedLast: '',
+      });
+      if (date < b.first) {
+        b.first = date;
+      }
+      if (date > b.last) {
+        b.last = date;
+      }
+      if (Number(type) === 1) {
+        if (b.addedFirst === '' || date < b.addedFirst) {
+          b.addedFirst = date;
+        }
+        if (date > b.addedLast) {
+          b.addedLast = date;
+        }
+      }
+    }
+  );
+  return out;
+}
+
 /** Point and trip counts of one shape, for the shapes modal list. */
 export interface ShapeSummary {
   points: number;
@@ -981,6 +1026,10 @@ export function feedWorkerApi(ctx: StoreContext) {
 
     /** Every route's stop_times references, by kind. */
     routeRefs: (): Record<string, RouteRefs> => routeRefs(ctx.store()),
+
+    /** calendar_dates date bounds per service_id. */
+    exceptionBounds: (): Record<string, ExceptionBounds> =>
+      exceptionBounds(ctx.store()),
 
     /** Point and trip counts of every shape. */
     shapeSummary: (): Record<string, ShapeSummary> => shapeSummary(ctx.store()),

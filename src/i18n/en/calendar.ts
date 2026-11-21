@@ -43,6 +43,7 @@ export const calendar = {
   'cal.title': 'Service Calendar',
   'cal.monthGrid': 'Month Grid',
   'cal.timeline': 'Timeline',
+  'cal.moreServices': '+{count} more',
   'newSvc.title': 'New service',
   'newSvc.idHasExceptions':
     'calendar_dates already has exceptions for service "{id}"',
