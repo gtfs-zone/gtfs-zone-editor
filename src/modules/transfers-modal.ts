@@ -24,7 +24,12 @@ import { GTFS_FIELD_SPECS, GTFS_TABLES } from '../types/gtfs';
 import { t } from '../i18n/messages';
 import { CONFIG } from '../config';
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
-import { renderModalLoading, renderShowMore } from '../utils/modal-loading';
+import { renderModalLoading } from '../utils/modal-loading';
+import {
+  bindListSearch,
+  mountLazyList,
+  type LazyList,
+} from 'gtfs-zone-web-common/ui/lazy-list';
 
 export type TransfersModalDeps = EditableTableDeps;
 
@@ -37,7 +42,6 @@ export interface TransfersModalTarget {
 const STORE = specStoreName(GTFS_TABLES.TRANSFERS);
 const STOPS_STORE = specStoreName(GTFS_TABLES.STOPS);
 const NEW_INSTANCE_ID = 'transfers-new';
-const SEARCH_DEBOUNCE_MS = 200;
 
 /** Key of the group holding rows with no from stop (types 4 and 5). */
 const TRIP_GROUP_KEY = '';
@@ -188,14 +192,17 @@ export async function showTransfersModal(
   // Null until the worker's counts land.
   let groups: TransferGroup[] | null = null;
   let search = '';
-  // Group shells drawn; "show more" adds a page.
-  let limit: number = CONFIG.MODAL_LIST_ROWS;
+  // Group shells, appended a page at a time on scroll.
+  let list: LazyList<TransferGroup> | null = null;
+  // Index of the target's group, drawn on the first mount.
+  let focusIndex = -1;
+  // The modal body's scroll before a redraw, restored once its open groups fill.
+  let restoreScrollTop: number | null = null;
   const expanded = new Set<string>();
   // Group instances currently holding handlers, by group key.
   const installed = new Map<string, EditableTableConfig>();
   // Row to scroll to and highlight once its group has rendered.
   let pendingHighlight: { group: string; rowKey: string } | null = null;
-  let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Open the target's group, drawing enough pages to reach it. */
   const focusTarget = (loaded: TransferGroup[]): void => {
@@ -209,10 +216,7 @@ export async function showTransfersModal(
       return;
     }
     expanded.add(key);
-    limit = Math.max(
-      limit,
-      Math.ceil((index + 1) / CONFIG.MODAL_LIST_ROWS) * CONFIG.MODAL_LIST_ROWS
-    );
+    focusIndex = index;
     if (target.rowKey) {
       pendingHighlight = { group: key, rowKey: target.rowKey };
     }
@@ -243,7 +247,7 @@ export async function showTransfersModal(
         return;
       }
       groups = next;
-      return renderGroups();
+      renderGroups();
     });
   };
 
@@ -295,61 +299,81 @@ export async function showTransfersModal(
     }
   };
 
-  const renderGroups = async (): Promise<void> => {
+  const updateTotal = (): void => {
+    const totalEl = document.getElementById('transfers-total');
+    if (!totalEl || !groups) {
+      return;
+    }
+    const total = groups.reduce((n, group) => n + group.count, 0);
+    totalEl.textContent = search.trim()
+      ? t('transfers.groupsShown', {
+          shown: list?.matching() ?? 0,
+          total: groups.length,
+        })
+      : t('transfers.total', {
+          transfers: t('transfers.count', { count: total }),
+          groups: t('transfers.groups', { count: groups.length }),
+        });
+  };
+
+  const uninstallAll = (): void => {
+    for (const key of [...installed.keys()]) {
+      uninstallGroup(key);
+    }
+  };
+
+  /** Fill the open groups of a page just appended. */
+  const fillOpenGroups = async (slice: TransferGroup[]): Promise<void> => {
+    const highlighting = pendingHighlight !== null;
+    await Promise.all(
+      slice
+        .filter((group) => expanded.has(group.key))
+        .map((group) => renderGroupBody(group))
+    );
+    const scroller = groupsEl()?.closest('.overflow-y-auto');
+    if (restoreScrollTop !== null && !highlighting && scroller) {
+      scroller.scrollTop = restoreScrollTop;
+    }
+    restoreScrollTop = null;
+  };
+
+  const renderGroups = (): void => {
     const container = groupsEl();
     if (!container || !groups) {
       return;
     }
-    // The modal body scrolls; a redraw after an edit must not move it.
-    const scroller = container.closest('.overflow-y-auto');
-    const scrollTop = scroller?.scrollTop ?? 0;
-    for (const key of [...installed.keys()]) {
-      uninstallGroup(key);
+    uninstallAll();
+    if (list) {
+      // The modal body scrolls; a redraw after an edit must not move it.
+      restoreScrollTop =
+        container.closest('.overflow-y-auto')?.scrollTop ?? null;
+      list.setItems(groups, { keep: true, through: focusIndex });
+      updateTotal();
+      return;
     }
-
-    const needle = search.trim().toLowerCase();
-    const matching = needle
-      ? groups.filter((group) => group.searchText.includes(needle))
-      : groups;
-    const shown = matching.slice(0, limit);
-    const total = groups.reduce((n, group) => n + group.count, 0);
-
-    const totalEl = document.getElementById('transfers-total');
-    if (totalEl) {
-      totalEl.textContent = needle
-        ? t('transfers.groupsShown', {
-            shown: matching.length,
-            total: groups.length,
-          })
-        : t('transfers.total', {
-            transfers: t('transfers.count', { count: total }),
-            groups: t('transfers.groups', { count: groups.length }),
-          });
-    }
-
-    container.innerHTML =
-      shown.length === 0
-        ? `<p class="text-sm opacity-60 py-4">${needle ? t('transfers.noMatch') : t('transfers.empty')}</p>`
-        : shown
-            .map(
-              (group) => `
+    list = mountLazyList<TransferGroup>(container, {
+      name: 'transfers',
+      items: [],
+      pageSize: CONFIG.MODAL_LIST_ROWS,
+      renderPage: (slice) =>
+        slice
+          .map(
+            (group) => `
           <details data-group="${escapeHtml(group.key)}" class="border-b border-base-content/10"${expanded.has(group.key) ? ' open' : ''}>
             ${renderGroupSummary(group)}
             <div data-group-body class="pb-3"></div>
           </details>`
-            )
-            .join('') +
-          `<div class="pt-2">${renderShowMore(matching.length - shown.length, CONFIG.MODAL_LIST_ROWS)}</div>`;
-
-    const highlighting = pendingHighlight !== null;
-    await Promise.all(
-      shown
-        .filter((group) => expanded.has(group.key))
-        .map((group) => renderGroupBody(group))
-    );
-    if (!highlighting && scroller) {
-      scroller.scrollTop = scrollTop;
-    }
+          )
+          .join(''),
+      afterAppend: (_nodes, slice) => fillOpenGroups(slice),
+      match: (group, needle) => group.searchText.includes(needle),
+      empty: t('transfers.empty'),
+      noMatch: () => t('transfers.noMatch'),
+    });
+    list.setNeedle(search);
+    list.setItems(groups, { through: focusIndex });
+    focusIndex = -1;
+    updateTotal();
   };
 
   const newConfig: EditableTableConfig = {
@@ -391,10 +415,9 @@ export async function showTransfersModal(
         }
         groups = loaded;
         focusTarget(loaded);
-        return renderGroups().then(() =>
-          console.log(
-            `[Transfers] first paint of groups ${Math.round(performance.now() - t0)} ms after open`
-          )
+        renderGroups();
+        console.log(
+          `[Transfers] groups mounted ${Math.round(performance.now() - t0)} ms after open`
         );
       })
       .catch((error: unknown) => {
@@ -403,13 +426,6 @@ export async function showTransfersModal(
       });
 
     const container = groupsEl();
-    container?.addEventListener('click', (e) => {
-      if ((e.target as Element).closest('[data-show-more]')) {
-        limit += CONFIG.MODAL_LIST_ROWS;
-        console.log(`[Transfers] showing ${limit} groups`);
-        void renderGroups();
-      }
-    });
     // toggle does not bubble, so it is caught on the way down.
     container?.addEventListener(
       'toggle',
@@ -439,20 +455,15 @@ export async function showTransfersModal(
       true
     );
 
-    document
-      .getElementById('transfers-search')
-      ?.addEventListener('input', (e) => {
-        const value = (e.target as HTMLInputElement).value;
-        if (searchTimer !== null) {
-          clearTimeout(searchTimer);
-        }
-        searchTimer = setTimeout(() => {
-          searchTimer = null;
-          search = value;
-          limit = CONFIG.MODAL_LIST_ROWS;
-          void renderGroups();
-        }, SEARCH_DEBOUNCE_MS);
+    const input = document.getElementById('transfers-search');
+    if (input instanceof HTMLInputElement) {
+      bindListSearch(input, (value) => {
+        search = value;
+        uninstallAll();
+        list?.setNeedle(value);
+        updateTotal();
       });
+    }
   };
 
   installEditableTableHandlers(newConfig);
@@ -479,11 +490,6 @@ export async function showTransfersModal(
     onMount,
   });
 
-  if (searchTimer !== null) {
-    clearTimeout(searchTimer);
-  }
-  for (const key of [...installed.keys()]) {
-    uninstallGroup(key);
-  }
+  uninstallAll();
   uninstallEditableTableHandlers(NEW_INSTANCE_ID);
 }

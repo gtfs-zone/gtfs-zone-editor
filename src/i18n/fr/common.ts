@@ -7,7 +7,6 @@ export const common: Translation<typeof en> = {
   'common.cancel': 'Annuler',
   'common.save': 'Enregistrer',
   'common.loading': 'Chargement...',
-  'common.showMore': 'Afficher {count} de plus',
   'common.delete': 'Supprimer',
   'common.none': 'Aucun',
   'common.loadCancelled': 'Chargement annulé',
