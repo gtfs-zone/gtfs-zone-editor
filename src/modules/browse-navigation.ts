@@ -19,7 +19,6 @@ import {
   navigateToService,
   navigateToPathway,
   openTimetable,
-  addNavigationListener,
   getCurrentPageState,
 } from './navigation-actions';
 import {
@@ -29,6 +28,11 @@ import {
 import type { EditorFeed } from '../feed/editor-feed';
 import { followRenameInState } from '../utils/follow-rename';
 import { t } from '../i18n/messages';
+
+/** The page beneath any modal, as a comparable string. */
+function pageKey(state: PageState): string {
+  return JSON.stringify({ ...state, modal: undefined });
+}
 
 export class BrowseNavigation {
   private mapController: {
@@ -129,9 +133,16 @@ export class BrowseNavigation {
     // Set up bidirectional communication with map
     this.setupMapCallbacks();
 
-    // Add navigation listener for page state changes
-    addNavigationListener((_pageState: PageState) => {
-      this.render();
+    // A modal rides on top of the page, so opening or closing one leaves the
+    // panel as it is.
+    getPageStateManager().addNavigationHandler(({ from, to }) => {
+      if (pageKey(from) === pageKey(to)) {
+        console.log(
+          `[BrowseNavigation] modal change only on ${to.type}, panel kept`
+        );
+        return;
+      }
+      void this.render();
     });
 
     this.render();
@@ -219,8 +230,7 @@ export class BrowseNavigation {
 
       const isSamePage =
         this.lastRenderedPageState !== null &&
-        JSON.stringify(this.lastRenderedPageState) ===
-          JSON.stringify(pageState);
+        pageKey(this.lastRenderedPageState) === pageKey(pageState);
 
       // Get breadcrumbs from PageStateManager
       const breadcrumbs = await getPageStateManager().resolveBreadcrumbs();
@@ -232,7 +242,7 @@ export class BrowseNavigation {
       // Navigating away mid-render (an edit re-renders the current page, the
       // user clicks elsewhere before it resolves) leaves this holding the old
       // page's HTML. Drop it: the navigation kicked off its own render.
-      if (JSON.stringify(getCurrentPageState()) !== JSON.stringify(pageState)) {
+      if (pageKey(getCurrentPageState()) !== pageKey(pageState)) {
         console.log(
           `[BrowseNavigation] stale render for ${pageState.type}, discarding`
         );

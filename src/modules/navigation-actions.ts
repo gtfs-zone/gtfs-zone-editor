@@ -160,18 +160,3 @@ export async function navigateToLocationGroup(
 export function getCurrentPageState(): PageState {
   return getPageStateManager().getPageState();
 }
-
-/**
- * Navigation event listener type
- */
-export type NavigationListener = (pageState: PageState) => void;
-
-/**
- * Add a listener for navigation changes
- * @param listener - Function to call when navigation occurs
- */
-export function addNavigationListener(listener: NavigationListener): void {
-  getPageStateManager().addNavigationHandler((event) => {
-    listener(event.to);
-  });
-}
