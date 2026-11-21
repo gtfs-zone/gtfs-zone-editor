@@ -284,10 +284,33 @@ function routeRefs(s: FeedStore): Record<string, RouteRefs> {
   return out;
 }
 
-/** How one shape is used, for the shapes modal. */
-export interface ShapeUsageRow {
+/** Point and trip counts of one shape, for the shapes modal list. */
+export interface ShapeSummary {
   points: number;
   trips: number;
+}
+
+/** Point and trip counts of every shape. */
+function shapeSummary(s: FeedStore): Record<string, ShapeSummary> {
+  const out: Record<string, ShapeSummary> = {};
+  if (s.hasTable('shapes')) {
+    for (const id of s.shapeIds()) {
+      out[id] = { points: s.shapeCoords(id).length / 2, trips: 0 };
+    }
+  }
+  if (s.hasTable('trips')) {
+    s.scan('trips', ['shape_id'], ([shape]) => {
+      const usage = out[shape];
+      if (usage) {
+        usage.trips++;
+      }
+    });
+  }
+  return out;
+}
+
+/** What one shape's row shows once it is on screen. */
+export interface ShapeDetail {
   /** Distinct [route_id, service_id, direction_id] of the trips using it. */
   timetables: [string, string, string][];
   /** First and last stop of one trip using it, when it has two or more. */
@@ -295,17 +318,14 @@ export interface ShapeUsageRow {
   destination?: string;
 }
 
-/** Point count and trip usage of every shape. */
-function shapeUsage(s: FeedStore): Record<string, ShapeUsageRow> {
-  const out: Record<string, ShapeUsageRow> = {};
-  if (s.hasTable('shapes')) {
-    for (const id of s.shapeIds()) {
-      out[id] = {
-        points: s.shapeCoords(id).length / 2,
-        trips: 0,
-        timetables: [],
-      };
-    }
+/** Timetables and endpoints of the shapes `ids` names. */
+function shapeDetails(
+  s: FeedStore,
+  ids: string[]
+): Record<string, ShapeDetail> {
+  const out: Record<string, ShapeDetail> = {};
+  for (const id of ids) {
+    out[id] = { timetables: [] };
   }
   if (!s.hasTable('trips')) {
     return out;
@@ -316,11 +336,10 @@ function shapeUsage(s: FeedStore): Record<string, ShapeUsageRow> {
     'trips',
     ['shape_id', 'trip_id', 'route_id', 'service_id', 'direction_id'],
     ([shape, trip, route, service, direction]) => {
-      const usage = out[shape];
-      if (!usage) {
+      const detail = out[shape];
+      if (!detail) {
         return;
       }
-      usage.trips++;
       if (!firstTrip.has(shape)) {
         firstTrip.set(shape, trip);
       }
@@ -329,7 +348,7 @@ function shapeUsage(s: FeedStore): Record<string, ShapeUsageRow> {
       const key = `${route}\u0000${service}\u0000${direction}`;
       if (!keys.has(key)) {
         keys.add(key);
-        usage.timetables.push([route, service, direction]);
+        detail.timetables.push([route, service, direction]);
       }
     }
   );
@@ -963,8 +982,12 @@ export function feedWorkerApi(ctx: StoreContext) {
     /** Every route's stop_times references, by kind. */
     routeRefs: (): Record<string, RouteRefs> => routeRefs(ctx.store()),
 
-    /** Point count and trip usage of every shape. */
-    shapeUsage: (): Record<string, ShapeUsageRow> => shapeUsage(ctx.store()),
+    /** Point and trip counts of every shape. */
+    shapeSummary: (): Record<string, ShapeSummary> => shapeSummary(ctx.store()),
+
+    /** Timetables and endpoints of the named shapes. */
+    shapeDetails: (ids: string[]): Record<string, ShapeDetail> =>
+      shapeDetails(ctx.store(), ids),
 
     /** Re-index the map's route lines; returns each route's bounds. */
     mapRoutes: (): MapRoutesBuilt => mapTiles.buildRoutes(ctx.store()),

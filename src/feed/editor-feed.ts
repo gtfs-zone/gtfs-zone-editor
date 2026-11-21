@@ -43,7 +43,8 @@ import type {
   Moved,
   Persistence,
   RouteRefs,
-  ShapeUsageRow,
+  ShapeDetail,
+  ShapeSummary,
   Versions,
 } from './feed-worker-api';
 import { batch, patchTargets } from './patch-build';
@@ -382,9 +383,14 @@ export class EditorFeed {
     return out;
   }
 
-  /** Point count and trip usage of every shape (built in the worker). */
-  shapeUsage(): Promise<Record<string, ShapeUsageRow>> {
-    return this.requireClient().call('shapeUsage');
+  /** Point and trip counts of every shape (built in the worker). */
+  shapeSummary(): Promise<Record<string, ShapeSummary>> {
+    return this.requireClient().call('shapeSummary');
+  }
+
+  /** Timetables and endpoints of the named shapes (built in the worker). */
+  shapeDetails(ids: string[]): Promise<Record<string, ShapeDetail>> {
+    return this.requireClient().call('shapeDetails', ids);
   }
 
   /** Re-index the map's route lines in the worker; each route's bounds. */

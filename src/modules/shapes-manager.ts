@@ -43,6 +43,8 @@ import { firstFreeId } from '../utils/inline-entity-creator';
 import { t } from '../i18n/messages';
 import { getLocale } from 'gtfs-zone-web-common/i18n/index';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
+import { CONFIG } from '../config';
+import { renderModalLoading, renderShowMore } from '../utils/modal-loading';
 
 /**
  * The stops of the simplify slider, in metres of allowed deviation. The
@@ -76,14 +78,25 @@ interface TimetableUsage {
   direction_id: string;
 }
 
-/** What the shapes table shows for one shape_id. */
+/** Point and trip counts of one shape_id, known for every shape. */
 interface ShapeUsage {
   pointCount: number;
   tripCount: number;
+}
+
+/** What a shape's row adds once it is on screen. */
+interface ShapeRowDetail {
   timetables: TimetableUsage[];
   /** First and last stop of a representative trip. Absent when none is resolvable. */
   origin?: string;
   destination?: string;
+}
+
+/** The shapes list: every shape, sorted ids, and how many rows are drawn. */
+interface ShapesView {
+  shapes: Map<string, ShapeUsage>;
+  ids: string[];
+  shown: number;
 }
 
 function pickFile(accept: string): Promise<File | null> {
@@ -710,17 +723,52 @@ function renderTimetableChip(usage: TimetableUsage): string {
 }
 
 /** "Origin to Destination" for one shape, or a muted placeholder. */
-function renderEndpoints(usage: ShapeUsage): string {
-  if (!usage.origin || !usage.destination) {
+function renderEndpoints(detail: ShapeRowDetail): string {
+  if (!detail.origin || !detail.destination) {
     return `<span class="text-base-content/40">${t('shapes.unknown')}</span>`;
   }
   return t('shapes.endpoints', {
-    origin: escapeHtml(usage.origin),
-    destination: escapeHtml(usage.destination),
+    origin: escapeHtml(detail.origin),
+    destination: escapeHtml(detail.destination),
   });
 }
 
-function renderBody(shapes: Map<string, ShapeUsage>): string {
+/** A row with its runs and timetables cells waiting on `fillRowDetails`. */
+function renderRow(shapeId: string, usage: ShapeUsage): string {
+  const pending =
+    '<span class="loading loading-spinner loading-xs opacity-50"></span>';
+  return `
+    <tr data-shape-row="${escapeHtml(shapeId)}">
+      <td class="font-mono text-sm break-all">${escapeHtml(shapeId)}</td>
+      <td>${formatNumber(usage.pointCount)}</td>
+      <td>${formatNumber(usage.tripCount)}</td>
+      <td class="text-sm" data-runs>${usage.tripCount > 0 ? pending : renderEndpoints({ timetables: [] })}</td>
+      <td>
+        <div class="max-w-xs flex flex-wrap gap-x-2 gap-y-1" data-timetables>${usage.tripCount > 0 ? pending : ''}</div>
+      </td>
+      <td>
+        <div class="flex gap-1">
+          <button class="btn btn-xs btn-ghost" data-action="replace" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.replaceTip')}">${renderUploadIcon()}</button>
+          <button class="btn btn-xs btn-ghost" data-action="geojson-io" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.editGeojsonIo')}">${renderRouteWaypointsIcon()}</button>
+          <button class="btn btn-xs btn-ghost" data-action="simplify" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.simplifyShape')}">${renderSimplifyIcon()}</button>
+          <button class="btn btn-xs btn-ghost text-error" data-action="delete" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.deleteShape')}">${renderTrashIcon()}</button>
+        </div>
+      </td>
+    </tr>`;
+}
+
+/** The next page of rows, advancing `view.shown`; returns the ids drawn. */
+function nextPage(view: ShapesView): { html: string; ids: string[] } {
+  const end = Math.min(view.ids.length, view.shown + CONFIG.MODAL_LIST_ROWS);
+  const ids = view.ids.slice(view.shown, end);
+  view.shown = end;
+  return {
+    html: ids.map((id) => renderRow(id, view.shapes.get(id)!)).join(''),
+    ids,
+  };
+}
+
+function renderBody(view: ShapesView, rowsHtml: string): string {
   const uploadBtn = `<button class="btn btn-sm btn-primary" data-action="new">${renderUploadIcon()} ${t('shapes.upload')}</button>`;
   const helpText = `
     <p class="text-base-content/60 text-sm mb-4">
@@ -728,37 +776,13 @@ function renderBody(shapes: Map<string, ShapeUsage>): string {
     </p>
   `;
 
-  if (shapes.size === 0) {
+  if (view.ids.length === 0) {
     return `
       ${helpText}
       <p class="text-base-content/60 text-sm mb-4">${t('shapes.none')}</p>
       ${uploadBtn}
     `;
   }
-
-  const rows = Array.from(shapes.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(
-      ([shapeId, usage]) => `
-        <tr>
-          <td class="font-mono text-sm break-all">${escapeHtml(shapeId)}</td>
-          <td>${formatNumber(usage.pointCount)}</td>
-          <td>${formatNumber(usage.tripCount)}</td>
-          <td class="text-sm">${renderEndpoints(usage)}</td>
-          <td>
-            <div class="max-w-xs flex flex-wrap gap-x-2 gap-y-1">${usage.timetables.map(renderTimetableChip).join('')}</div>
-          </td>
-          <td>
-            <div class="flex gap-1">
-              <button class="btn btn-xs btn-ghost" data-action="replace" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.replaceTip')}">${renderUploadIcon()}</button>
-              <button class="btn btn-xs btn-ghost" data-action="geojson-io" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.editGeojsonIo')}">${renderRouteWaypointsIcon()}</button>
-              <button class="btn btn-xs btn-ghost" data-action="simplify" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.simplifyShape')}">${renderSimplifyIcon()}</button>
-              <button class="btn btn-xs btn-ghost text-error" data-action="delete" data-shape-id="${escapeHtml(shapeId)}" title="${t('shapes.deleteShape')}">${renderTrashIcon()}</button>
-            </div>
-          </td>
-        </tr>`
-    )
-    .join('');
 
   // The upload button sits below the scroll container so it stays reachable
   // with hundreds of shapes.
@@ -775,8 +799,9 @@ function renderBody(shapes: Map<string, ShapeUsage>): string {
         t('shapes.colTimetables'),
         t('shapes.colActions'),
       ],
-      rows
+      rowsHtml
     )}
+    <div data-show-more-slot>${renderShowMore(view.ids.length - view.shown, CONFIG.MODAL_LIST_ROWS)}</div>
     <div class="mt-4 flex gap-2">
       ${uploadBtn}
       ${simplifyAllBtn}
@@ -788,32 +813,40 @@ export class ShapesManager {
   constructor(private readonly feed: EditorFeed) {}
 
   /**
-   * Point counts, trip counts, the distinct (route, service, direction)
-   * timetables using each shape, and where it runs from and to.
-   *
-   * Recomputed on every panel refresh, so a new/replace/delete updates every
-   * column without reopening the modal.
+   * Point and trip counts of every shape. Recomputed on every panel refresh,
+   * so a new/replace/delete updates every column without reopening the modal.
    */
   private async getShapes(): Promise<Map<string, ShapeUsage>> {
     const map = new Map<string, ShapeUsage>();
     for (const [shapeId, usage] of Object.entries(
-      await this.feed.shapeUsage()
+      await this.feed.shapeSummary()
     )) {
-      const first = usage.origin
-        ? this.feed.byKey('stops', usage.origin)
+      map.set(shapeId, { pointCount: usage.points, tripCount: usage.trips });
+    }
+    return map;
+  }
+
+  /** Timetables and endpoints of the shapes on screen. */
+  private async getRowDetails(
+    ids: string[]
+  ): Promise<Map<string, ShapeRowDetail>> {
+    const map = new Map<string, ShapeRowDetail>();
+    for (const [shapeId, detail] of Object.entries(
+      await this.feed.shapeDetails(ids)
+    )) {
+      const first = detail.origin
+        ? this.feed.byKey('stops', detail.origin)
         : null;
-      const last = usage.destination
-        ? this.feed.byKey('stops', usage.destination)
+      const last = detail.destination
+        ? this.feed.byKey('stops', detail.destination)
         : null;
-      if (usage.trips > 0 && (!first || !last)) {
+      if (detail.timetables.length > 0 && (!first || !last)) {
         console.warn(
           `[ShapesManager] shape ${shapeId}: no origin and destination stop to name it by`
         );
       }
       map.set(shapeId, {
-        pointCount: usage.points,
-        tripCount: usage.trips,
-        timetables: usage.timetables.map(
+        timetables: detail.timetables.map(
           ([route_id, service_id, direction_id]) => ({
             route: this.feed.byKey('routes', route_id) ?? { route_id },
             service_id,
@@ -830,12 +863,49 @@ export class ShapesManager {
     return map;
   }
 
+  /** Fill the runs and timetables cells of the rows `ids` names. */
+  private async fillRowDetails(
+    panel: HTMLElement,
+    ids: string[]
+  ): Promise<void> {
+    const used = ids.filter((id) =>
+      panel.querySelector(
+        `[data-shape-row="${CSS.escape(id)}"] [data-timetables] .loading`
+      )
+    );
+    if (used.length === 0) {
+      return;
+    }
+    const t0 = performance.now();
+    const details = await this.getRowDetails(used);
+    if (!panel.isConnected) {
+      console.log('[ShapesManager] closed before row details landed, dropped');
+      return;
+    }
+    for (const [shapeId, detail] of details) {
+      const row = panel.querySelector(
+        `[data-shape-row="${CSS.escape(shapeId)}"]`
+      );
+      const runs = row?.querySelector<HTMLElement>('[data-runs]');
+      const chips = row?.querySelector<HTMLElement>('[data-timetables]');
+      if (runs) {
+        runs.innerHTML = renderEndpoints(detail);
+      }
+      if (chips) {
+        chips.innerHTML = detail.timetables.map(renderTimetableChip).join('');
+      }
+    }
+    console.log(
+      `[ShapesManager] row details for ${used.length} shapes in ${Math.round(performance.now() - t0)}ms`
+    );
+  }
+
   async open(): Promise<void> {
-    let currentShapes = await this.getShapes();
+    let view: ShapesView = { shapes: new Map(), ids: [], shown: 0 };
 
     await showModal({
       title: t('shapes.title'),
-      body: `<div id="shapes-panel">${renderBody(currentShapes)}</div>`,
+      body: `<div id="shapes-panel">${renderModalLoading()}</div>`,
       escapeAction: 0,
       boxClassName: 'max-w-7xl w-11/12',
       actions: [{ label: t('common.close'), onClick: () => {} }],
@@ -846,11 +916,60 @@ export class ShapesManager {
         }
 
         const refreshPanel = async () => {
-          currentShapes = await this.getShapes();
-          panel.innerHTML = renderBody(currentShapes);
+          const t0 = performance.now();
+          const shapes = await this.getShapes();
+          if (!panel.isConnected) {
+            console.log('[ShapesManager] closed before shapes landed, dropped');
+            return;
+          }
+          // A refresh after an edit keeps as many rows on screen as before.
+          const keep = view.shown;
+          view = {
+            shapes,
+            ids: [...shapes.keys()].sort((a, b) => a.localeCompare(b)),
+            shown: 0,
+          };
+          let html = '';
+          const ids: string[] = [];
+          do {
+            const page = nextPage(view);
+            html += page.html;
+            ids.push(...page.ids);
+          } while (view.shown < Math.min(keep, view.ids.length));
+          panel.innerHTML = renderBody(view, html);
+          console.log(
+            `[ShapesManager] panel: ${view.shown}/${view.ids.length} shapes drawn in ${Math.round(performance.now() - t0)}ms`
+          );
+          await this.fillRowDetails(panel, ids);
+        };
+
+        const showMore = async () => {
+          const page = nextPage(view);
+          panel
+            .querySelector('tbody')
+            ?.insertAdjacentHTML('beforeend', page.html);
+          const slot = panel.querySelector<HTMLElement>(
+            '[data-show-more-slot]'
+          );
+          if (slot) {
+            slot.innerHTML = renderShowMore(
+              view.ids.length - view.shown,
+              CONFIG.MODAL_LIST_ROWS
+            );
+          }
+          await this.fillRowDetails(panel, page.ids);
+        };
+
+        const onError = (error: unknown) => {
+          console.error('[ShapesManager] panel load failed:', error);
+          notify.error(error instanceof Error ? error.message : String(error));
         };
 
         panel.addEventListener('click', (e: Event) => {
+          if ((e.target as HTMLElement).closest('[data-show-more]')) {
+            showMore().catch(onError);
+            return;
+          }
           const btn = (e.target as HTMLElement).closest<HTMLButtonElement>(
             '[data-action]'
           );
@@ -864,7 +983,7 @@ export class ShapesManager {
           if (action === 'delete' && shapeId) {
             void this.deleteShape(
               shapeId,
-              currentShapes.get(shapeId)?.pointCount ?? 0
+              view.shapes.get(shapeId)?.pointCount ?? 0
             ).then(refreshPanel);
           } else if (action === 'replace' && shapeId) {
             void this.replaceShape(shapeId).then(refreshPanel);
@@ -875,7 +994,7 @@ export class ShapesManager {
           } else if (action === 'simplify-all') {
             void this.simplifyAllShapes().then(refreshPanel);
           } else if (action === 'new') {
-            void this.newShape(currentShapes).then(refreshPanel);
+            void this.newShape(view.shapes).then(refreshPanel);
           } else if (action === 'timetable') {
             // Navigating behind an open modal would leave the timetable
             // hidden, so the modal goes first.
@@ -887,6 +1006,8 @@ export class ShapesManager {
             );
           }
         });
+
+        refreshPanel().catch(onError);
       },
     });
   }
