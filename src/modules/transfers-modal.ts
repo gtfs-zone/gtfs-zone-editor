@@ -2,9 +2,9 @@
  * `transfers.txt`, grouped by the station of each row's from stop.
  *
  * A large feed has thousands of transfers, so rows are not rendered up front:
- * each group is a collapsed `<details>` whose editable table is only built
- * when it is expanded, from that group's rows read through the
- * `from_stop_id` index.
+ * groups are drawn a page at a time, each a collapsed `<details>` whose
+ * editable table is only built when it is expanded, from that group's rows
+ * read through the `from_stop_id` index.
  */
 
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
@@ -22,6 +22,9 @@ import { specStoreName } from '../utils/spec-field-edit';
 import { validateTransferRow } from '../utils/fares-rules';
 import { GTFS_FIELD_SPECS, GTFS_TABLES } from '../types/gtfs';
 import { t } from '../i18n/messages';
+import { CONFIG } from '../config';
+import { notify } from 'gtfs-zone-web-common/ui/notification-system';
+import { renderModalLoading, renderShowMore } from '../utils/modal-loading';
 
 export type TransfersModalDeps = EditableTableDeps;
 
@@ -182,8 +185,11 @@ export async function showTransfersModal(
   target: TransfersModalTarget = {}
 ): Promise<void> {
   let stops = readStops(deps.feed);
-  let groups = await buildGroups(deps.feed, stops);
+  // Null until the worker's counts land.
+  let groups: TransferGroup[] | null = null;
   let search = '';
+  // Group shells drawn; "show more" adds a page.
+  let limit: number = CONFIG.MODAL_LIST_ROWS;
   const expanded = new Set<string>();
   // Group instances currently holding handlers, by group key.
   const installed = new Map<string, EditableTableConfig>();
@@ -191,17 +197,26 @@ export async function showTransfersModal(
   let pendingHighlight: { group: string; rowKey: string } | null = null;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
-  if (target.focusStopId !== undefined) {
-    const key = groupKeyFor(target.focusStopId, stops);
-    if (groups.some((group) => group.key === key)) {
-      expanded.add(key);
-      if (target.rowKey) {
-        pendingHighlight = { group: key, rowKey: target.rowKey };
-      }
-    } else {
-      console.warn(`[Transfers] no transfers from ${target.focusStopId}`);
+  /** Open the target's group, drawing enough pages to reach it. */
+  const focusTarget = (loaded: TransferGroup[]): void => {
+    if (target.focusStopId === undefined) {
+      return;
     }
-  }
+    const key = groupKeyFor(target.focusStopId, stops);
+    const index = loaded.findIndex((group) => group.key === key);
+    if (index === -1) {
+      console.warn(`[Transfers] no transfers from ${target.focusStopId}`);
+      return;
+    }
+    expanded.add(key);
+    limit = Math.max(
+      limit,
+      Math.ceil((index + 1) / CONFIG.MODAL_LIST_ROWS) * CONFIG.MODAL_LIST_ROWS
+    );
+    if (target.rowKey) {
+      pendingHighlight = { group: key, rowKey: target.rowKey };
+    }
+  };
 
   const groupsEl = (): HTMLElement | null =>
     document.getElementById('transfers-groups');
@@ -223,6 +238,10 @@ export async function showTransfersModal(
   const onRowsWritten = (): void => {
     stops = readStops(deps.feed);
     void buildGroups(deps.feed, stops).then((next) => {
+      if (!groupsEl()) {
+        console.log('[Transfers] closed before groups landed, dropped');
+        return;
+      }
       groups = next;
       return renderGroups();
     });
@@ -278,7 +297,7 @@ export async function showTransfersModal(
 
   const renderGroups = async (): Promise<void> => {
     const container = groupsEl();
-    if (!container) {
+    if (!container || !groups) {
       return;
     }
     // The modal body scrolls; a redraw after an edit must not move it.
@@ -289,16 +308,17 @@ export async function showTransfersModal(
     }
 
     const needle = search.trim().toLowerCase();
-    const shown = needle
+    const matching = needle
       ? groups.filter((group) => group.searchText.includes(needle))
       : groups;
+    const shown = matching.slice(0, limit);
     const total = groups.reduce((n, group) => n + group.count, 0);
 
     const totalEl = document.getElementById('transfers-total');
     if (totalEl) {
       totalEl.textContent = needle
         ? t('transfers.groupsShown', {
-            shown: shown.length,
+            shown: matching.length,
             total: groups.length,
           })
         : t('transfers.total', {
@@ -318,7 +338,8 @@ export async function showTransfersModal(
             <div data-group-body class="pb-3"></div>
           </details>`
             )
-            .join('');
+            .join('') +
+          `<div class="pt-2">${renderShowMore(matching.length - shown.length, CONFIG.MODAL_LIST_ROWS)}</div>`;
 
     const highlighting = pendingHighlight !== null;
     await Promise.all(
@@ -361,9 +382,34 @@ export async function showTransfersModal(
 
   const onMount = (): void => {
     void renderNew();
-    void renderGroups();
+    const t0 = performance.now();
+    buildGroups(deps.feed, stops)
+      .then((loaded) => {
+        if (!groupsEl()) {
+          console.log('[Transfers] closed before groups landed, dropped');
+          return;
+        }
+        groups = loaded;
+        focusTarget(loaded);
+        return renderGroups().then(() =>
+          console.log(
+            `[Transfers] first paint of groups ${Math.round(performance.now() - t0)} ms after open`
+          )
+        );
+      })
+      .catch((error: unknown) => {
+        console.error('[Transfers] load failed:', error);
+        notify.error(error instanceof Error ? error.message : String(error));
+      });
 
     const container = groupsEl();
+    container?.addEventListener('click', (e) => {
+      if ((e.target as Element).closest('[data-show-more]')) {
+        limit += CONFIG.MODAL_LIST_ROWS;
+        console.log(`[Transfers] showing ${limit} groups`);
+        void renderGroups();
+      }
+    });
     // toggle does not bubble, so it is caught on the way down.
     container?.addEventListener(
       'toggle',
@@ -379,7 +425,7 @@ export async function showTransfersModal(
         }
         if (details.open) {
           expanded.add(key);
-          const group = groups.find((g) => g.key === key);
+          const group = groups?.find((g) => g.key === key);
           if (group && body.dataset.rendered !== '1') {
             void renderGroupBody(group);
           }
@@ -403,6 +449,7 @@ export async function showTransfersModal(
         searchTimer = setTimeout(() => {
           searchTimer = null;
           search = value;
+          limit = CONFIG.MODAL_LIST_ROWS;
           void renderGroups();
         }, SEARCH_DEBOUNCE_MS);
       });
@@ -425,7 +472,7 @@ export async function showTransfersModal(
                placeholder="${t('transfers.search')}" autocomplete="off">
         <span id="transfers-total" class="text-sm opacity-60"></span>
       </div>
-      <div id="transfers-groups"></div>`,
+      <div id="transfers-groups">${renderModalLoading()}</div>`,
     boxClassName: 'max-w-6xl',
     escapeAction: 0,
     actions: [{ label: t('common.close'), onClick: () => {} }],
