@@ -732,7 +732,6 @@ export class PageContentRenderer {
         : this.homeServices.frame
           ? renderServiceTimelineFrame(this.homeServices.frame, {
               tripCounts,
-              scrollRows: true,
             })
           : renderNoTimeline('noDates');
 
