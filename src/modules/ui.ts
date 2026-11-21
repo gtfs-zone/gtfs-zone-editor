@@ -772,11 +772,7 @@ export class UIController {
     const { required, optional, extensions, additional } = files;
     const lineCounts = new Map<string, number>();
     for (const fileName of additional) {
-      const text = (await this.feed.fileText(fileName)) ?? '';
-      lineCounts.set(
-        fileName,
-        text.split('\n').filter((l) => l.trim() !== '').length
-      );
+      lineCounts.set(fileName, (await this.feed.fileLines(fileName)) ?? 0);
     }
     const fileList = document.getElementById('file-list');
     if (!fileList) {

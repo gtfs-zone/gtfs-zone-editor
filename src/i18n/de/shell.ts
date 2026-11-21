@@ -84,6 +84,8 @@ export const shell: Translation<typeof en> = {
   'files.editing': 'Bearbeitung:',
   'files.rawNote':
     'Nicht Teil der GTFS-Spezifikation. Wird beim Export unverändert übernommen. Änderungen hier werden sofort gespeichert und können nicht rückgängig gemacht werden.',
+  'files.readOnlyNote':
+    'Nicht Teil der GTFS-Spezifikation. Nur lesbar angezeigt und beim Export unverändert übernommen.',
   'files.saved': '{name} gespeichert',
   'files.loadingTable': 'Tabellendaten werden geladen...',
   'files.firstRows': 'Die ersten {shown} von {total} Zeilen werden angezeigt.',

@@ -26,6 +26,7 @@ import {
   sweepBaseFiles,
 } from 'gtfs-zone-web-common/gtfs/store/opfs-base';
 import { isQuotaError } from 'gtfs-zone-web-common/util/storage';
+import Papa from 'papaparse';
 import { CONFIG } from '../config';
 import { QUOTA_MESSAGE } from './quota';
 import type { FeedPatch, FeedPatchRecord, PatchRename } from '../types/patch';
@@ -410,6 +411,33 @@ function shapeDetails(
 }
 
 /** How far `recover` brought the store towards the stored version. */
+/** A non-table entry parsed as CSV, for a read-only view. */
+export interface FileTable {
+  header: string[];
+  /** The first rows after the header, at most the limit asked for. */
+  rows: string[][];
+  /** Non-empty lines after the header. */
+  total: number;
+}
+
+/** Non-empty lines of an entry, counted on the bytes without decoding. */
+function countLines(bytes: Uint8Array): number {
+  const NEWLINE = 0x0a;
+  const CR = 0x0d;
+  let lines = 0;
+  let filled = false;
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    if (b === NEWLINE) {
+      lines += filled ? 1 : 0;
+      filled = false;
+    } else if (b !== CR && b !== 0x20 && b !== 0x09) {
+      filled = true;
+    }
+  }
+  return lines + (filled ? 1 : 0);
+}
+
 export interface Recovered {
   /** Patches applied (bridge included) and patches the stored version needs. */
   applied: number;
@@ -1091,6 +1119,37 @@ export function feedWorkerApi(ctx: StoreContext) {
 
     /** A non-table entry as text, or null when the feed has none. */
     fileText: (name: string): string | null => decode(ctx.store().file(name)),
+
+    /** Non-empty lines of a non-table entry, or null when the feed has none. */
+    fileLines: (name: string): number | null => {
+      const bytes = ctx.store().file(name);
+      return bytes === null ? null : countLines(bytes);
+    },
+
+    /**
+     * A non-table entry parsed as CSV, its first `limit` rows only, or null
+     * when the feed has none. The entry itself is left as it is.
+     */
+    fileTable: (name: string, limit: number): FileTable | null => {
+      const bytes = ctx.store().file(name);
+      if (bytes === null) {
+        return null;
+      }
+      const parsed = Papa.parse<string[]>(new TextDecoder().decode(bytes), {
+        preview: limit + 1,
+        skipEmptyLines: 'greedy',
+      });
+      if (parsed.errors.length > 0) {
+        console.warn(
+          `[FeedWorker] ${name}: ${parsed.errors.length} CSV errors, first: ${parsed.errors[0].message}`
+        );
+      }
+      const [first = [], ...rows] = parsed.data;
+      const header = first.map((h, i) =>
+        (i === 0 ? h.replace(/^\uFEFF/, '') : h).trim()
+      );
+      return { header, rows, total: Math.max(0, countLines(bytes) - 1) };
+    },
 
     /**
      * Run the feed validation for one short step. Call until `done`; other

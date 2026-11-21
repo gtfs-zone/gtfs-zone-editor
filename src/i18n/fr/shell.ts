@@ -84,6 +84,8 @@ export const shell: Translation<typeof en> = {
   'files.editing': 'Modification :',
   'files.rawNote':
     "Hors spécification GTFS. Conservé tel quel à l'export. Les modifications ici sont enregistrées immédiatement et ne peuvent pas être annulées.",
+  'files.readOnlyNote':
+    "Hors spécification GTFS. Affiché en lecture seule et conservé tel quel à l'export.",
   'files.saved': '{name} enregistré',
   'files.loadingTable': 'Chargement des données de la table...',
   'files.firstRows': 'Affichage des {shown} premières lignes sur {total}.',

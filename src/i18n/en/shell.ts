@@ -79,6 +79,8 @@ export const shell = {
   'files.editing': 'Editing:',
   'files.rawNote':
     'Not part of the GTFS spec. Preserved verbatim on export. Edits here are saved immediately and cannot be undone.',
+  'files.readOnlyNote':
+    'Not part of the GTFS spec. Shown read-only, and preserved verbatim on export.',
   'files.saved': 'Saved {name}',
   'files.loadingTable': 'Loading table data...',
   'files.firstRows': 'Showing the first {shown} of {total} rows.',

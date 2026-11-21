@@ -41,6 +41,7 @@ import { t } from '../i18n/messages';
 import type {
   Cond,
   ExceptionBounds,
+  FileTable,
   Moved,
   Persistence,
   RouteRefs,
@@ -496,6 +497,16 @@ export class EditorFeed {
   /** A non-table entry (e.g. `locations.geojson`) as text, or null. */
   fileText(name: string): Promise<string | null> {
     return this.requireClient().call('fileText', name);
+  }
+
+  /** Non-empty lines of a non-table entry, or null. */
+  fileLines(name: string): Promise<number | null> {
+    return this.requireClient().call('fileLines', name);
+  }
+
+  /** A non-table entry parsed as CSV, its first `limit` rows, or null. */
+  fileTable(name: string, limit: number): Promise<FileTable | null> {
+    return this.requireClient().call('fileTable', name, limit);
   }
 
   history(): Promise<(FeedPatchRecord & { applied: boolean })[]> {

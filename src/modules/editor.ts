@@ -55,9 +55,14 @@ export class Editor {
       return;
     }
 
-    // Non-table entries (passthrough files, locations.geojson) open as text.
+    // Non-table entries: a .txt opens as a read-only grid, anything else
+    // (locations.geojson, non-CSV passthrough files) as text.
     if ((await this.feed.fileNames()).includes(fileName)) {
-      this.openRawFile(fileName, (await this.feed.fileText(fileName)) ?? '');
+      if (fileName.toLowerCase().endsWith('.txt')) {
+        await this.openFileGrid(fileName);
+      } else {
+        this.openRawFile(fileName, (await this.feed.fileText(fileName)) ?? '');
+      }
       return;
     }
 
@@ -148,6 +153,88 @@ export class Editor {
       gtfsSpec.files.find((f) => f.filename === fileName)?.notes ?? [];
     el.innerHTML = renderSpecNotes(notes);
     el.classList.toggle('hidden', notes.length === 0);
+  }
+
+  /**
+   * Open a non-spec `.txt` entry as a read-only grid. The worker parses only
+   * the rows shown; the entry stays untouched, so export writes it verbatim.
+   */
+  private async openFileGrid(fileName: string): Promise<void> {
+    const feed = this.feed;
+    if (!feed) {
+      return;
+    }
+    this.tableData = null;
+    this.closeOverlayTable();
+    if (this.clusterize) {
+      this.clusterize.destroy();
+      this.clusterize = null;
+    }
+    this.currentFile = fileName;
+    const fileNameElement = document.getElementById('current-file-name');
+    if (fileNameElement) {
+      fileNameElement.textContent = fileName;
+    }
+    const notes = document.getElementById('file-spec-notes');
+    if (notes) {
+      notes.textContent = t('files.readOnlyNote');
+      notes.classList.remove('hidden');
+    }
+    document.getElementById('raw-editor-view')?.classList.add('hidden');
+    document.getElementById('table-editor-view')?.classList.remove('hidden');
+    const container = document.getElementById('table-editor');
+    if (!container) {
+      return;
+    }
+    container.innerHTML = `<div class="p-4 text-center">${t('files.loadingTable')}</div>`;
+
+    const table = await feed.fileTable(fileName, CONFIG.FILES_GRID_MAX_ROWS);
+    if (this.currentFile !== fileName) {
+      console.log(`[Editor] ${fileName}: closed before it parsed, dropped`);
+      return;
+    }
+    if (!table || table.header.length === 0) {
+      container.innerHTML = `<div class="p-4 text-center text-gray-500">${t('files.noData')}</div>`;
+      return;
+    }
+    if (table.total > table.rows.length) {
+      notify.info(
+        t('files.firstRows', {
+          shown: formatNumber(table.rows.length),
+          total: formatNumber(table.total),
+        })
+      );
+    }
+
+    container.innerHTML = `
+      <div class="clusterize-scroll h-full overflow-auto" id="scrollArea">
+        <table class="clusterize-table" id="table">
+          <thead>
+            <tr>${table.header.map((h) => `<th>${this.escapeHtml(h)}</th>`).join('')}</tr>
+          </thead>
+          <tbody class="clusterize-content" id="contentArea"></tbody>
+        </table>
+      </div>`;
+    const rows = table.rows.map(
+      (row) =>
+        `<tr>${table.header
+          .map(
+            (_, i) =>
+              `<td class="px-2 select-text"><span class="font-mono text-sm">${this.escapeHtml(row[i] ?? '')}</span></td>`
+          )
+          .join('')}</tr>`
+    );
+    this.clusterize = new Clusterize({
+      rows,
+      scrollId: 'scrollArea',
+      contentId: 'contentArea',
+      rows_in_block: CONFIG.CLUSTERIZE_ROWS_IN_BLOCK,
+      blocks_in_cluster: CONFIG.CLUSTERIZE_BLOCKS_IN_CLUSTER,
+      tag: 'tr',
+    });
+    console.log(
+      `[Editor] opened ${fileName} as a read-only grid: ${rows.length} of ${table.total} rows`
+    );
   }
 
   /**
