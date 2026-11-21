@@ -161,6 +161,8 @@ export interface EditableTableConfig {
    */
   joinColumns?: EditableTableJoinColumn[];
   deps: EditableTableDeps;
+  /** The table is the page's `.scroll-rows` region, under a pinned header. */
+  scrollRows?: boolean;
   /**
    * Values every new row carries but no column shows, for a table rendering
    * rows that all share them (one service's removed dates). They are merged
@@ -813,7 +815,7 @@ export async function renderEditableTable(
   );
 
   return `
-    <div class="overflow-x-auto">
+    <div class="${config.scrollRows ? 'scroll-rows' : 'overflow-x-auto'}">
       <table class="table table-xs table-pin-rows">
         <thead><tr>${headerHtml}${joinHeaderHtml}<th class="align-bottom text-right">${addFieldHtml}</th></tr></thead>
         <tbody>${emptyHtml}${bodyHtml}${newRowHtml}</tbody>

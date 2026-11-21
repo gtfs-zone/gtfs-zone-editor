@@ -91,6 +91,7 @@ export class LevelsController {
   async showLevelsModal(): Promise<void> {
     const config: EditableTableConfig = {
       instanceId: INSTANCE_ID,
+      scrollRows: true,
       tableName: GTFS_TABLES.LEVELS,
       rows: [],
       deps: { feed: this.feed },

@@ -45,6 +45,8 @@ export interface ServiceTimelineOptions {
   span?: TimelineSpan;
   /** Rows in the map's own order rather than `sortServiceEntries`. */
   keepOrder?: boolean;
+  /** The table is the page's `.scroll-rows` region, with a pinned header. */
+  scrollRows?: boolean;
 }
 
 /** First and last day on a timeline's week axis, as epoch ms. */
@@ -656,9 +658,9 @@ export function renderServiceTimelineFrame(
     <div>
       ${hintHtml}
       ${warningHtml}
-      <div class="overflow-x-auto">
+      <div class="${options.scrollRows ? 'scroll-rows' : 'overflow-x-auto'}">
         <table class="text-xs border-collapse">
-          <thead>
+          <thead class="${options.scrollRows ? 'sticky top-0 z-20 bg-base-100' : ''}">
             <tr>
               <th class="sticky left-0 z-10 bg-base-200 border-b border-base-300" style="width:${labelColPx}px;min-width:${labelColPx}px"></th>
               <th class="w-14 min-w-14 px-1 py-0.5 border-b border-base-300 text-center whitespace-nowrap"><span class="font-mono tracking-tight text-base-content/50 text-xs">${WEEKDAY_INITIALS}</span></th>

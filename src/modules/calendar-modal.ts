@@ -359,7 +359,7 @@ export async function showCalendarModal(
     }
     const frame = renderServiceTimelineFrame(
       timelineFrame(idx.span, idx.order),
-      { tripCounts: idx.tripCounts }
+      { tripCounts: idx.tripCounts, scrollRows: true }
     );
     return `
       <input

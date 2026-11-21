@@ -53,6 +53,7 @@ export async function showAttributionsModal(
 
   const config: EditableTableConfig = {
     instanceId: INSTANCE_ID,
+    scrollRows: true,
     tableName: GTFS_TABLES.ATTRIBUTIONS,
     rows: [],
     deps,

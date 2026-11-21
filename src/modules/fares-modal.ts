@@ -496,6 +496,7 @@ export async function showFaresModal(deps: FaresModalDeps): Promise<void> {
 
   const tableConfig: EditableTableConfig = {
     instanceId: INSTANCE_ID,
+    scrollRows: true,
     tableName: FARES_ENTRIES[0].table,
     rows: [],
     deps,

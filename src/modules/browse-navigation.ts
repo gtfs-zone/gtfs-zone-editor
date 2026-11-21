@@ -218,6 +218,9 @@ export class BrowseNavigation {
       // Capture scroll position before rebuild
       const contentDiv = this.container.querySelector<HTMLElement>('.content');
       const savedScrollTop = contentDiv?.scrollTop ?? 0;
+      // A page with a `.scroll-rows` region scrolls there instead.
+      const savedRowsScrollTop =
+        contentDiv?.querySelector('.scroll-rows')?.scrollTop ?? 0;
 
       // Capture focus before rebuild. An edit committed on blur re-renders the
       // page while the user is already clicking the next field, so without this
@@ -253,7 +256,7 @@ export class BrowseNavigation {
       this.container.innerHTML = `
         <div class="browse-navigation h-full flex flex-col">
           ${this.renderBreadcrumbs(breadcrumbs)}
-          <div class="content flex-1 overflow-y-auto">
+          <div class="content scroll-host flex-1 min-h-0 overflow-y-auto">
             ${pageContent}
           </div>
         </div>
@@ -272,6 +275,15 @@ export class BrowseNavigation {
           this.container.querySelector<HTMLElement>('.content');
         if (newContent && savedScrollTop > 0) {
           newContent.scrollTop = savedScrollTop;
+        }
+        if (newContent && savedRowsScrollTop > 0) {
+          // After the region's lazy rows have been drawn back in.
+          requestAnimationFrame(() => {
+            const rows = newContent.querySelector('.scroll-rows');
+            if (rows) {
+              rows.scrollTop = savedRowsScrollTop;
+            }
+          });
         }
         this.restoreFocus(savedFocus);
       }

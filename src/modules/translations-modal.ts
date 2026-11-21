@@ -574,6 +574,7 @@ export async function showTranslationsModal(
 
   const rawConfig: EditableTableConfig = {
     instanceId: RAW_INSTANCE_ID,
+    scrollRows: true,
     tableName: GTFS_TABLES.TRANSLATIONS,
     rows: [],
     deps,

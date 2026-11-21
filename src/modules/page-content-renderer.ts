@@ -732,6 +732,7 @@ export class PageContentRenderer {
         : this.homeServices.frame
           ? renderServiceTimelineFrame(this.homeServices.frame, {
               tripCounts,
+              scrollRows: true,
             })
           : renderNoTimeline('noDates');
 
@@ -962,7 +963,7 @@ export class PageContentRenderer {
                   ? `<div class="text-center py-6 opacity-70 mt-4">
                     ${t('page.noTimetables')}
                   </div>`
-                  : `<div class="max-h-96 overflow-y-auto mt-4">
+                  : `<div class="mt-4">
                     ${renderServiceTimeline(routeServiceData, { route_id, tripCounts: routeTripCounts })}
                   </div>`
             }

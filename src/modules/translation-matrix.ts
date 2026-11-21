@@ -548,7 +548,7 @@ export function renderMatrix(view: MatrixView, shown: MatrixRow[]): string {
     shown.length > MATRIX_ROW_LIMIT
       ? `<p class="text-sm opacity-60 py-2">${t('translations.more', { count: shown.length - MATRIX_ROW_LIMIT })}</p>`
       : '';
-  return `<div class="overflow-x-auto"><table class="table table-sm">
+  return `<div class="scroll-rows"><table class="table table-sm table-pin-rows">
     <thead>${renderHeader(view)}</thead>
     <tbody>${body}</tbody>
   </table></div>${more}`;

@@ -349,6 +349,7 @@ export async function showOnDemandModal(
 
   const tableConfig: EditableTableConfig = {
     instanceId: INSTANCE_ID,
+    scrollRows: true,
     // A real spec table, not the active entry's: the Zones pane has no field
     // specs, and renderPane sets this before anything is rendered anyway.
     tableName: GTFS_TABLES.BOOKING_RULES,

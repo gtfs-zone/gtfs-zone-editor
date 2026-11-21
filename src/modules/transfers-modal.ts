@@ -330,7 +330,7 @@ export async function showTransfersModal(
         .filter((group) => expanded.has(group.key))
         .map((group) => renderGroupBody(group))
     );
-    const scroller = groupsEl()?.closest('.overflow-y-auto');
+    const scroller = groupsEl()?.closest('.scroll-rows');
     if (restoreScrollTop !== null && !highlighting && scroller) {
       scroller.scrollTop = restoreScrollTop;
     }
@@ -344,9 +344,8 @@ export async function showTransfersModal(
     }
     uninstallAll();
     if (list) {
-      // The modal body scrolls; a redraw after an edit must not move it.
-      restoreScrollTop =
-        container.closest('.overflow-y-auto')?.scrollTop ?? null;
+      // The groups region scrolls; a redraw after an edit must not move it.
+      restoreScrollTop = container.closest('.scroll-rows')?.scrollTop ?? null;
       list.setItems(groups, { keep: true, through: focusIndex });
       updateTotal();
       return;
@@ -483,7 +482,7 @@ export async function showTransfersModal(
                placeholder="${t('transfers.search')}" autocomplete="off">
         <span id="transfers-total" class="text-sm opacity-60"></span>
       </div>
-      <div id="transfers-groups">${renderModalLoading()}</div>`,
+      <div class="scroll-rows"><div id="transfers-groups">${renderModalLoading()}</div></div>`,
     boxClassName: 'max-w-6xl',
     escapeAction: 0,
     actions: [{ label: t('common.close'), onClick: () => {} }],

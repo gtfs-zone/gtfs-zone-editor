@@ -114,6 +114,7 @@ export class Editor {
     };
     const config: EditableTableConfig = {
       instanceId: OVERLAY_TABLE_ID,
+      scrollRows: true,
       tableName: fileName,
       rows: [],
       deps,

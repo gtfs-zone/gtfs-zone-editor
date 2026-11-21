@@ -370,7 +370,9 @@ async function fillBrowser(
         placeholder="${escapeHtml(t('tt.searchRoutes'))}" />
       <span class="text-sm opacity-70" data-browser-no-match hidden></span>
     </div>
-    ${views.map((view, i) => renderSectionShell(view, i, i === openIndex)).join('')}`;
+    <div class="scroll-rows space-y-6">
+      ${views.map((view, i) => renderSectionShell(view, i, i === openIndex)).join('')}
+    </div>`;
 
   let needle = '';
   const sections = [
