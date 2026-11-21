@@ -6,6 +6,8 @@ export const common = {
   'common.delete': 'Delete',
   'common.none': 'None',
   'common.loadCancelled': 'Load cancelled',
+  'common.loading': 'Loading...',
+  'common.showMore': 'Show {count} more',
   'count.trips_one': '{count} trip',
   'count.trips_other': '{count} trips',
   'count.stopTimes_one': '{count} stop_time',

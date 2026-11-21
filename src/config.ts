@@ -24,6 +24,12 @@ export const CONFIG = {
   HOME_SERVICE_ROWS: 50,
   HOME_SERVICE_FILTER_DEBOUNCE_MS: 150,
 
+  // Top-bar modals: rows a long list shows at first and adds per "show more".
+  MODAL_LIST_ROWS: 50,
+  // Timetable browser: services above which a section lists each route's
+  // timetables instead of drawing a route x service matrix.
+  TIMETABLE_BROWSER_MAX_COLUMNS: 30,
+
   // Enum menus: option count above which the searchable modal opens instead.
   ENUM_MODAL_THRESHOLD: 15,
 
