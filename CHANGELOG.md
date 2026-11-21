@@ -1,3 +1,43 @@
+## v0.48.0 (2026-11-21)
+
+### Feat
+
+- **files**: additional .txt files open as a read-only grid
+- **ui**: list pages scroll only their rows
+- **transfers**: station groups append on scroll through a lazy list
+- **shapes**: shapes list appends rows on scroll, with a shape_id search
+- **timetables**: browser sections append rows on scroll, one route search across sections
+- **calendar**: timeline and crowded days append pages on scroll
+- **home**: services list appends pages on scroll under one timeline axis
+- **issues**: issue rows read their items a page at a time, timeline split into frame and rows
+- **search**: grouped map search results
+- **feed**: keep a library of stored feeds and switch between them
+- **feed**: export the feed as a zip from the worker
+- **feed**: run feed validation in the worker over the store
+- **feed**: main-thread EditorFeed client and load flow
+- **feed**: editor feed worker with patch log and OPFS persistence
+
+### Fix
+
+- **ui**: home timeline scrolls with the panel
+- **feed**: keep the restored feed when the boot fold fails
+
+### Refactor
+
+- **feed**: move every module onto EditorFeed, delete the old data layer
+
+### Perf
+
+- **translations**: find translatable columns from one row per table
+- **transfers**: open at once, draw station groups a page at a time
+- **calendar**: open at once, load exceptions per month and per timeline page
+- **shapes**: open the modal at once, load row details per page of shapes
+- **timetables**: open the browser at once, render sections on demand a page at a time
+- **browse**: keep the panel when only the modal changes
+- **home**: render the home panel once per load, fill issues in later
+- **map**: draw routes and stops from vector tiles cut in the feed worker
+- **map**: simplify route lines in the worker and lighten map features
+
 ## v0.47.1 (2026-11-14)
 
 ### Fix
