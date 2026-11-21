@@ -93,13 +93,22 @@ import {
   isServiceActive,
   loadServiceData,
   loadTripCounts,
+  renderNoTimeline,
   renderServiceTimeline,
+  renderServiceTimelineFrame,
+  renderServiceTimelineRows,
   serviceDateBounds,
   sortServiceEntries,
+  timelineFrame,
   timelineSpan,
   type ServiceData,
-  type TimelineSpan,
+  type TimelineFrame,
 } from './service-timeline';
+import {
+  bindListSearch,
+  mountLazyList,
+  type LazyList,
+} from 'gtfs-zone-web-common/ui/lazy-list';
 import { formatGtfsDateRange, todayGtfsDate } from '../utils/gtfs-date';
 import { CONFIG } from '../config';
 import { normalizeAgencyId } from '../utils/agency-helpers';
@@ -120,16 +129,18 @@ import { t } from '../i18n/messages';
 const HOME_ISSUES_ID = 'home-issues';
 const HOME_SERVICES_LIST_ID = 'home-services-list';
 const HOME_SERVICES_FILTER_ID = 'home-services-filter';
-const HOME_SERVICES_MORE_ID = 'home-services-more';
 
 /** The home services list: every service, and what the list shows of it. */
 interface HomeServices {
   /** Running today first, then `sortServiceEntries` order. */
   entries: Array<[string, ServiceData]>;
   tripCounts: Map<string, number>;
-  span: TimelineSpan | null;
+  /** Null when no service has a date. */
+  frame: TimelineFrame | null;
   filter: string;
-  limit: number;
+  /** Rows the last list drew, redrawn after an edit's re-render. */
+  shown: number;
+  list: LazyList<[string, ServiceData]> | null;
 }
 
 /** Marks the route page's network picker. */
@@ -196,7 +207,7 @@ export class PageContentRenderer {
   // Time the last focusMap took, folded into the renderHome timing line.
   private lastMapFocusMs = 0;
 
-  // The services list of the last home render, re-cut by filter and "show more".
+  // The services list of the last home render, filtered and paged in place.
   private homeServices: HomeServices | null = null;
 
   constructor(dependencies: ContentRendererDependencies) {
@@ -665,8 +676,8 @@ export class PageContentRenderer {
   }
 
   /**
-   * The services summary, filter and capped list. The list is re-cut in place
-   * by the filter and "show more", from what is kept in `homeServices`.
+   * The services summary, filter and the timeline frame whose rows
+   * `attachHomeServicesListeners` appends a page at a time.
    */
   private renderHomeServices(
     data: Map<string, ServiceData>,
@@ -695,14 +706,18 @@ export class PageContentRenderer {
       }
     }
 
-    // A filter typed before an edit's re-render carries over to the new list.
+    // A filter typed before an edit's re-render carries over to the new list,
+    // and so do the rows it had drawn.
     const previous = this.homeServices;
+    previous?.list?.destroy();
+    const span = timelineSpan(data);
     this.homeServices = {
       entries,
       tripCounts,
-      span: timelineSpan(data),
+      frame: span ? timelineFrame(span, data.keys()) : null,
       filter: previous?.filter ?? '',
-      limit: previous?.limit ?? CONFIG.HOME_SERVICE_ROWS,
+      shown: previous?.list?.shown() ?? previous?.shown ?? 0,
+      list: null,
     };
 
     const summary = [
@@ -710,6 +725,15 @@ export class PageContentRenderer {
       t('page.servicesActiveToday', { count: active.length }),
       ...(first && last ? [formatGtfsDateRange(first, last)] : []),
     ].join(', ');
+
+    const timeline =
+      entries.length === 0
+        ? renderNoTimeline('noData')
+        : this.homeServices.frame
+          ? renderServiceTimelineFrame(this.homeServices.frame, {
+              tripCounts,
+            })
+          : renderNoTimeline('noDates');
 
     return `
       <div class="space-y-3">
@@ -723,87 +747,48 @@ export class PageContentRenderer {
             value="${escapeHtml(this.homeServices.filter)}"
           />
         </div>
-        <div id="${HOME_SERVICES_LIST_ID}">${this.renderHomeServiceList()}</div>
+        <div id="${HOME_SERVICES_LIST_ID}">${timeline}</div>
       </div>
     `;
   }
 
-  /** The services matching the filter, up to the current limit. */
-  private renderHomeServiceList(): string {
-    const state = this.homeServices;
-    if (!state) {
-      return '';
-    }
-    const needle = state.filter.trim().toLowerCase();
-    const matching = needle
-      ? state.entries.filter(([sid]) => sid.toLowerCase().includes(needle))
-      : state.entries;
-    if (matching.length === 0) {
-      return `<div class="text-center py-6 opacity-70">${escapeHtml(t('page.noServiceMatch', { filter: state.filter.trim() }))}</div>`;
-    }
-    const shown = matching.slice(0, state.limit);
-    const timeline = renderServiceTimeline(new Map(shown), {
-      tripCounts: state.tripCounts,
-      span: state.span ?? undefined,
-      keepOrder: true,
-    });
-    const remaining = matching.length - shown.length;
-    const more =
-      remaining > 0
-        ? `<div class="flex items-center justify-between gap-2 pt-2 text-sm">
-            <span class="opacity-70">${t('page.servicesShown', { shown: shown.length, total: matching.length })}</span>
-            <button type="button" class="btn btn-xs btn-outline" id="${HOME_SERVICES_MORE_ID}">
-              ${t('page.showMoreServices', { count: Math.min(remaining, CONFIG.HOME_SERVICE_ROWS) })}
-            </button>
-          </div>`
-        : '';
-    return timeline + more;
-  }
-
-  /** Re-cut the home services list in place and wire what it rendered. */
-  private refreshHomeServiceList(list: HTMLElement): void {
-    list.innerHTML = this.renderHomeServiceList();
-    attachServiceTimelineListeners(list, (service_id) => {
-      this.dependencies.onServiceClick?.(service_id);
-    });
-    this.attachHomeServicesMore(list);
-  }
-
-  /** "Show more" under the home services list: one more page of rows. */
-  private attachHomeServicesMore(list: HTMLElement): void {
-    list
-      .querySelector(`#${HOME_SERVICES_MORE_ID}`)
-      ?.addEventListener('click', () => {
-        if (this.homeServices) {
-          this.homeServices.limit += CONFIG.HOME_SERVICE_ROWS;
-          this.refreshHomeServiceList(list);
-        }
-      });
-  }
-
-  /** The home services filter input and "show more", after a home render. */
+  /** The home services lazy list and its filter, after a home render. */
   private attachHomeServicesListeners(container: HTMLElement): void {
-    const list = container.querySelector<HTMLElement>(
-      `#${HOME_SERVICES_LIST_ID}`
+    const state = this.homeServices;
+    const tbody = container.querySelector<HTMLElement>(
+      `#${HOME_SERVICES_LIST_ID} [data-timeline-rows]`
     );
     const input = container.querySelector<HTMLInputElement>(
       `#${HOME_SERVICES_FILTER_ID}`
     );
-    if (!list || !input) {
+    if (!state?.frame || !tbody || !input) {
       return;
     }
-    this.attachHomeServicesMore(list);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    input.addEventListener('input', () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (!this.homeServices || !list.isConnected) {
-          return;
+    const frame = state.frame;
+    const list = mountLazyList<[string, ServiceData]>(tbody, {
+      name: 'home services',
+      items: [],
+      pageSize: CONFIG.MODAL_LIST_ROWS,
+      renderPage: (slice) =>
+        renderServiceTimelineRows(frame, slice, {
+          tripCounts: state.tripCounts,
+        }),
+      afterAppend: (nodes) => {
+        for (const node of nodes) {
+          attachServiceTimelineListeners(node, (service_id) => {
+            this.dependencies.onServiceClick?.(service_id);
+          });
         }
-        this.homeServices.filter = input.value;
-        this.homeServices.limit = CONFIG.HOME_SERVICE_ROWS;
-        this.refreshHomeServiceList(list);
-      }, CONFIG.HOME_SERVICE_FILTER_DEBOUNCE_MS);
+      },
+      match: ([sid], needle) => sid.toLowerCase().includes(needle),
+      noMatch: (needle) => t('page.noServiceMatch', { filter: needle }),
+    });
+    state.list = list;
+    list.setNeedle(state.filter);
+    list.setItems(state.entries, { through: state.shown - 1 });
+    bindListSearch(input, (needle) => {
+      state.filter = needle;
+      list.setNeedle(needle);
     });
   }
 

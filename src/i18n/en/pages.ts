@@ -20,7 +20,6 @@ export const pages = {
   'page.newService': '+ New service',
   'page.servicesActiveToday': '{count} running today',
   'page.filterServices': 'Filter by service_id',
-  'page.showMoreServices': 'Show {count} more',
   'page.servicesShown': 'Showing {shown} of {total}',
   'page.noServiceMatch': 'No service_id contains "{filter}".',
   'page.issuesChecking': 'Checking the feed for issues...',
