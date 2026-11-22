@@ -1,3 +1,9 @@
+## v0.48.1 (2026-11-22)
+
+### Refactor
+
+- **spec**: read the GTFS spec layer from web-common
+
 ## v0.48.0 (2026-11-21)
 
 ### Feat
