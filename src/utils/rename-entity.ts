@@ -12,10 +12,10 @@ import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import { GTFS_FOREIGN_KEYS } from '../types/gtfs';
 import {
-  generateCompositeKeyFromRecord,
   getGTFSPrimaryKey,
   getNaturalKeyField,
-} from './gtfs-primary-keys';
+} from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
+import { generateCompositeKeyFromRecord } from './gtfs-primary-keys';
 import {
   translatableTables,
   translationRecordFields,

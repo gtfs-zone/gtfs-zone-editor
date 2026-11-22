@@ -8,8 +8,11 @@
  * only exclusions.
  */
 
-import { gtfsSpec } from '../gtfs-spec/index';
-import { GTFSFieldType, mapGTFSTypeString } from '../types/gtfs-field-types';
+import { gtfsSpec } from 'gtfs-zone-web-common/gtfs/spec/gtfs-spec';
+import {
+  GTFSFieldType,
+  mapGTFSTypeString,
+} from 'gtfs-zone-web-common/gtfs/spec/field-types';
 import type { AlignedTrip } from './timetable-data-processor';
 
 /** The editor a field's sub-row opens on click. */

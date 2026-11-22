@@ -3,9 +3,9 @@
  * and linked in the UI.
  */
 
-import type { GTFSSpecNote } from '../gtfs-spec/types';
-import { gtfsSpec } from '../gtfs-spec';
-import { googleExtension } from '../gtfs-spec/extensions/google';
+import type { GTFSSpecNote } from 'gtfs-zone-web-common/gtfs/spec/types';
+import { gtfsSpec } from 'gtfs-zone-web-common/gtfs/spec/gtfs-spec';
+import { googleExtension } from 'gtfs-zone-web-common/gtfs/spec/extensions/google';
 import { renderSpecDescription } from 'gtfs-zone-web-common/gtfs/spec-markup';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { t } from '../i18n/messages';

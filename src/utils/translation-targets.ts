@@ -5,10 +5,10 @@
  */
 
 import { extensionFields, specFieldShown } from './extension-fields';
-import { getGTFSPrimaryKey } from './gtfs-primary-keys';
+import { getGTFSPrimaryKey } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
 import {
   GTFS_FIELD_SPECS,
-  GTFS_PRIMARY_KEYS as SPEC_PRIMARY_KEYS,
+  GTFS_ENTITY_ID_FIELDS,
   GTFS_TABLES,
 } from '../types/gtfs';
 
@@ -45,7 +45,7 @@ export function translatableFields(
 /**
  * The fields `record_id` and `record_sub_id` name for a table: the first and
  * second fields of its primary key. A table keyed on all fields
- * (attributions) falls back to the spec's single primary key field.
+ * (attributions) falls back to its entity ID field.
  */
 export function translationRecordFields(
   table: string
@@ -54,6 +54,6 @@ export function translationRecordFields(
   if (key && key.fields.length > 0) {
     return { id: key.fields[0], sub: key.fields[1] };
   }
-  const specKey = SPEC_PRIMARY_KEYS[`${table}.txt`];
+  const specKey = GTFS_ENTITY_ID_FIELDS[`${table}.txt`];
   return specKey ? { id: specKey } : null;
 }

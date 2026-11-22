@@ -63,9 +63,9 @@ the files form). Never write `routes.network_id` outside export.
 
 ## Spec overlays
 
-`baseGtfsSpec` in `src/gtfs-spec/index.ts` is the MobilityData spec, verbatim.
+`baseGtfsSpec` in web-common's `gtfs/spec/gtfs-spec.ts` is the MobilityData spec, verbatim.
 Additions from other sources are overlays (`GTFSSpecExtension` in
-`src/gtfs-spec/extensions/types.ts`): files, fields (placed with `after`),
+`gtfs/spec/extensions/types.ts`): files, fields (placed with `after`),
 enum values and behavior notes. `applyExtensions` layers them onto a copy of
 the base and stamps `origin` (e.g. `'google'`) on each item it adds; it throws
 when an overlay targets a missing file or field or re-adds an existing name or
@@ -87,10 +87,9 @@ marks them. Enum values inside an overlay field likewise carry `origin` only
 when set by hand, so base route types in `stops.txt` `vehicle_type` stay
 unmarked.
 
-Never put an overlay item in `src/gtfs-spec/files/*.ts`. `pnpm check-spec`
-checks the base against `reference/gtfs-reference.md` and every
-`origin: 'google'` item against `reference/google-reference.md`; see
-[reference/README.md](../reference/README.md).
+Never put an overlay item in `gtfs/spec/files/*.ts`. Web-common's
+`pnpm check-spec` checks the base against its `reference/gtfs-reference.md`
+and every `origin: 'google'` item against `reference/google-reference.md`.
 
 ## Extension fields
 
@@ -107,7 +106,7 @@ optional-text spec every renderer needs. Both shared field renderers
 The one thing data-derivation cannot express, a column the user just created
 with no values yet, lives in the feed state under `extensionColumns`. Never
 add extension fields to the Zod schemas: those are generated from
-`src/gtfs-spec/` and `pnpm check-spec` blocks the divergence.
+web-common's `gtfs/spec/`, whose `pnpm check-spec` blocks the divergence.
 
 ## IndexedDB requests
 

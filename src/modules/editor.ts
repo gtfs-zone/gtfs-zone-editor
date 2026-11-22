@@ -3,7 +3,7 @@ import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 import type { EditorFeed } from '../feed/editor-feed';
 import { updateOp } from '../feed/patch-build';
-import { gtfsSpec } from '../gtfs-spec';
+import { gtfsSpec } from 'gtfs-zone-web-common/gtfs/spec/gtfs-spec';
 import { fileOrigin, renderSpecNotes } from '../utils/spec-origin';
 import {
   installEditableTableHandlers,
@@ -19,7 +19,7 @@ import {
   createTooltip,
 } from '../utils/zod-tooltip-helper';
 import { renderSpecDescriptionPlain } from 'gtfs-zone-web-common/gtfs/spec-markup';
-import { getGTFSPrimaryKey } from '../utils/gtfs-primary-keys';
+import { getGTFSPrimaryKey } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
 import { keyToGridDirection } from '../utils/grid-navigation';
 import { t } from '../i18n/messages';
 

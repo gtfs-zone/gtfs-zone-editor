@@ -26,7 +26,10 @@ import {
 } from '../types/gtfs';
 import { getEnumOptions } from '../types/gtfs-enums';
 import { ALL_GTFS_FILES } from '../modules/gtfs-file-registry';
-import { GTFSFieldType, mapGTFSTypeString } from '../types/gtfs-field-types';
+import {
+  GTFSFieldType,
+  mapGTFSTypeString,
+} from 'gtfs-zone-web-common/gtfs/spec/field-types';
 import type { Pathways, Stops } from '../types/gtfs-entities';
 import { stopLocationType } from '../utils/area-hierarchy';
 import {

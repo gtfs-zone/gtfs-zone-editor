@@ -17,10 +17,8 @@ import type { EditorFeed, FeedRow } from '../feed/editor-feed';
 import { deleteOp, insertOp, updateOp } from '../feed/patch-build';
 import type { SingleGTFSPatch } from '../types/patch';
 import { GTFS_FIELD_SPECS } from '../types/gtfs';
-import {
-  generateCompositeKeyFromRecord,
-  getGTFSPrimaryKey,
-} from './gtfs-primary-keys';
+import { getGTFSPrimaryKey } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
+import { generateCompositeKeyFromRecord } from './gtfs-primary-keys';
 import { t } from '../i18n/messages';
 
 export interface WhitespaceFixResult {

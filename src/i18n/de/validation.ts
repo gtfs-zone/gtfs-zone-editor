@@ -84,24 +84,7 @@ export const validation: Translation<typeof en> = {
   'value.validInteger': 'Muss eine gültige ganze Zahl sein',
   'value.integerNoDecimals':
     'Muss eine ganze Zahl sein (ohne Nachkommastellen)',
-  'value.languageCode': 'Muss ein gültiger Sprachcode nach IETF BCP 47 sein',
-  'value.currencyCode':
-    'Muss ein dreistelliger Währungscode nach ISO 4217 sein',
-  'value.decimalAmount': 'Muss ein gültiger Dezimalbetrag sein',
-  'value.hexColor': 'Muss eine sechsstellige Hexadezimalfarbe sein',
-  'value.dateFormat': 'Muss im Format JJJJMMTT sein',
-  'value.timeFormat': 'Muss im Format HH:MM:SS sein',
   'value.fieldError': '{field}: {message}',
-  'value.url':
-    'Muss eine vollständige URL sein, die mit http:// oder https:// beginnt',
-  'value.email': 'Muss eine gültige E-Mail-Adresse sein',
-  'value.nonNegative': 'Muss 0 oder größer sein',
-  'value.positive': 'Muss größer als 0 sein',
-  'value.notZero': 'Darf nicht 0 sein',
-  'value.unknownType': 'Unbekannter Feldtyp: {type}',
-  'value.invalidFormat': 'Ungültiges Format für {type}. {description}',
-  'value.min': 'Der Wert muss >= {min} sein',
-  'value.max': 'Der Wert muss <= {max} sein',
   'shapeGeo.noGeometry': 'Dieses Feature hat keine Geometrie.',
   'shapeGeo.multiLine':
     'Ein Linienverlauf ist eine einzelne Linie, dieser MultiLineString hat aber {count} Teile. Fügen Sie sie zuerst zu einem einzigen LineString zusammen.',

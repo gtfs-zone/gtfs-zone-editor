@@ -1,22 +1,22 @@
 /**
  * GTFS (General Transit Feed Specification) TypeScript definitions and Zod schemas
  *
- * All exports are derived at runtime from the hand-authored spec in src/gtfs-spec/.
- * The authoritative source is src/gtfs-spec/files/*.ts.
+ * All exports are derived at runtime from the hand-authored spec in web-common's gtfs/spec/.
+ * The authoritative source is web-common's gtfs/spec/files/*.ts.
  */
 
 import { z } from 'zod';
-import { gtfsSpec } from '../gtfs-spec/index';
-import type { GTFSPresence } from '../gtfs-spec/types';
+import { gtfsSpec } from 'gtfs-zone-web-common/gtfs/spec/gtfs-spec';
+import type { GTFSPresence } from 'gtfs-zone-web-common/gtfs/spec/types';
 import {
-  deriveGTFSPrimaryKeys,
+  deriveGTFSEntityIdFields,
   deriveGTFSFieldTypes,
   deriveGTFSSchemas,
   deriveGTFSFileInfos,
   deriveGTFSFieldSpecs,
   deriveGTFSForeignKeys,
-} from '../gtfs-spec/adapter';
-import { GTFS_FIELD_TYPE_METADATA } from './gtfs-field-types';
+} from 'gtfs-zone-web-common/gtfs/spec/adapter';
+import { GTFS_FIELD_TYPE_METADATA } from 'gtfs-zone-web-common/gtfs/spec/field-types';
 
 export interface GTFSFileInfo {
   filename: string;
@@ -27,7 +27,7 @@ export interface GTFSFileInfo {
 
 // ─── Core derived exports ──────────────────────────────────────────────────────
 
-export const GTFS_PRIMARY_KEYS = deriveGTFSPrimaryKeys(gtfsSpec);
+export const GTFS_ENTITY_ID_FIELDS = deriveGTFSEntityIdFields(gtfsSpec);
 export const GTFS_FIELD_TYPES = deriveGTFSFieldTypes(gtfsSpec);
 export const GTFS_FIELD_SPECS = deriveGTFSFieldSpecs(gtfsSpec);
 export const GTFS_FOREIGN_KEYS = deriveGTFSForeignKeys(gtfsSpec);

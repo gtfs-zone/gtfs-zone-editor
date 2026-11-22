@@ -51,8 +51,11 @@ import { GTFSSchemas, GTFS_FIELD_SPECS } from '../types/gtfs';
 import {
   GTFSFieldType,
   getInputTypeForFieldType,
-} from '../types/gtfs-field-types';
-import { getGTFSPrimaryKey, getNaturalKeyField } from './gtfs-primary-keys';
+} from 'gtfs-zone-web-common/gtfs/spec/field-types';
+import {
+  getGTFSPrimaryKey,
+  getNaturalKeyField,
+} from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
 import {
   extensionFieldSpec,
   extensionFields,
@@ -60,7 +63,7 @@ import {
   EXTENSION_FIELD_DESCRIPTION,
 } from './extension-fields';
 import { renderTimeHtml } from './time-formatter';
-import type { GTFSFieldSpec } from '../gtfs-spec/types';
+import type { GTFSFieldSpec } from 'gtfs-zone-web-common/gtfs/spec/types';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';
 import type { EditorFeed } from '../feed/editor-feed';

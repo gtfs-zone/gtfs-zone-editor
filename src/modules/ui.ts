@@ -50,7 +50,7 @@ import {
   originLabel,
   overlayFileNames,
 } from '../utils/spec-origin';
-import { googleExtension } from '../gtfs-spec/extensions/google';
+import { googleExtension } from 'gtfs-zone-web-common/gtfs/spec/extensions/google';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 

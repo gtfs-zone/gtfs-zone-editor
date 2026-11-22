@@ -8,17 +8,23 @@
  */
 
 import { GTFS_FIELD_SPECS, GTFSSchemas } from '../types/gtfs';
-import { GTFSFieldType, mapGTFSTypeString } from '../types/gtfs-field-types';
+import {
+  GTFSFieldType,
+  mapGTFSTypeString,
+} from 'gtfs-zone-web-common/gtfs/spec/field-types';
 import {
   currencyOptions,
   languageOptions,
   timezoneOptions,
 } from './constrained-values';
-import { getGTFSPrimaryKey } from './gtfs-primary-keys';
+import { getGTFSPrimaryKey } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
 import { getEntityDisplay, renderOptionLabel } from './entity-display';
 import { TimeFormatter } from './time-formatter';
 import type { OptionPickerItem } from '../modules/option-picker-modal';
-import type { GTFSEnumValue, GTFSFieldSpec } from '../gtfs-spec/types';
+import type {
+  GTFSEnumValue,
+  GTFSFieldSpec,
+} from 'gtfs-zone-web-common/gtfs/spec/types';
 import { originLabel } from './spec-origin';
 import type { EditorFeed } from '../feed/editor-feed';
 import type { InlineMenuOption } from './inline-edit';
