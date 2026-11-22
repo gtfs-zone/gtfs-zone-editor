@@ -3,7 +3,7 @@
  *
  * A sidebar of the fares tables grouped by what they do, and one spec-driven
  * editable table in the content pane. Every table is rendered by
- * `editable-table.ts` straight from `src/gtfs-spec/`, so adding a table here is
+ * `editable-table.ts` straight from web-common's `gtfs/spec/`, so adding a table here is
  * an entry in `FARES_ENTRIES` rather than a renderer plus an add/edit modal.
  */
 
@@ -34,7 +34,7 @@ import {
   validateTimeframeRow,
 } from '../utils/fares-rules';
 import { renderSpecDescription } from 'gtfs-zone-web-common/gtfs/spec-markup';
-import { gtfsSpec } from '../gtfs-spec/index';
+import { gtfsSpec } from 'gtfs-zone-web-common/gtfs/spec/gtfs-spec';
 import { GTFS_TABLES } from '../types/gtfs';
 import { t } from '../i18n/messages';
 

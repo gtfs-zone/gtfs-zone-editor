@@ -17,7 +17,7 @@ import {
 } from '../utils/field-component';
 import { escapeHtml } from 'gtfs-zone-web-common/util/escape-html';
 import { GTFSSchemas } from '../types/gtfs';
-import type { GTFSPresence } from '../gtfs-spec/types';
+import type { GTFSPresence } from 'gtfs-zone-web-common/gtfs/spec/types';
 import { getEnumOptions, isEnumField } from '../types/gtfs-enums';
 import {
   closeDraft,
@@ -28,7 +28,7 @@ import {
   renderInlineEditableField,
 } from '../utils/inline-editable-field';
 import { flushInlineEdits } from '../utils/inline-edit';
-import { getNaturalKeyField } from '../utils/gtfs-primary-keys';
+import { getNaturalKeyField } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
 import { validateIdText, validateNewId } from '../utils/rename-entity';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';

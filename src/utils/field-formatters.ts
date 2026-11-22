@@ -8,7 +8,10 @@
  * - validate: Validate that a value matches the expected format
  */
 
-import { GTFSFieldType, validateFieldType } from '../types/gtfs-field-types';
+import {
+  GTFSFieldType,
+  validateFieldType,
+} from 'gtfs-zone-web-common/gtfs/spec/field-types';
 import { fromInputValue, toInputValue } from './gtfs-date';
 import { TimeFormatter } from './time-formatter';
 import { t } from '../i18n/messages';

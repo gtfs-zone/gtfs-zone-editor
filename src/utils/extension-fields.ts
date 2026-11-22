@@ -4,7 +4,7 @@
  * Producers routinely add their own columns to a GTFS file, and those columns
  * already survive the round trip: the import worker keeps every parsed column
  * and `generateCSVFromRows` writes the union of keys across all rows. Only the
- * UI could not see them, because it derives its columns from `src/gtfs-spec/`.
+ * UI could not see them, because it derives its columns from web-common's `gtfs/spec/`.
  *
  * So an extension column is *derived from the data*, not configured: a column
  * exists because rows have that key. The one case data-derivation cannot
@@ -16,11 +16,11 @@
  * typed overlay spec rather than the plain text one an extension column gets.
  *
  * Nothing here writes to the Zod schemas: those are generated from
- * `src/gtfs-spec/` and `pnpm check-spec` blocks a commit that diverges.
+ * web-common's `gtfs/spec/`, which its `pnpm check-spec` keeps on the reference.
  */
 
 import { GTFS_FIELD_SPECS } from '../types/gtfs';
-import type { GTFSFieldSpec } from '../gtfs-spec/types';
+import type { GTFSFieldSpec } from 'gtfs-zone-web-common/gtfs/spec/types';
 import { t } from '../i18n/messages';
 
 export const EXTENSION_FIELD_DESCRIPTION = t('field.extensionDescription');

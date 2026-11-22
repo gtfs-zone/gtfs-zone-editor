@@ -16,18 +16,18 @@ import {
   type FieldLabelOptions,
 } from 'gtfs-zone-web-common/ui/field-label';
 import {
-  GTFS_PRIMARY_KEYS,
+  GTFS_ENTITY_ID_FIELDS,
   GTFS_FIELD_TYPES,
   GTFS_FIELD_SPECS,
 } from '../types/gtfs';
-import type { GTFSPresence } from '../gtfs-spec/types';
+import type { GTFSPresence } from 'gtfs-zone-web-common/gtfs/spec/types';
 import type { z } from 'zod';
 import {
   GTFSFieldType,
   getInputTypeForFieldType,
   getInputAttributesForFieldType,
   mapGTFSTypeString,
-} from '../types/gtfs-field-types';
+} from 'gtfs-zone-web-common/gtfs/spec/field-types';
 import {
   getEnumOptions,
   isEnumField,
@@ -327,9 +327,9 @@ export function generateFieldConfigsFromSchema(
   const configs: FieldConfig[] = [];
   const shape = schema.shape;
 
-  // Get primary key field for this table
+  // The entity ID field, read-only in forms
   const primaryKeyField =
-    GTFS_PRIMARY_KEYS[tableName as keyof typeof GTFS_PRIMARY_KEYS];
+    GTFS_ENTITY_ID_FIELDS[tableName as keyof typeof GTFS_ENTITY_ID_FIELDS];
 
   for (const [fieldName, fieldSchema] of Object.entries(shape)) {
     // Unwrap optional/nullable to get inner type

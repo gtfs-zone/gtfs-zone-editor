@@ -6,8 +6,7 @@ It is a client-only SPA: no backend, all data stays in the browser (OPFS and Ind
 ## Commands
 
 ```bash
-pnpm check        # typecheck + lint + knip + check-spec
-pnpm check-spec   # Diff src/gtfs-spec/ against the reference snapshot
+pnpm check        # typecheck + lint + knip
 pnpm vuln         # osv-scanner vulnerability gate
 ```
 
@@ -27,7 +26,7 @@ The dev server restarts itself when `pnpm-lock.yaml` changes (`restartOnLockfile
 
 ### Spec layer
 
-`reference/gtfs-reference.md` is a verbatim snapshot of the official GTFS Schedule reference and the single source of truth. `src/gtfs-spec/files/*.ts` mirrors it verbatim, and `src/gtfs-spec/adapter.ts` derives the Zod schemas, primary keys, enums and field types from there. Google additions sit on top as an overlay (`src/gtfs-spec/extensions/google.ts`, checked against `reference/google-reference.md`); `gtfsSpec` is the base plus the overlay, `baseGtfsSpec` the verbatim spec. `pnpm check-spec` blocks any drift in either from the pre-commit hook. Descriptions carry markdown and HTML, so render them through `renderSpecDescription` / `renderSpecDescriptionPlain` in `gtfs-zone-web-common/gtfs/spec-markup`. See [reference/README.md](reference/README.md) for how to refresh the snapshot.
+The spec layer lives in web-common (`gtfs-zone-web-common/gtfs/spec/`): `files/*.ts` mirror its verbatim snapshot of the official GTFS Schedule reference, each with its `primaryKey`, and `adapter.ts` derives the Zod schemas, enums and field types from there. `primary-keys.ts` is the one row-key list (`GTFS_PRIMARY_KEYS`, `getGTFSPrimaryKey`); `src/utils/gtfs-primary-keys.ts` only builds the editor's key strings over it. Google additions sit on top as an overlay (`extensions/google.ts`); `gtfsSpec` is the base plus the overlay, `baseGtfsSpec` the verbatim spec. Web-common's `pnpm check-spec` blocks any drift from the reference. Descriptions carry markdown and HTML, so render them through `renderSpecDescription` / `renderSpecDescriptionPlain` in `gtfs-zone-web-common/gtfs/spec-markup`. Refreshing the snapshot is covered in web-common's `reference/README.md`.
 
 ## Development philosophy
 
@@ -42,7 +41,7 @@ Invariants (details in [docs/architecture.md](docs/architecture.md)):
 - [Every user edit goes through the patch system](docs/architecture.md#patch-system).
 - [Mirror rows are frozen](docs/architecture.md#frozen-rows); copy before mutating.
 - [Networks are canonical as `networks` + `route_networks`](docs/architecture.md#networks); never write `routes.network_id` outside export.
-- [Spec additions go in an overlay](docs/architecture.md#spec-overlays), never in `src/gtfs-spec/files/*.ts`.
+- [Spec additions go in an overlay](docs/architecture.md#spec-overlays), never in web-common's `gtfs/spec/files/*.ts`.
 - [Extension fields are derived from row data](docs/architecture.md#extension-fields), never hardcoded or added to the Zod schemas.
 - [No IndexedDB request is awaited without a timeout](docs/architecture.md#indexeddb-requests), and no connection blocks another tab's upgrade.
 - [Never yield with `setTimeout` on a long job](docs/architecture.md#yielding-on-long-jobs); use `yieldToEventLoop`.

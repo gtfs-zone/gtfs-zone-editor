@@ -8,31 +8,10 @@ SPDX-License-Identifier = "AGPL-3.0-or-later"
 
 # Vendored from google/transit (GTFS Schedule reference), maintained by MobilityData
 [[annotations]]
-path = [
-  "reference/gtfs-reference.md",
-  "src/gtfs-spec/files/**",
-  "src/assets/gtfs-spec/*.svg",
-]
+path = "src/assets/gtfs-spec/*.svg"
 precedence = "override"
 SPDX-FileCopyrightText = "Google Inc. and contributors"
 SPDX-License-Identifier = "Apache-2.0"
-
-# Snapshot of Google's GTFS reference differences page
-[[annotations]]
-path = "reference/google-reference.md"
-precedence = "override"
-SPDX-FileCopyrightText = "Google LLC"
-SPDX-License-Identifier = "CC-BY-4.0"
-
-# Google overlay: its descriptions and notes are Google's wording
-[[annotations]]
-path = "src/gtfs-spec/extensions/google.ts"
-precedence = "override"
-SPDX-FileCopyrightText = [
-  "Max Katz-Christy and gtfs.zone contributors",
-  "Google LLC",
-]
-SPDX-License-Identifier = "AGPL-3.0-or-later AND CC-BY-4.0"
 
 # Screenshots: map tiles and imagery, and MBTA transit data
 [[annotations]]

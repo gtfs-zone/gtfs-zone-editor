@@ -3,7 +3,7 @@
  */
 
 import type { EditorFeed } from '../feed/editor-feed';
-import { getNaturalKeyField } from './gtfs-primary-keys';
+import { getNaturalKeyField } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
 
 /** First `<prefix>_<n>` not in `taken`, counting from 1. */
 export function firstFreeId(prefix: string, taken: Iterable<string>): string {

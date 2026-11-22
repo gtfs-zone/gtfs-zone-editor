@@ -1,7 +1,7 @@
 /**
  * Spec-driven editable table.
  *
- * Renders any GTFS table straight from `src/gtfs-spec/`: columns, tooltips,
+ * Renders any GTFS table straight from web-common's `gtfs/spec/`: columns, tooltips,
  * cell editors, validation and foreign-key pickers all come from the field
  * specs, so a new table is a few lines of configuration rather than a bespoke
  * renderer plus a bespoke add/edit modal.
@@ -38,12 +38,15 @@ import {
   convertValueToGTFS,
   formatValueForDisplay,
 } from '../utils/field-formatters';
-import { GTFSFieldType, mapGTFSTypeString } from '../types/gtfs-field-types';
 import {
-  generateCompositeKeyFromRecord,
+  GTFSFieldType,
+  mapGTFSTypeString,
+} from 'gtfs-zone-web-common/gtfs/spec/field-types';
+import {
   getGTFSPrimaryKey,
   getNaturalKeyField,
-} from '../utils/gtfs-primary-keys';
+} from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
+import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
 import {
   clearRenameAfter,
   renderRenameTrigger,
@@ -79,7 +82,7 @@ import {
   EXTENSION_FIELD_DESCRIPTION,
 } from '../utils/extension-fields';
 import { GTFSSchemas, GTFS_FIELD_SPECS } from '../types/gtfs';
-import type { GTFSFieldSpec } from '../gtfs-spec/types';
+import type { GTFSFieldSpec } from 'gtfs-zone-web-common/gtfs/spec/types';
 import type { z } from 'zod';
 import { t } from '../i18n/messages';
 

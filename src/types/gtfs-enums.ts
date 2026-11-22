@@ -1,12 +1,12 @@
 /**
  * GTFS Enumeration Definitions
  *
- * All enum values are derived at runtime from the hand-authored spec in src/gtfs-spec/.
- * The authoritative source is src/gtfs-spec/files/*.ts.
+ * All enum values are derived at runtime from the hand-authored spec in web-common's gtfs/spec/.
+ * The authoritative source is web-common's gtfs/spec/files/*.ts.
  */
 
-import { gtfsSpec } from '../gtfs-spec/index';
-import { deriveGTFSEnums } from '../gtfs-spec/adapter';
+import { gtfsSpec } from 'gtfs-zone-web-common/gtfs/spec/gtfs-spec';
+import { deriveGTFSEnums } from 'gtfs-zone-web-common/gtfs/spec/adapter';
 
 export interface GTFSEnumOption {
   value: number | string;

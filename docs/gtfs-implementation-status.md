@@ -44,7 +44,7 @@ UI support levels:
 
 ## Google extensions
 
-Google Transit additions from the [reference](https://developers.google.com/transit/gtfs/reference), layered on the base spec as an overlay (`src/gtfs-spec/extensions/google.ts`). Overlay files are listed in Files only when the feed has rows in them or the user adds them, tagged "Google extension", and open in the editable table (add, edit, delete rows). Overlay fields show on entity pages only when the feed uses them, with a Google badge.
+Google Transit additions from the [reference](https://developers.google.com/transit/gtfs/reference), layered on the base spec as an overlay (web-common's `gtfs/spec/extensions/google.ts`). Overlay files are listed in Files only when the feed has rows in them or the user adds them, tagged "Google extension", and open in the editable table (add, edit, delete rows). Overlay fields show on entity pages only when the feed uses them, with a Google badge.
 
 | Item | Presence | UI Support | Notes |
 |------|----------|------------|-------|

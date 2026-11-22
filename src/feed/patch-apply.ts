@@ -18,10 +18,8 @@ import type {
   Row,
 } from 'gtfs-zone-web-common/gtfs/store/feed-store';
 import type { FeedPatch, PatchData, SingleGTFSPatch } from '../types/patch';
-import {
-  generateCompositeKeyFromRecord,
-  getGTFSPrimaryKey,
-} from '../utils/gtfs-primary-keys';
+import { getGTFSPrimaryKey } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
+import { generateCompositeKeyFromRecord } from '../utils/gtfs-primary-keys';
 
 export type Direction = 'forward' | 'inverse';
 

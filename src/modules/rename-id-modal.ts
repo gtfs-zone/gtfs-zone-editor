@@ -20,7 +20,7 @@ import {
   type RenamePlan,
 } from '../utils/rename-entity';
 import type { EditorFeed } from '../feed/editor-feed';
-import { getNaturalKeyField } from '../utils/gtfs-primary-keys';
+import { getNaturalKeyField } from 'gtfs-zone-web-common/gtfs/spec/primary-keys';
 import { t } from '../i18n/messages';
 import { formatNumber } from 'gtfs-zone-web-common/i18n/fmt';
 
