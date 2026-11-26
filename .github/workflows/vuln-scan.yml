@@ -1,6 +1,6 @@
 name: Vulnerability scan
 
-# Scans pnpm-lock.yaml with osv-scanner and fails on any critical finding.
+# Scans pnpm-lock.yaml with scripts/vuln-gate.sh and fails on any critical finding.
 # On main, the result is pushed to status.gtfs.zone.
 
 on:
@@ -14,41 +14,8 @@ on:
 permissions:
   contents: read
 
-env:
-  OSV_SCANNER_VERSION: 2.6.0
-  OSV_SCANNER_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
-
 jobs:
   vuln-scan:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          persist-credentials: false
-
-      - name: Install osv-scanner
-        run: |
-          curl -fsSL -o /usr/local/bin/osv-scanner \
-            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
-          echo "${OSV_SCANNER_SHA256}  /usr/local/bin/osv-scanner" | sha256sum -c -
-          chmod +x /usr/local/bin/osv-scanner
-
-      - name: Scan
-        run: sh scripts/vuln-gate.sh
-
-      - name: Report to status.gtfs.zone
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
-        # A status page outage must not fail the scan.
-        continue-on-error: true
-        env:
-          GATUS_TOKEN: ${{ secrets.GATUS_VULN_SCAN_TOKEN }}
-          SUCCESS: ${{ job.status == 'success' }}
-          REPO: ${{ github.event.repository.name }}
-        run: |
-          [ -n "$GATUS_TOKEN" ] || exit 0
-          error=""
-          [ "$SUCCESS" = true ] || error="&error=critical+finding+or+scan+error"
-          curl -fsS -X POST -H "Authorization: Bearer ${GATUS_TOKEN}" \
-            "https://status.gtfs.zone/api/v1/endpoints/vulnerabilities_${REPO}/external?success=${SUCCESS}${error}"
+    uses: gtfs-zone/.github/.github/workflows/vuln-scan.yml@6cfbf656f4bddd65d5a5d9bd7a1ea4302a9d870a # main
+    secrets:
+      gatus-token: ${{ secrets.GATUS_VULN_SCAN_TOKEN }}
