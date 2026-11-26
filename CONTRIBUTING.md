@@ -80,7 +80,7 @@ It runs `cz bump`, which:
 then pushes the commit and the tag. `main` only takes pull requests, so a
 local `cz bump` cannot be pushed; the workflow bypasses that rule.
 
-It then dispatches `.github/workflows/pages.yml` on the tag, which builds the app and publishes it to GitHub Pages.
+The tag push starts `.github/workflows/pages.yml`, which builds the app and publishes it to GitHub Pages.
 
 ## Development Workflow
 

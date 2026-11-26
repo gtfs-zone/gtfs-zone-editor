@@ -1,7 +1,8 @@
 name: Release
 
-# Run by hand: bumps the version on main with cz bump, pushes the bump commit
-# and its tag, then dispatches pages.yml on the tag.
+# Run by hand: bumps the version on main with cz bump and pushes the bump
+# commit and its tag as the gtfs-zone-release app. The tag push starts
+# pages.yml.
 
 on:
   workflow_dispatch:
@@ -11,9 +12,7 @@ permissions:
 
 jobs:
   release:
-    uses: gtfs-zone/.github/.github/workflows/release.yml@cb9bfb961afb84655f78d4bcb7df5e1009b889e4 # main
-    permissions:
-      contents: write
-      actions: write
-    with:
-      deploy-workflow: pages.yml
+    uses: gtfs-zone/.github/.github/workflows/release.yml@33b037d32cad310ca51b74a3a18ed67735d1cf36 # main
+    secrets:
+      app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+      app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
