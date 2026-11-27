@@ -18,7 +18,7 @@ App-wide tunables live in `CONFIG` in `src/config.ts`. GTFS types and their Zod 
 
 ### Shared modules (`gtfs-zone-web-common`)
 
-Modules shared with the two realtime apps live in the `gtfs-zone-web-common` package, a git dependency shipping raw TypeScript with no build step. Import them as `gtfs-zone-web-common/ui/...`, `gtfs-zone-web-common/gtfs/...`, `gtfs-zone-web-common/map/...` and `gtfs-zone-web-common/util/...`; `tsconfig.json` `paths` and a `resolve.alias` in `vite.config.js` point both at `node_modules/gtfs-zone-web-common/src`. It includes the app shell (mounted by `src/shell.ts`, which `index.ts` must import first) and its stylesheet.
+Modules shared with the two realtime apps live in the `gtfs-zone-web-common` package, a git dependency shipping raw TypeScript with no build step. Import them as `gtfs-zone-web-common/ui/...`, `gtfs-zone-web-common/gtfs/...`, `gtfs-zone-web-common/map/...` and `gtfs-zone-web-common/util/...`; `tsconfig.json` `paths` point at `node_modules/gtfs-zone-web-common/src`, and the `resolve.alias` in `vite.config.js` at that path's real location, so the app's imports and web-common's relative ones share one module URL. It includes the app shell (mounted by `src/shell.ts`, which `index.ts` must import first) and its stylesheet.
 
 A shared change is a commit in gtfs-zone-web-common, a tag, and a bump in each consumer. It is not edited here.
 

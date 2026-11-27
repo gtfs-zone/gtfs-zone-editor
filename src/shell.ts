@@ -37,6 +37,7 @@ document.title = t('app.title');
 mountAppShell({
   brandPrefix: 'edit',
   brandSuffix: '.gtfs.zone',
+  version: `v${__APP_VERSION__}`,
   mapControlsExtra: MAP_TOOLS,
   panelPlaceholder: t('shell.noData'),
   dock: [

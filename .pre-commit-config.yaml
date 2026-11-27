@@ -1,4 +1,4 @@
-default_install_hook_types: [pre-commit, commit-msg]
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 
 repos:
   - repo: https://github.com/commitizen-tools/commitizen
@@ -27,3 +27,10 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
+      - id: common-link
+        name: web-common linked locally
+        entry: sh node_modules/gtfs-zone-web-common/bin/common-link.sh check
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
