@@ -6,6 +6,7 @@ import { feedProgressIndicator } from 'gtfs-zone-web-common/ui/progress-indicato
 import { notify } from 'gtfs-zone-web-common/ui/notification-system';
 import { showModal } from 'gtfs-zone-web-common/ui/modal-utils';
 import { resetFeedStorage } from '../feed/feed-boot';
+import type { StoredFormatError } from '../feed/feed-log';
 import { buildExportFilename } from '../utils/export-filename';
 import { downloadBlob } from '../utils/download-blob';
 import { t } from '../i18n/messages';
@@ -256,6 +257,57 @@ export class DatabaseFallbackManager {
     });
 
     void showModal({ title: t('db.errorTitle'), body, actions });
+  }
+
+  /**
+   * The stored feeds were written in another format: link to the build that
+   * opens them (an older one to export them, latest for newer data), or
+   * delete them. Nothing is deleted without the reset confirmation.
+   */
+  showStoredFormatMismatch(err: StoredFormatError): void {
+    const actions: {
+      label: string;
+      className: string;
+      onClick: () => Promise<void>;
+    }[] = [];
+    let body: string;
+    if (err.kind === 'newer') {
+      body = t('db.formatNewerBody');
+      actions.push({
+        label: t('db.formatOpenLatest'),
+        className: 'btn-primary',
+        onClick: async () => {
+          window.location.href = '/';
+        },
+      });
+    } else if (err.writtenBy) {
+      const version = err.writtenBy;
+      body = t('db.formatOlderBody', { version });
+      actions.push({
+        label: t('db.formatOpenVersion', { version }),
+        className: 'btn-primary',
+        onClick: async () => {
+          window.location.href = `/v/${version}/`;
+        },
+      });
+    } else {
+      body = t('db.formatOlderUnknownBody');
+    }
+    actions.push({
+      label: t('db.formatDelete'),
+      className: 'btn-error btn-outline',
+      onClick: async () => {
+        this.showDatabaseResetDialog();
+      },
+    });
+    console.log(
+      `[DatabaseFallback] format mismatch: ${err.kind}, written by ${err.writtenBy ?? 'unknown'}`
+    );
+    void showModal({
+      title: t('db.formatTitle'),
+      body: `<p>${body}</p>`,
+      actions,
+    });
   }
 
   /** Ask whether to clear the stored feed after `note`; false keeps it. */

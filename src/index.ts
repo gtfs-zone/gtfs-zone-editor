@@ -104,7 +104,7 @@ import {
   restoreFeed,
 } from './feed/feed-loader';
 import { batch, deleteOp, insertOp, updateOp } from './feed/patch-build';
-import { resetFeedStorage } from './feed/feed-boot';
+import { checkStoredFormat, resetFeedStorage } from './feed/feed-boot';
 import { RouteRefsIndex } from './feed/route-refs';
 import { deleteDatabaseWithTimeout } from './utils/idb-request';
 
@@ -529,6 +529,14 @@ export class GTFSEditor {
 
       // Set up navigation event listener for automatic tab switching
       this.setupNavigationTabSwitching(bottomSheet);
+
+      // Stored data in another format is left alone: boot stops at the
+      // modal that links to the build that can open it.
+      const mismatch = await checkStoredFormat();
+      if (mismatch) {
+        databaseFallbackManager.showStoredFormatMismatch(mismatch);
+        return;
+      }
 
       // Decide which feed this session is about, and hydrate it.
       const outcome = await this.bootFeed();

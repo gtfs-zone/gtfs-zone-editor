@@ -83,6 +83,16 @@ export const load: Translation<typeof en> = {
     "L'export téléchargé contient {applied} modifications sur {total} : la suivante ne s'applique plus ({message}). Vider supprime le flux enregistré et tout son historique de modifications.",
   'db.keepStored': 'Garder le flux enregistré',
   'db.errorTitle': 'Erreur de base de données',
+  'db.formatTitle': 'Vos flux demandent une autre version',
+  'db.formatOlderBody':
+    "Vos flux enregistrés ont été sauvegardés par edit.gtfs.zone {version}, dans un format que cette version n'ouvre pas. Ouvrez {version}, exportez chaque flux, puis chargez les exports ici.",
+  'db.formatOlderUnknownBody':
+    "Vos flux enregistrés ont été sauvegardés par une ancienne version d'edit.gtfs.zone, dans un format que cette version n'ouvre pas.",
+  'db.formatNewerBody':
+    "Vos flux enregistrés ont été sauvegardés par une version plus récente d'edit.gtfs.zone. Ouvrez la dernière version pour continuer à les modifier.",
+  'db.formatOpenVersion': 'Ouvrir {version}',
+  'db.formatOpenLatest': 'Ouvrir la dernière version',
+  'db.formatDelete': 'Supprimer les flux enregistrés',
   'db.resetTitle': 'Réinitialiser la base de données',
   'db.resetBody':
     'Toutes les données GTFS enregistrées seront définitivement supprimées. Exportez les données importantes avant de continuer.',

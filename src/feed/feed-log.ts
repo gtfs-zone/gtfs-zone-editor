@@ -88,6 +88,8 @@ export interface FeedLog {
 }
 
 const ACTIVE_KEY = 'active';
+/** Meta key holding the app version that last opened the database. */
+const WRITTEN_BY_KEY = 'written-by';
 
 interface StoredPatch extends FeedPatchRecord {
   feedId: string;
@@ -95,7 +97,7 @@ interface StoredPatch extends FeedPatchRecord {
 
 interface FeedDB extends DBSchema {
   feeds: { key: string; value: FeedState };
-  meta: { key: string; value: { key: string; id: string } };
+  meta: { key: string; value: { key: string; id?: string; version?: string } };
   patches: { key: [string, number]; value: StoredPatch };
   bridge: {
     key: [string, number];
@@ -104,6 +106,24 @@ interface FeedDB extends DBSchema {
 }
 
 const DB_VERSION = 2;
+
+/**
+ * The stored database is in a format this build does not open: `older` was
+ * written by an earlier build (`writtenBy` when it stamped its version),
+ * `newer` by a later one. The stored data is left untouched.
+ */
+export class StoredFormatError extends Error {
+  constructor(
+    readonly kind: 'older' | 'newer',
+    readonly writtenBy: string | null
+  ) {
+    super(
+      `[FeedLog] stored database is ${kind} than this build` +
+        (writtenBy ? ` (written by ${writtenBy})` : '')
+    );
+    this.name = 'StoredFormatError';
+  }
+}
 
 /** Every key of one feed in `patches` or `bridge`. */
 function feedRange(id: string): IDBKeyRange {
@@ -154,13 +174,38 @@ export class FeedDb {
     if (this.db) {
       return this.db;
     }
-    const db = await withDeadline(
+    // Set when the upgrade finds an older database and aborts.
+    let older: { writtenBy: string | null } | null = null;
+    const opening = withDeadline(
       openDB<FeedDB>(CONFIG.FEED_DB_NAME, DB_VERSION, {
-        upgrade(db, oldVersion) {
-          console.log(`[FeedLog] creating schema (was v${oldVersion})`);
-          for (const name of Array.from(db.objectStoreNames)) {
-            db.deleteObjectStore(name);
+        upgrade(db, oldVersion, _newVersion, tx) {
+          if (oldVersion > 0) {
+            // Abort instead of replacing the stores: the data stays for the
+            // build that wrote it to export.
+            console.warn(
+              `[FeedLog] stored database is v${oldVersion}, this build is v${DB_VERSION}: not upgrading`
+            );
+            if (!db.objectStoreNames.contains('meta')) {
+              older = { writtenBy: null };
+              tx.abort();
+              return;
+            }
+            void tx
+              .objectStore('meta')
+              .get(WRITTEN_BY_KEY)
+              .then(
+                (rec) => {
+                  older = { writtenBy: rec?.version ?? null };
+                  tx.abort();
+                },
+                () => {
+                  older = { writtenBy: null };
+                  tx.abort();
+                }
+              );
+            return;
           }
+          console.log('[FeedLog] creating schema');
           db.createObjectStore('feeds', { keyPath: 'id' });
           db.createObjectStore('meta', { keyPath: 'key' });
           db.createObjectStore('patches', { keyPath: ['feedId', 'version'] });
@@ -180,6 +225,23 @@ export class FeedDb {
         },
       }),
       'opening the feed database'
+    );
+    let db: IDBPDatabase<FeedDB>;
+    try {
+      db = await opening;
+    } catch (err) {
+      const found = older as { writtenBy: string | null } | null;
+      if (found) {
+        throw new StoredFormatError('older', found.writtenBy);
+      }
+      if (err instanceof DOMException && err.name === 'VersionError') {
+        throw new StoredFormatError('newer', null);
+      }
+      throw err;
+    }
+    await withDeadline(
+      db.put('meta', { key: WRITTEN_BY_KEY, version: __APP_VERSION__ }),
+      'stamping the feed database version'
     );
     this.db = db;
     return db;

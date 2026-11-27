@@ -75,6 +75,16 @@ export const load = {
     'The downloaded export holds {applied} of {total} edits: the edit after those no longer applies ({message}). Clearing deletes the stored feed and its full edit history.',
   'db.keepStored': 'Keep stored feed',
   'db.errorTitle': 'Database Error',
+  'db.formatTitle': 'Your feeds need another version',
+  'db.formatOlderBody':
+    'Your stored feeds were saved by edit.gtfs.zone {version}, in a format this version does not open. Open {version}, export each feed, then load the exports here.',
+  'db.formatOlderUnknownBody':
+    'Your stored feeds were saved by an older edit.gtfs.zone, in a format this version does not open.',
+  'db.formatNewerBody':
+    'Your stored feeds were saved by a newer edit.gtfs.zone. Open the latest version to keep working on them.',
+  'db.formatOpenVersion': 'Open {version}',
+  'db.formatOpenLatest': 'Open latest',
+  'db.formatDelete': 'Delete stored feeds',
   'db.resetTitle': 'Reset Database',
   'db.resetBody':
     'This will permanently delete all stored GTFS data. Make sure to export any important data before proceeding.',

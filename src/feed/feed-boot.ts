@@ -21,7 +21,7 @@ import { LoadCancelledError } from 'gtfs-zone-web-common/gtfs/feed-download';
 import { CONFIG } from '../config';
 import { ALL_GTFS_FILES } from '../modules/gtfs-file-registry';
 import { deleteDatabaseWithTimeout } from '../utils/idb-request';
-import { FeedDb, type FeedState } from './feed-log';
+import { FeedDb, StoredFormatError, type FeedState } from './feed-log';
 import type { ExportStep } from './feed-export';
 import type {
   FeedWorkerApi,
@@ -67,6 +67,24 @@ async function withDb<T>(fn: (db: FeedDb) => Promise<T>): Promise<T> {
     return await fn(db);
   } finally {
     db.close();
+  }
+}
+
+/**
+ * Why this build cannot open the stored database, or null when it can (or
+ * when storage is unavailable, which the other paths report).
+ */
+export async function checkStoredFormat(): Promise<StoredFormatError | null> {
+  try {
+    await withDb((db) => db.open());
+    return null;
+  } catch (err) {
+    if (err instanceof StoredFormatError) {
+      console.warn(`[FeedBoot] ${err.message}`);
+      return err;
+    }
+    console.warn('[FeedBoot] could not check the stored format', err);
+    return null;
   }
 }
 
