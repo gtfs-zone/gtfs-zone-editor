@@ -1,8 +1,8 @@
-import { defineConfig } from 'vite'
+import { defineConfig, searchForWorkspaceRoot } from 'vite'
 import { resolve } from 'path'
 import gitDescribe from 'git-describe'
 import { execSync } from 'child_process'
-import { readFileSync } from 'fs'
+import { readFileSync, realpathSync } from 'fs'
 
 // Get version from git tags using git-describe
 let version = '0.0.0-development'
@@ -28,6 +28,13 @@ try {
     console.warn('Could not determine git version, using default')
   }
 }
+
+// Real path of gtfs-zone-web-common: the pnpm store copy, or the sibling
+// checkout while `pnpm common:local` links it.
+const webCommonDir = realpathSync(resolve(import.meta.dirname, 'node_modules/gtfs-zone-web-common'))
+const webCommonPeers = Object.keys(
+  JSON.parse(readFileSync(resolve(webCommonDir, 'package.json'), 'utf-8')).peerDependencies
+)
 
 // Inlines src/intro.html at `<!-- @intro -->`, so the copy the home panel shows
 // for an empty feed is also in the static HTML.
@@ -72,15 +79,23 @@ export default defineConfig({
   server: {
     port: 8080,
     open: true,
-    host: true // Allow external connections
+    host: true, // Allow external connections
+    fs: {
+      allow: [searchForWorkspaceRoot(import.meta.dirname), webCommonDir]
+    }
   },
   css: {
     postcss: './postcss.config.js'
   },
   resolve: {
     alias: {
-      'gtfs-zone-web-common': resolve(import.meta.dirname, 'node_modules/gtfs-zone-web-common/src')
-    }
+      // The real path, so the app's imports and web-common's relative ones get
+      // the same module URL (a path through node_modules gets a ?v= query)
+      'gtfs-zone-web-common': resolve(webCommonDir, 'src')
+    },
+    // Resolves web-common's peers from this app, not from a linked checkout's
+    // own node_modules, so the page holds one copy of each
+    dedupe: webCommonPeers
   },
   optimizeDeps: {
     include: ['maplibre-gl', '@maplibre/geojson-vt', '@maplibre/vt-pbf', 'codemirror', 'jszip', 'papaparse'],

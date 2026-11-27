@@ -100,6 +100,15 @@ Modules shared with the other gtfs.zone apps live in [gtfs-zone-web-common](http
 
 Restart the dev server after the bump: Vite does not watch `node_modules`, so a running server can keep serving the old copy.
 
+To try a web-common change here before tagging it, link a sibling checkout in place of the pinned tag:
+
+```bash
+pnpm common:local   # node_modules/gtfs-zone-web-common -> ../gtfs-zone-web-common
+pnpm common:tag     # back to the pinned tag
+```
+
+Restart the dev server after each switch. While the link is local, edits in `../gtfs-zone-web-common/src` reload the page, and `pnpm build` and `git push` fail.
+
 ## Git Hooks
 
 Hooks are defined in `.pre-commit-config.yaml` and run by [prek](https://github.com/j178/prek). Install them once per clone:
@@ -111,5 +120,6 @@ prek install
 
 - **pre-commit**: Runs the repo's checks
 - **commit-msg**: Validates commit message format using commitizen
+- **pre-push**: Fails while gtfs-zone-web-common is linked locally (`pnpm common:local`)
 
 If your commit message doesn't follow the conventional format, the commit will be rejected with a helpful error message.

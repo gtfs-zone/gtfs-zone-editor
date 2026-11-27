@@ -7,7 +7,9 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "version": "tsx scripts/get-version.ts",
-    "prebuild": "tsx scripts/get-version.ts > .version",
+    "prebuild": "sh node_modules/gtfs-zone-web-common/bin/common-link.sh check && tsx scripts/get-version.ts > .version",
+    "common:local": "sh node_modules/gtfs-zone-web-common/bin/common-link.sh local",
+    "common:tag": "sh node_modules/gtfs-zone-web-common/bin/common-link.sh tag",
     "dev": "vite",
     "start": "vite",
     "serve": "vite preview --port 8080",
