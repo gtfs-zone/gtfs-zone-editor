@@ -295,9 +295,6 @@ export class GTFSEditor {
       // Claim tab lock before any module initialization
       this.tabLock.init();
 
-      // Display version in header
-      this.displayVersion();
-
       // Initialize notification system
       notify.initialize();
 
@@ -571,7 +568,11 @@ export class GTFSEditor {
       // initializeFromURL sets the state without dispatching a navigation, so
       // a modal named by the boot URL is opened here, once the feed it reads
       // is in place.
-      getModalRouter().sync(this.pageStateManager.getPageState());
+      const bootState = this.pageStateManager.getPageState();
+      getModalRouter().sync(bootState);
+      if (bootState.type === 'home' && !bootState.modal) {
+        this.searchController.focusAtBoot();
+      }
     } catch (error) {
       console.error('Failed to initialize application:', error);
       notify.error(t('app.initFailed'));
@@ -902,13 +903,6 @@ export class GTFSEditor {
     }
     this.browseRefreshDeferred = false;
     await this.browseNavigation.refresh();
-  }
-
-  private displayVersion(): void {
-    const versionElement = document.getElementById('app-version');
-    if (versionElement) {
-      versionElement.textContent = `v${__APP_VERSION__}`;
-    }
   }
 
   private updateUndoRedoState(): void {
