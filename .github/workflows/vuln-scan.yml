@@ -16,6 +16,6 @@ permissions:
 
 jobs:
   vuln-scan:
-    uses: gtfs-zone/.github/.github/workflows/vuln-scan.yml@8575dd846be98ade2c30822fd296c87fbf013053 # main
+    uses: gtfs-zone/.github/.github/workflows/vuln-scan.yml@7215142f2305e7d30e74005fd207aade078563c8 # main
     secrets:
       gatus-token: ${{ secrets.GATUS_VULN_SCAN_TOKEN }}
