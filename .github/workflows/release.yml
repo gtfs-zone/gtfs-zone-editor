@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release:
-    uses: gtfs-zone/.github/.github/workflows/release.yml@7215142f2305e7d30e74005fd207aade078563c8 # main
+    uses: gtfs-zone/.github/.github/workflows/release.yml@8a19d97ce36f71336fd37fe02a1553444306ac2e # main
     secrets:
       app-client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
       app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
