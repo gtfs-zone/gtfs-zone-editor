@@ -88,6 +88,16 @@ export const load: Translation<typeof en> = {
     'Der heruntergeladene Export enthält {applied} von {total} Änderungen: die nächste lässt sich nicht mehr anwenden ({message}). Leeren löscht den gespeicherten Feed und seinen gesamten Änderungsverlauf.',
   'db.keepStored': 'Gespeicherten Feed behalten',
   'db.errorTitle': 'Datenbankfehler',
+  'db.formatTitle': 'Ihre Feeds brauchen eine andere Version',
+  'db.formatOlderBody':
+    'Ihre gespeicherten Feeds wurden von edit.gtfs.zone {version} in einem Format gespeichert, das diese Version nicht öffnet. Öffnen Sie {version}, exportieren Sie jeden Feed und laden Sie die Exporte hier.',
+  'db.formatOlderUnknownBody':
+    'Ihre gespeicherten Feeds wurden von einer älteren Version von edit.gtfs.zone in einem Format gespeichert, das diese Version nicht öffnet.',
+  'db.formatNewerBody':
+    'Ihre gespeicherten Feeds wurden von einer neueren Version von edit.gtfs.zone gespeichert. Öffnen Sie die neueste Version, um weiter daran zu arbeiten.',
+  'db.formatOpenVersion': '{version} öffnen',
+  'db.formatOpenLatest': 'Neueste Version öffnen',
+  'db.formatDelete': 'Gespeicherte Feeds löschen',
   'db.resetTitle': 'Datenbank zurücksetzen',
   'db.resetBody':
     'Dadurch werden alle gespeicherten GTFS-Daten dauerhaft gelöscht. Exportieren Sie wichtige Daten, bevor Sie fortfahren.',
