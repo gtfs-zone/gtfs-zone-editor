@@ -16,11 +16,11 @@ permissions:
 
 jobs:
   check:
-    uses: gtfs-zone/.github/.github/workflows/node-check.yml@8a19d97ce36f71336fd37fe02a1553444306ac2e # main
+    uses: gtfs-zone/.github/.github/workflows/node-check.yml@d8f10454d1c5156283f096ebded47d4b56af80f5 # main
 
   commits:
     if: github.event_name == 'pull_request'
-    uses: gtfs-zone/.github/.github/workflows/commit-check.yml@8a19d97ce36f71336fd37fe02a1553444306ac2e # main
+    uses: gtfs-zone/.github/.github/workflows/commit-check.yml@d8f10454d1c5156283f096ebded47d4b56af80f5 # main
 
   agents:
-    uses: gtfs-zone/.github/.github/workflows/agents-check.yml@8a19d97ce36f71336fd37fe02a1553444306ac2e # main
+    uses: gtfs-zone/.github/.github/workflows/agents-check.yml@d8f10454d1c5156283f096ebded47d4b56af80f5 # main
